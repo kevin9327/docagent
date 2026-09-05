@@ -482,44 +482,16 @@ fn ctrl_id(payload: &[u8]) -> u32 {
 
 fn write_docinfo() -> Vec<u8> {
     let mut out = Vec::new();
-    let mut props = vec![0u8; 26];
-    props[0..2].copy_from_slice(&1u16.to_le_bytes());
-    write_record(&mut out, HWPTAG_DOCUMENT_PROPERTIES, 0, &props);
-    let mut map = vec![0u8; 32];
-    map[16..18].copy_from_slice(&1u16.to_le_bytes());
-    map[18..20].copy_from_slice(&1u16.to_le_bytes());
-    map[20..22].copy_from_slice(&1u16.to_le_bytes());
-    map[22..24].copy_from_slice(&1u16.to_le_bytes());
-    map[24..26].copy_from_slice(&1u16.to_le_bytes());
-    map[26..28].copy_from_slice(&1u16.to_le_bytes());
-    write_record(&mut out, HWPTAG_ID_MAPPINGS, 0, &map);
-    write_record(&mut out, HWPTAG_FACE_NAME, 1, &face_name_payload("함초롬돋움"));
-    write_record(&mut out, HWPTAG_BORDER_FILL, 1, &[0u8; 12]);
-    write_record(&mut out, HWPTAG_CHAR_SHAPE, 1, &char_shape_payload());
-    write_record(&mut out, HWPTAG_TAB_DEF, 1, &[0u8; 8]);
-    write_record(&mut out, HWPTAG_PARA_SHAPE, 1, &[0u8; 54]);
-    write_record(&mut out, HWPTAG_STYLE, 1, &style_payload());
-    out
-}
-
-fn face_name_payload(name: &str) -> Vec<u8> {
-    let mut p = vec![0u8; 2 + 64];
-    let utf16: Vec<u16> = name.encode_utf16().collect();
-    for (i, ch) in utf16.into_iter().take(31).enumerate() {
-        let o = 2 + i * 2;
-        p[o..o + 2].copy_from_slice(&ch.to_le_bytes());
+    // 한글 5.0 DocInfo: 7×u16 시작번호. rhwp `parse_document_properties` 계약.
+    let mut props = Vec::new();
+    for _ in 0..7 {
+        props.extend_from_slice(&1u16.to_le_bytes());
     }
-    p
-}
-
-fn char_shape_payload() -> Vec<u8> {
-    let mut p = vec![0u8; 72];
-    p[28..32].copy_from_slice(&1000u32.to_le_bytes());
-    p
-}
-
-fn style_payload() -> Vec<u8> {
-    vec![0u8; 12]
+    write_record(&mut out, HWPTAG_DOCUMENT_PROPERTIES, 0, &props);
+    // 15×u32 ID mappings. Counts stay 0 so no FACE_NAME/CHAR_SHAPE payloads follow.
+    let map = vec![0u8; 60];
+    write_record(&mut out, HWPTAG_ID_MAPPINGS, 0, &map);
+    out
 }
 
 fn write_section(section: &Section) -> Vec<u8> {
