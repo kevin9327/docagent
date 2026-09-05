@@ -9,7 +9,7 @@
 use std::io::{Cursor, Read};
 
 use dochwp_model::{Block, Diagnostic, Document, LayoutHint, Paragraph, Section, A4_HEIGHT_HU, A4_WIDTH_HU};
-use flate2::read::DeflateDecoder;
+use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
 
 /// 30-byte Hangul 3.0 signature: 24-byte ASCII including the trailing space.
@@ -69,7 +69,10 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     let remaining = &bytes[body_start..];
     let inflated;
     let body: &[u8] = if compressed {
-        inflated = inflate_raw(remaining)?;
+        inflated = inflate_hwp3(remaining)?;
+        &inflated
+    } else if let Ok(plain) = inflate_hwp3(remaining) {
+        inflated = plain;
         &inflated
     } else {
         remaining
@@ -96,6 +99,21 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     section.page.margin_left = left;
     section.page.margin_right = right;
     section.body = paragraphs;
+    let plain = section
+        .body
+        .iter()
+        .filter_map(|b| match b {
+            Block::Paragraph(p) => Some(p.plain_text()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    if !text_has_language(&plain) {
+        diagnostics.push(Diagnostic::parse_loss(
+            "HWP3 body did not decode to Hangul or Latin text",
+        ));
+        section.body.clear();
+    }
     if section.body.is_empty() {
         diagnostics.push(Diagnostic::parse_loss("HWP3 contained no paragraphs"));
     }
@@ -106,10 +124,21 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     })
 }
 
-fn inflate_raw(data: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut out = Vec::new();
-    DeflateDecoder::new(data).read_to_end(&mut out)?;
-    Ok(out)
+fn inflate_hwp3(data: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut raw = Vec::new();
+    if DeflateDecoder::new(data).read_to_end(&mut raw).is_ok() && !raw.is_empty() {
+        return Ok(raw);
+    }
+    let mut zlib = Vec::new();
+    if ZlibDecoder::new(data).read_to_end(&mut zlib).is_ok() && !zlib.is_empty() {
+        return Ok(zlib);
+    }
+    Err(Error::Truncated)
+}
+
+fn text_has_language(s: &str) -> bool {
+    s.chars()
+        .any(|c| ('가'..='힣').contains(&c) || c.is_ascii_alphabetic())
 }
 
 fn skip_font_lists(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
@@ -189,28 +218,161 @@ fn read_paragraphs(cur: &mut Cursor<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -
                 }
             }
         }
-        let mut text = String::new();
-        let mut i = 0u16;
-        while i < char_count {
-            let ch = match read_u16(cur) {
-                Ok(v) => v,
-                Err(_) => break,
-            };
-            i += 1;
-            if ch > 0 && ch < 32 && ch != 13 {
-                let _ = skip_bytes(cur, 8);
-                continue;
-            }
-            if ch == 13 {
-                continue;
-            }
-            text.push(decode_johab(ch));
+        let (text, nested) = read_para_chars(cur, char_count, diagnostics);
+        if !text.trim().is_empty() {
+            let mut para = Paragraph::from_text(text);
+            para.layout_hints = hints;
+            out.push(Block::Paragraph(para));
+        } else if !hints.is_empty() {
+            let mut para = Paragraph::from_text("");
+            para.layout_hints = hints;
+            out.push(Block::Paragraph(para));
         }
-        let mut para = Paragraph::from_text(text);
-        para.layout_hints = hints;
-        out.push(Block::Paragraph(para));
+        out.extend(nested);
     }
     out
+}
+
+fn read_para_chars(
+    cur: &mut Cursor<&[u8]>,
+    char_count: u16,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> (String, Vec<Block>) {
+    let mut text = String::new();
+    let mut nested = Vec::new();
+    let mut i = 0u32;
+    while i < u32::from(char_count) {
+        let ch = match read_u16(cur) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        i += 1;
+        if ch == 13 {
+            continue;
+        }
+        if (1..32).contains(&ch) {
+            match skip_control(cur, ch, diagnostics) {
+                Ok((extra_hchars, blocks)) => {
+                    i = i.saturating_add(extra_hchars);
+                    nested.extend(blocks);
+                }
+                Err(_) => break,
+            }
+            continue;
+        }
+        if let Some(c) = decode_hchar(ch) {
+            text.push(c);
+        }
+    }
+    (text, nested)
+}
+
+/// Consume bytes that follow a control hchar. Returns extra hchars already
+/// counted in `char_count` (not including the control code itself).
+fn skip_control(
+    cur: &mut Cursor<&[u8]>,
+    ch: u16,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(u32, Vec<Block>), Error> {
+    match ch {
+        9 | 18..=21 => {
+            skip_bytes(cur, 6)?;
+            Ok((3, Vec::new()))
+        }
+        1 | 2 | 3 | 4 | 12 | 27 => {
+            skip_bytes(cur, 6)?;
+            Ok((3, Vec::new()))
+        }
+        22 => {
+            skip_bytes(cur, 22)?;
+            Ok((11, Vec::new()))
+        }
+        23 => {
+            skip_bytes(cur, 8)?;
+            Ok((4, Vec::new()))
+        }
+        24 | 25 => {
+            skip_bytes(cur, 4)?;
+            Ok((2, Vec::new()))
+        }
+        26 => {
+            skip_bytes(cur, 244)?;
+            Ok((122, Vec::new()))
+        }
+        28 => {
+            skip_bytes(cur, 62)?;
+            Ok((31, Vec::new()))
+        }
+        30 | 31 => {
+            skip_bytes(cur, 2)?;
+            Ok((1, Vec::new()))
+        }
+        5 | 6 | 7 | 8 | 10 | 11 | 14 | 15 | 16 | 17 | 29 => skip_object(cur, ch, diagnostics),
+        _ => {
+            skip_bytes(cur, 6)?;
+            Ok((3, Vec::new()))
+        }
+    }
+}
+
+fn skip_object(
+    cur: &mut Cursor<&[u8]>,
+    ch: u16,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(u32, Vec<Block>), Error> {
+    let header_val1 = read_u32(cur)?;
+    let _close = read_u16(cur)?;
+    let extra_hchars = 3u32;
+    let mut nested = Vec::new();
+    match ch {
+        5 => {
+            if header_val1 > 0 && header_val1 < 1_000_000 {
+                skip_bytes(cur, header_val1 as usize)?;
+            }
+        }
+        6 => skip_bytes(cur, 34)?,
+        7 => skip_bytes(cur, 76)?,
+        8 => skip_bytes(cur, 88)?,
+        10 => {
+            let mut info = [0u8; 84];
+            cur.read_exact(&mut info)?;
+            let cell_count = u16::from_le_bytes(info[80..82].try_into().unwrap()).min(1024);
+            skip_bytes(cur, usize::from(cell_count).saturating_mul(27))?;
+            for _ in 0..cell_count {
+                nested.extend(read_paragraphs(cur, diagnostics));
+            }
+            nested.extend(read_paragraphs(cur, diagnostics));
+        }
+        11 => {
+            let mut info = [0u8; 348];
+            cur.read_exact(&mut info)?;
+            let n_ext = u32::from_le_bytes(info[0..4].try_into().unwrap());
+            if n_ext > 0 && n_ext < 16 * 1024 * 1024 {
+                skip_bytes(cur, n_ext as usize)?;
+            }
+            nested.extend(read_paragraphs(cur, diagnostics));
+        }
+        14 => skip_bytes(cur, 84)?,
+        15 => {
+            skip_bytes(cur, 8)?;
+            nested.extend(read_paragraphs(cur, diagnostics));
+        }
+        16 => {
+            skip_bytes(cur, 10)?;
+            nested.extend(read_paragraphs(cur, diagnostics));
+        }
+        17 => {
+            skip_bytes(cur, 14)?;
+            nested.extend(read_paragraphs(cur, diagnostics));
+        }
+        29 => {
+            if header_val1 > 0 && header_val1 < 1_000_000 {
+                skip_bytes(cur, header_val1 as usize)?;
+            }
+        }
+        _ => {}
+    }
+    Ok((extra_hchars, nested))
 }
 
 fn read_line_hint(cur: &mut Cursor<&[u8]>) -> Result<LayoutHint, Error> {
@@ -245,11 +407,16 @@ fn hu_to_hwp3_unit(v: i32) -> u16 {
 
 /// KS X 1001 Johab (KSSM) → Unicode. Public 5+5+5 bit layout.
 pub fn decode_johab(ch: u16) -> char {
+    decode_hchar(ch).unwrap_or('?')
+}
+
+fn decode_hchar(ch: u16) -> Option<char> {
     if ch < 0x80 {
-        return char::from(ch as u8);
+        return Some(char::from(ch as u8));
     }
     if ch < 0x8000 {
-        return char::from_u32(u32::from(ch)).unwrap_or('?');
+        // Not ASCII and not JOHAB. Do not treat the raw code as Unicode CJK.
+        return None;
     }
     let cho_idx = ((ch >> 10) & 0x1F) as usize;
     let jung_idx = ((ch >> 5) & 0x1F) as usize;
@@ -272,10 +439,10 @@ pub fn decode_johab(ch: u16) -> char {
     if cho >= 0 && jung >= 0 && jong >= 0 {
         let uni = 0xAC00 + cho * 21 * 28 + jung * 28 + jong;
         if let Some(c) = char::from_u32(uni as u32) {
-            return c;
+            return Some(c);
         }
     }
-    '?'
+    None
 }
 
 pub fn encode_johab(c: char) -> u16 {
@@ -351,6 +518,12 @@ fn read_u16(cur: &mut Cursor<&[u8]>) -> Result<u16, Error> {
     Ok(u16::from_le_bytes(b))
 }
 
+fn read_u32(cur: &mut Cursor<&[u8]>) -> Result<u32, Error> {
+    let mut b = [0u8; 4];
+    cur.read_exact(&mut b)?;
+    Ok(u32::from_le_bytes(b))
+}
+
 fn skip_bytes(cur: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
     let pos = cur.position() as usize;
     let end = pos.saturating_add(n);
@@ -394,10 +567,16 @@ mod tests {
         let path = std::path::PathBuf::from(dir).join("samples").join("hwp3-sample.hwp");
         let bytes = std::fs::read(&path).expect("sibling HWP3 sample");
         let doc = read(&bytes).expect("parse HWP3");
+        let text = doc.plain_text();
         assert!(
-            !doc.plain_text().trim().is_empty(),
-            "empty HWP3 body diagnostics={:?}",
-            doc.diagnostics
+            text.contains("Creating Linux Virtual Servers"),
+            "expected Hangul 3.0 title, got {:?}",
+            text.chars().take(80).collect::<String>()
+        );
+        assert!(
+            text.chars().any(|c| ('가'..='힣').contains(&c)),
+            "expected JOHAB Korean syllables, got {:?}",
+            text.chars().take(80).collect::<String>()
         );
         let hints: usize = doc
             .sections
@@ -410,6 +589,13 @@ mod tests {
             .sum();
         assert!(hints > 0, "HWP3 LineInfo must become LayoutHint");
         assert_eq!(bytes[0..30], SIGNATURE[..]);
+        assert!(
+            !doc.diagnostics
+                .iter()
+                .any(|d| d.code == dochwp_model::DiagnosticCode::ParseLoss),
+            "parse loss: {:?}",
+            doc.diagnostics
+        );
     }
 
     #[test]
