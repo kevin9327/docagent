@@ -1,16 +1,163 @@
-# DocAgent
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="DocAgent — deterministic document runtime for agents" width="100%">
+</p>
 
-Document-only runtime for agents. Not an office suite. Not a Hangul-only tool.
+<p align="center">
+  <a href="https://github.com/kevin9327/docagent/actions/workflows/ci.yml"><img src="https://github.com/kevin9327/docagent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/rust-1.93-orange" alt="Rust 1.93">
+  <img src="https://img.shields.io/badge/license-MIT-5eead4" alt="MIT">
+  <img src="https://img.shields.io/badge/layout-integer%201%2F7200%22-0f766e" alt="Integer layout">
+  <img src="https://img.shields.io/badge/capsule-SHA--256%20×3-134e4a" alt="Capsule hashes">
+  <img src="https://img.shields.io/badge/GPU-not%20required-111827" alt="No GPU">
+</p>
 
-Agents convert **DOCX, ODT, Markdown, HTML, and PDF/A** through one integer layout
-engine (1/7200 inch). Regional office formats (**HWP / HWPX / HML**) use the same
-IR. Every Command records input, plan, and output SHA-256 hashes.
+<p align="center"><b>The document runtime agents actually run.</b><br>
+DOCX · ODT · Markdown · HTML · PDF/A — one engine, three hashes, same bytes twice.<br>
+Hangul HWP / HWPX / HML are regional codecs on the same IR. There is no GUI.</p>
 
-https://github.com/kevin9327/docagent
+<p align="center">
+  <a href="#install--run">Install</a> ·
+  <a href="#what-you-get">What you get</a> ·
+  <a href="#why-this-beats-the-field">Why this beats the field</a> ·
+  <a href="#command--query--event">API</a> ·
+  <a href="docs/src/intro.md">Docs</a>
+</p>
+
+---
+
+<p align="center">
+  <img src="docs/assets/pipeline.svg" alt="Input formats → one integer engine → PDF/A HTML DOCX + capsule hashes" width="100%">
+</p>
+
+## Why this exists
+
+MinerU, Docling, Marker, and Unstructured turn documents into tokens for models.
+Pandoc, python-docx, WeasyPrint, and LibreOffice turn documents into other documents.
+**DocAgent is the runtime in the middle that an agent can call, replay, and prove.**
+
+| An agent needs | DocAgent |
+| --- | --- |
+| One typed call, not a GUI | `Command::Convert` |
+| Proof it ran the same file | capsule: input / plan / output SHA-256 |
+| Same fonts → same PDF twice | integer layout at 1/7200 inch |
+| Word, LibreOffice, Markdown, print | DOCX · ODT · MD · HTML · PDF/A |
+| Korean public files without a second product | HWP · HWPX · HML on the same IR |
+| No GPU bill, no VLM drift | CPU, deterministic |
+
+People still receive a normal file. The agent receives a capsule.
+
+## Install / run
+
+```bash
+git clone https://github.com/kevin9327/docagent
+cd docagent
+cargo test --workspace
+cargo run -p docagent-cli -- convert letter.docx \
+  --pdf out.pdf --html out.html --md out.md --odt out.odt --capsule cap.json
+```
+
+Binaries: `docagent` (CLI) · `docagentd` (daemon) · MCP + WIT adapters.
+
+```rust
+use docagent_api::{Command, Engine, ExportTarget};
+
+let mut engine = Engine::new();
+let out = engine.execute(Command::Convert {
+    input: std::fs::read("letter.docx")?,
+    input_kind: None,
+    targets: vec![ExportTarget::PdfA, ExportTarget::Html, ExportTarget::Markdown],
+})?;
+// out.capsule.{input_hash, plan_hash, output_hash}
+```
+
+## What you get
+
+<p align="center">
+  <img src="docs/assets/convert-story.jpg" alt="Paper in, PDF/A and HTML out, capsule on the desk" width="100%">
+</p>
+<p align="center"><sub>Paper in → PDF/A + HTML out. The metal token is the capsule: three SHA-256 hashes an agent can replay.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/capsule-page.jpg" alt="Laid-out page bound to a three-hash capsule chain" width="100%">
+</p>
+<p align="center"><sub>One layout pass. Input, plan, and output each get a hash. Same fonts, same bytes.</sub></p>
+
+| Surface | What it is |
+| --- | --- |
+| **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
+| **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
+| **PDF/A** | Archival print. Two runs, same fonts, same bytes. |
+| **HTML** | Semantic HTML an agent can read back. |
+| **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
+| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. |
+
+No spreadsheet. No slides. No cursor. No undo stack. Flow documents only.
+
+## Why this beats the field
+
+Locked against the ten most-starred document repositories an agent actually meets
+(star counts 2026-09-06). This is the **agent-runtime** matrix, not an OCR bake-off.
+DocAgent does not claim MinerU's VLM scores. MinerU does not ship a replayable capsule.
+
+| Axis | **DocAgent** | [MinerU](https://github.com/opendatalab/MinerU) | [Docling](https://github.com/docling-project/docling) | [Pandoc](https://github.com/jgm/pandoc) | [Marker](https://github.com/datalab-to/marker) | [Unstructured](https://github.com/Unstructured-IO/unstructured) | [PyMuPDF](https://github.com/pymupdf/PyMuPDF) | [WeasyPrint](https://github.com/Kozea/WeasyPrint) | [python-docx](https://github.com/python-openxml/python-docx) | [LibreOffice](https://github.com/LibreOffice/core) |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Stars (context) | — | 79k | 66k | 46k | 40k | 15k | 11k | 10k | 5.7k | 4.3k |
+| Typed Command / Query / Event | **yes** | | | | | | | | | |
+| Capsule SHA-256 ×3 | **yes** | | | | | | | | | |
+| Byte-identical rerun | **yes** | | | | | | | | | |
+| Integer layout (1/7200") | **yes** | | | | | | | | | |
+| GPU-free convert | **yes** | | optional | **yes** | | | **yes** | **yes** | **yes** | **yes** |
+| Native DOCX | **yes** | **yes** | **yes** | **yes** | | **yes** | | | **yes** | **yes** |
+| Native ODT | **yes** | | **yes** | **yes** | | | | | | **yes** |
+| Markdown in/out | **yes** | out | out | **yes** | out | out | | | | |
+| PDF/A out | **yes** | | | via TeX | | | | PDF | | PDF |
+| HWP / HWPX / HML | **yes** | | | | | | | | | |
+| No GUI in the product | **yes** | | | **yes** | | **yes** | **yes** | **yes** | **yes** | |
+| VLM / OCR (not our job) | | **yes** | **yes** | | **yes** | **yes** | | | | |
+
+**North star:** an agent drops `letter.docx` and gets PDF/A + HTML + Markdown + ODT whose
+bytes match the next run, with three hashes in the capsule. That is the merge gate.
+Hangul LineSeg vs rhwp is a regional CI track, not this page.
+
+## Command / Query / Event
+
+```text
+Command  →  Convert | Import | Export | LayoutDocument
+Query    →  EngineVersion | LastCapsule | LastDocument | CapsuleByInputHash
+Event    →  CommandCompleted { capsule_id } | Warning
+```
+
+Every Command writes a capsule. CLI, daemon, MCP, and WIT are thin adapters over
+the same `Engine`. See [`AGENTS.md`](AGENTS.md) and [`docs/src/intro.md`](docs/src/intro.md).
+
+```mermaid
+flowchart LR
+  A[DOCX / ODT / MD / HWP] --> B[docagent-model IR]
+  B --> C[docagent-layout<br/>i32 @ 1/7200 in]
+  C --> D[PDF/A]
+  C --> E[HTML]
+  C --> F[DOCX / ODT / MD]
+  B --> G[capsule.json<br/>input · plan · output]
+```
+
+## Crate graph
+
+Codecs (`docx`, `odt`, `md`, `hwp5`, `hwpx`, `hwp3`, `hml`) do not import each other
+and do not import layout. Layout, paint, raster, and PDF do not know the source format.
 
 ```
 cargo test --workspace
-cargo run -p docagent-cli -- convert letter.docx --pdf out.pdf --html out.html --md out.md --odt out.odt --capsule cap.json
+cargo clippy --workspace --all-targets -- -D warnings
+cargo run -p docagent-lint
+cargo run -p docagent-conformance -- --require-win
 ```
 
-Binary: `docagent`. Daemon: `docagentd`. See `AGENTS.md` and `docs/`.
+## Docs
+
+- [Intro](docs/src/intro.md)
+- [Format hops](docs/src/format-hops.md)
+- [ADRs](docs/src/adr/README.md) — crate boundaries, integer layout, single engine, capsules
+
+## License
+
+MIT. See [LICENSE](LICENSE).

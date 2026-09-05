@@ -1,0 +1,17 @@
+{
+  "locked_at": "2026-09-06",
+  "category": "Agent document runtime — flow documents only (not OCR suites, not office GUIs)",
+  "north_star": "A stranger opening github.com/kevin9327/docagent must immediately see what DocAgent does, with hero art, a capability matrix, and real outputs, at the visual density of MinerU/Docling/Pandoc. DocAgent wins the agent-runtime axes: Command/Query/Event, capsule hashes, integer layout, byte-identical reruns, GPU-free convert, Hangul as a regional codec.",
+  "repos": [
+    {"rank": 1, "full_name": "opendatalab/MinerU", "stars": 79265, "job": "PDF/Office → LLM markdown via VLM+OCR"},
+    {"rank": 2, "full_name": "docling-project/docling", "stars": 66043, "job": "Gen-AI document parse + export"},
+    {"rank": 3, "full_name": "jgm/pandoc", "stars": 46154, "job": "Universal markup converter"},
+    {"rank": 4, "full_name": "datalab-to/marker", "stars": 39533, "job": "PDF → markdown/JSON"},
+    {"rank": 5, "full_name": "Unstructured-IO/unstructured", "stars": 15398, "job": "Document ETL for LLMs"},
+    {"rank": 6, "full_name": "pymupdf/PyMuPDF", "stars": 10642, "job": "PDF extract/convert"},
+    {"rank": 7, "full_name": "Kozea/WeasyPrint", "stars": 9560, "job": "HTML/CSS → PDF"},
+    {"rank": 8, "full_name": "ONLYOFFICE/DocumentServer", "stars": 6876, "job": "Collaborative office suite"},
+    {"rank": 9, "full_name": "python-openxml/python-docx", "stars": 5710, "job": "Word DOCX read/write"},
+    {"rank": 10, "full_name": "LibreOffice/core", "stars": 4324, "job": "Headless office convert"}
+  ]
+}
