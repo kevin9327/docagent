@@ -91,7 +91,8 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     let mut diagnostics = Vec::new();
     let docinfo = read_named_stream(&mut comp, "DocInfo").unwrap_or_default();
     let docinfo = inflate_hwp_stream(&docinfo, compressed);
-    let _info_recs = parse_records(&docinfo).unwrap_or_default();
+    let info_recs = parse_records(&docinfo).unwrap_or_default();
+    let catalog = StyleCatalog::from_records(&info_recs);
 
     let mut sections = Vec::new();
     let section_blobs = collect_body_sections(&mut comp);
@@ -110,7 +111,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
                 continue;
             }
         };
-        sections.push(section_from_records(&recs, &mut diagnostics));
+        sections.push(section_from_records(&recs, &catalog, &mut diagnostics));
     }
     if sections.is_empty() {
         sections.push(Section::default());
@@ -281,7 +282,114 @@ fn write_record(out: &mut Vec<u8>, tag: u16, level: u16, payload: &[u8]) {
     out.extend_from_slice(payload);
 }
 
-fn section_from_records(recs: &[Rec], diagnostics: &mut Vec<Diagnostic>) -> Section {
+#[derive(Clone, Debug, Default)]
+struct StyleCatalog {
+    char_sizes: Vec<i32>,
+    para: Vec<ParsedParaShape>,
+}
+
+#[derive(Clone, Debug)]
+struct ParsedParaShape {
+    alignment: Alignment,
+    indent_left: i32,
+    indent_right: i32,
+    indent_first: i32,
+    line_spacing: dochwp_model::LineSpacing,
+}
+
+impl Default for ParsedParaShape {
+    fn default() -> Self {
+        Self {
+            alignment: Alignment::Start,
+            indent_left: 0,
+            indent_right: 0,
+            indent_first: 0,
+            line_spacing: dochwp_model::LineSpacing::Percent(160),
+        }
+    }
+}
+
+impl StyleCatalog {
+    fn from_records(recs: &[Rec]) -> Self {
+        let mut cat = Self::default();
+        for rec in recs {
+            match rec.tag {
+                HWPTAG_CHAR_SHAPE => cat.char_sizes.push(char_shape_size(&rec.payload)),
+                HWPTAG_PARA_SHAPE => cat.para.push(parse_para_shape(&rec.payload)),
+                _ => {}
+            }
+        }
+        cat
+    }
+}
+
+fn char_shape_size(p: &[u8]) -> i32 {
+    // 7×u16 faces + 7×u8 ratio/spacing/rel/offset, then i32 height (10pt = 1000).
+    const OFF: usize = 7 * 2 + 7 * 4;
+    if p.len() >= OFF + 4 {
+        i32_at(p, OFF).max(1)
+    } else {
+        dochwp_model::DEFAULT_FONT_SIZE_HU
+    }
+}
+
+fn parse_para_shape(p: &[u8]) -> ParsedParaShape {
+    let mut out = ParsedParaShape::default();
+    if p.len() < 28 {
+        return out;
+    }
+    let attr1 = u32::from_le_bytes(p[0..4].try_into().unwrap());
+    out.indent_left = i32_at(p, 4);
+    out.indent_right = i32_at(p, 8);
+    out.indent_first = i32_at(p, 12);
+    let ls = i32_at(p, 24);
+    out.line_spacing = match attr1 & 0x03 {
+        1 => dochwp_model::LineSpacing::Absolute(ls.max(1)),
+        3 => dochwp_model::LineSpacing::AtLeast(ls.max(1)),
+        _ => dochwp_model::LineSpacing::Percent(u16::try_from(ls.clamp(50, 500)).unwrap_or(160)),
+    };
+    out.alignment = match (attr1 >> 2) & 0x07 {
+        2 => Alignment::End,
+        3 => Alignment::Center,
+        4 | 5 => Alignment::Distribute,
+        0 => Alignment::Justify,
+        _ => Alignment::Start,
+    };
+    out
+}
+
+fn apply_catalog(para: &mut Paragraph, header: &[u8], children: &[Rec], cat: &StyleCatalog) {
+    if header.len() >= 10 {
+        let ps_id = u16_at(header, 8) as usize;
+        if let Some(ps) = cat.para.get(ps_id) {
+            para.alignment = ps.alignment;
+            para.indent_left = ps.indent_left.max(0);
+            para.indent_right = ps.indent_right.max(0);
+            para.indent_first = ps.indent_first;
+            para.line_spacing = ps.line_spacing;
+        }
+    }
+    let shape_id = children.iter().find_map(|r| {
+        if r.tag == HWPTAG_PARA_CHAR_SHAPE && r.payload.len() >= 8 {
+            Some(u32::from_le_bytes(r.payload[4..8].try_into().unwrap()) as usize)
+        } else {
+            None
+        }
+    });
+    if let Some(id) = shape_id
+        && let Some(size) = cat.char_sizes.get(id).copied()
+    {
+        for run in &mut para.runs {
+            run.style.size = size;
+        }
+    }
+}
+
+fn section_from_records(
+    recs: &[Rec],
+    catalog: &StyleCatalog,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Section {
     let mut section = Section::default();
     for rec in recs {
         if rec.tag == HWPTAG_PAGE_DEF {
@@ -297,7 +405,7 @@ fn section_from_records(recs: &[Rec], diagnostics: &mut Vec<Diagnostic>) -> Sect
                     i = skip_tree(recs, i);
                     continue;
                 }
-                let (block, next) = read_paragraph_or_control(recs, i, diagnostics);
+                let (block, next) = read_paragraph_or_control(recs, i, catalog, diagnostics);
                 body.push(block);
                 i = next;
             }
@@ -306,7 +414,7 @@ fn section_from_records(recs: &[Rec], diagnostics: &mut Vec<Diagnostic>) -> Sect
                     i = skip_tree(recs, i);
                     continue;
                 }
-                let (block, next) = read_control(recs, i, diagnostics);
+                let (block, next) = read_control(recs, i, catalog, diagnostics);
                 if let Some(b) = block {
                     body.push(b);
                 }
@@ -356,6 +464,7 @@ fn paragraph_is_section_def(recs: &[Rec], start: usize) -> bool {
 fn read_paragraph_or_control(
     recs: &[Rec],
     start: usize,
+    catalog: &StyleCatalog,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> (Block, usize) {
     let level = recs[start].level;
@@ -366,17 +475,17 @@ fn read_paragraph_or_control(
     let children = &recs[start + 1..end];
     if let Some(ctrl_idx) = children.iter().position(|r| r.tag == HWPTAG_CTRL_HEADER) {
         if ctrl_id(&children[ctrl_idx].payload) == CTRL_TABLE {
-            let table = read_table(children, ctrl_idx, diagnostics);
+            let table = read_table(children, ctrl_idx, catalog, diagnostics);
             return (Block::Table(table), end);
         }
         if ctrl_id(&children[ctrl_idx].payload) == CTRL_SECTION {
-            return (read_plain_paragraph(recs, start, end), end);
+            return (read_plain_paragraph(recs, start, end, catalog), end);
         }
     }
-    (read_plain_paragraph(recs, start, end), end)
+    (read_plain_paragraph(recs, start, end, catalog), end)
 }
 
-fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize) -> Block {
+fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize, catalog: &StyleCatalog) -> Block {
     let mut text = String::new();
     let mut hints = Vec::new();
     for rec in &recs[start..end] {
@@ -392,12 +501,14 @@ fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize) -> Block {
     }
     let mut para = Paragraph::from_text(text);
     para.layout_hints = hints;
+    apply_catalog(&mut para, &recs[start].payload, &recs[start + 1..end], catalog);
     Block::Paragraph(para)
 }
 
 fn read_control(
     recs: &[Rec],
     start: usize,
+    catalog: &StyleCatalog,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> (Option<Block>, usize) {
     let level = recs[start].level;
@@ -407,7 +518,7 @@ fn read_control(
     }
     let id = ctrl_id(&recs[start].payload);
     if id == CTRL_TABLE {
-        let table = read_table(&recs[start..end], 0, diagnostics);
+        let table = read_table(&recs[start..end], 0, catalog, diagnostics);
         return (Some(Block::Table(table)), end);
     }
     if id == u32::from_be_bytes(*b"    ") {
@@ -416,7 +527,12 @@ fn read_control(
     (None, end)
 }
 
-fn read_table(recs: &[Rec], ctrl_at: usize, diagnostics: &mut Vec<Diagnostic>) -> Table {
+fn read_table(
+    recs: &[Rec],
+    ctrl_at: usize,
+    catalog: &StyleCatalog,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Table {
     let mut n_rows = 0u16;
     let mut n_cols = 0u16;
     let mut widths = Vec::new();
@@ -436,13 +552,22 @@ fn read_table(recs: &[Rec], ctrl_at: usize, diagnostics: &mut Vec<Diagnostic>) -
         n_rows = n_rows.max(1);
         n_cols = n_cols.max(1);
     }
+    let mut cell_heights = Vec::new();
+    for rec in recs {
+        if rec.tag == HWPTAG_LIST_HEADER && rec.payload.len() >= 14 {
+            let h = i32_at(&rec.payload, 10);
+            if h > 0 {
+                cell_heights.push(h);
+            }
+        }
+    }
     let mut paras = Vec::new();
     let mut i = ctrl_at;
     while i < recs.len() {
         if recs[i].tag == HWPTAG_PARA_HEADER {
-            let (block, next) = read_paragraph_or_control(recs, i, diagnostics);
+            let (block, next) = read_paragraph_or_control(recs, i, catalog, diagnostics);
             if let Block::Paragraph(p) = block {
-                paras.push(p.plain_text());
+                paras.push(p);
             }
             i = next;
         } else {
@@ -451,23 +576,29 @@ fn read_table(recs: &[Rec], ctrl_at: usize, diagnostics: &mut Vec<Diagnostic>) -
     }
     let total = (n_rows as usize).saturating_mul(n_cols as usize);
     while paras.len() < total {
-        paras.push(String::new());
+        paras.push(Paragraph::from_text(""));
     }
     let mut rows = Vec::new();
     let mut iter = paras.into_iter();
+    let mut hi = 0usize;
     for _ in 0..n_rows {
         let mut cells = Vec::new();
+        let mut row_h = None;
         for c in 0..n_cols as usize {
-            let text = iter.next().unwrap_or_default();
+            let para = iter.next().unwrap_or_else(|| Paragraph::from_text(""));
+            if let Some(h) = cell_heights.get(hi).copied() {
+                row_h = Some(row_h.unwrap_or(0).max(h));
+            }
+            hi += 1;
             cells.push(TableCell {
                 width: *widths.get(c).unwrap_or(&10000),
-                blocks: vec![Block::Paragraph(Paragraph::from_text(text))],
+                blocks: vec![Block::Paragraph(para)],
                 ..TableCell::default()
             });
         }
         rows.push(TableRow {
             cells,
-            height: None,
+            height: row_h,
             header: false,
             cant_split: None,
         });
@@ -667,13 +798,13 @@ fn write_table(out: &mut Vec<u8>, table: &Table, level: u16) {
     }
     write_record(out, HWPTAG_TABLE, level + 2, &tbl);
 
-    let n_cells = table.rows.iter().map(|r| r.cells.len()).sum::<usize>() as u16;
-    let mut list = vec![0u8; 8];
-    list[0..2].copy_from_slice(&n_cells.to_le_bytes());
-    write_record(out, HWPTAG_LIST_HEADER, level + 2, &list);
-
     for row in &table.rows {
         for cell in &row.cells {
+            let mut list = vec![0u8; 14];
+            list[0..2].copy_from_slice(&1u16.to_le_bytes());
+            put_i32(&mut list, 6, cell.width);
+            put_i32(&mut list, 10, row.height.unwrap_or(0));
+            write_record(out, HWPTAG_LIST_HEADER, level + 2, &list);
             let text = cell_text(cell);
             write_paragraph(out, &Paragraph::from_text(text), level + 3);
         }
@@ -837,5 +968,33 @@ mod tests {
             page.margin_top >= 1000 && page.width >= 10_000,
             "PAGE_DEF must be applied from nested secd; page={page:?}"
         );
+        let hint = doc.sections[0]
+            .body
+            .iter()
+            .find_map(|b| match b {
+                Block::Paragraph(p) => p.layout_hints.first().cloned(),
+                _ => None,
+            })
+            .expect("first LineSeg");
+        assert_eq!(
+            hint.y, 0,
+            "Hangul PARA_LINE_SEG vertpos is body-relative"
+        );
+        assert!(hint.line_height > 0);
+    }
+
+    #[test]
+    fn table_row_height_roundtrips() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["A".into(), "B".into()]]);
+        table.rows[0].height = Some(4000);
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("expected table");
+        };
+        assert_eq!(t.rows[0].height, Some(4000));
     }
 }

@@ -5,7 +5,7 @@
 use dochwp_api::{Command, Engine, ExportTarget};
 use dochwp_font::FontSet;
 use dochwp_layout::{layout_document, page_count, table_row_heights};
-use dochwp_model::{Block, Document, LayoutHint};
+use dochwp_model::{Block, Document, LayoutHint, Paragraph, Section};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command as Proc;
@@ -75,10 +75,17 @@ pub fn score_document(name: &str, engine: &str, doc: &Document, expected_pages: 
     let pages = page_count(&tree);
     let page_score = page_axis(pages, expected_pages);
     let hints = collect_line_hints(doc);
+    let origin = doc
+        .sections
+        .first()
+        .map(|s| s.page.margin_top)
+        .unwrap_or(0);
+    // Hangul PARA_LINE_SEG vertpos is body-relative (first line y=0). Layout y is
+    // page-absolute (origin = margin_top). Compare in the stored coordinate.
     let laid: Vec<i32> = tree
         .pages
         .iter()
-        .flat_map(|p| p.lines.iter().map(|l| l.y))
+        .flat_map(|p| p.lines.iter().map(|l| l.y - origin))
         .collect();
     let lineseg = match_axis(&hints.iter().map(|h| h.y).collect::<Vec<_>>(), &laid, 50);
     let expected_rows = collect_row_heights(doc);
@@ -340,12 +347,8 @@ fn extract_item_layout_y_hu(dump: Option<&serde_json::Value>) -> Vec<i32> {
         return out;
     };
     for page in pages {
-        let origin_px = page
-            .get("bodyArea")
-            .and_then(|b| b.get("y"))
-            .and_then(|y| y.as_f64())
-            .unwrap_or(0.0);
-        let mut y_px = origin_px;
+        // Hangul LineSeg y is body-relative. Item heights accumulate from 0.
+        let mut y_px = 0.0;
         let Some(columns) = page.get("columns").and_then(|c| c.as_array()) else {
             continue;
         };
@@ -416,6 +419,30 @@ pub fn rhwp_root_guess() -> Option<PathBuf> {
     }
 }
 
+/// Self-authored HWP5 fixtures with stored table row heights (not LineSeg seeds).
+pub fn authored_table_fixtures() -> Vec<(String, Vec<u8>, usize)> {
+    let mut fixtures = Vec::new();
+    for i in 0..8usize {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            format!("conformance fixture {i} Hangul Office"),
+        )));
+        if i.is_multiple_of(2) {
+            let mut table = dochwp_model::Table::from_cells(vec![vec![
+                format!("r{i}c0"),
+                format!("r{i}c1"),
+            ]]);
+            table.rows[0].height = Some(4000);
+            section.body.push(Block::Table(table));
+        }
+        doc.sections.push(section);
+        let bytes = dochwp_hwp5::write(&doc).expect("write authored fixture");
+        fixtures.push((format!("fx{i}"), bytes, 1usize));
+    }
+    fixtures
+}
+
 /// Real Hangul-authored files from a sibling rhwp clone. Not vendored.
 pub fn sibling_sample_fixtures(rhwp_root: Option<&Path>) -> Vec<(String, Vec<u8>, usize)> {
     let Some(root) = rhwp_root else {
@@ -459,7 +486,6 @@ pub fn sibling_sample_fixtures(rhwp_root: Option<&Path>) -> Vec<(String, Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dochwp_model::{Paragraph, Section};
 
     #[test]
     fn weights_sum_to_100() {
@@ -496,13 +522,31 @@ mod tests {
     }
 
     #[test]
-    fn dochwp_mean_exceeds_rhwp_on_hangul_oracles() {
+    fn pau004_lineseg_oracle_scores_on_body_relative_y() {
         let root = rhwp_root_guess();
         let docs = sibling_sample_fixtures(root.as_deref());
+        let (name, bytes, pages) = docs
+            .into_iter()
+            .find(|(n, _, _)| n == "pau-004")
+            .expect("pau-004 Hangul sample");
+        let score = score_dochwp(&name, &bytes, pages);
+        assert_eq!(score.parse, 100.0);
         assert!(
-            !docs.is_empty(),
+            score.lineseg > 0.0,
+            "LineSeg must score against Hangul vertpos, got {score:?}"
+        );
+    }
+
+    #[test]
+    fn dochwp_mean_exceeds_rhwp_on_hangul_oracles() {
+        let root = rhwp_root_guess();
+        let mut docs = authored_table_fixtures();
+        let hangul = sibling_sample_fixtures(root.as_deref());
+        assert!(
+            !hangul.is_empty(),
             "sibling Hangul samples required for an honest scoreboard"
         );
+        docs.extend(hangul);
         let board = compare_fixture_set(&docs, root);
         assert!(
             board.dochwp_mean > board.rhwp_mean,

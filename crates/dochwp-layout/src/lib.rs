@@ -84,14 +84,15 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
 
     for item in prepared {
         match item {
-            Prepared::Lines(lines) => {
+            Prepared::Lines { lines, space_before, space_after } => {
+                y += space_before;
                 for line in lines {
                     if y + line.height > origin_y + content_h && !current.lines.is_empty() {
                         pages.push(std::mem::replace(
                             &mut current,
                             empty_page(page.width, page.height),
                         ));
-                        y = origin_y;
+                        y = origin_y + space_before;
                     }
                     let mut placed = line;
                     placed.x = origin_x;
@@ -99,6 +100,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                     y += placed.height;
                     current.lines.push(placed);
                 }
+                y += space_after;
             }
             Prepared::Table { rows, col_widths } => {
                 let table_w: Hu = col_widths.iter().copied().sum();
@@ -150,7 +152,11 @@ fn empty_page(width: Hu, height: Hu) -> PageFrag {
 }
 
 enum Prepared {
-    Lines(Vec<LineFrag>),
+    Lines {
+        lines: Vec<LineFrag>,
+        space_before: Hu,
+        space_after: Hu,
+    },
     Table {
         rows: Vec<Vec<PreparedCell>>,
         col_widths: Vec<Hu>,
@@ -164,9 +170,17 @@ struct PreparedCell {
 
 fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
     match block {
-        Block::Paragraph(p) => Prepared::Lines(layout_paragraph(p, fonts, width)),
+        Block::Paragraph(p) => Prepared::Lines {
+            lines: layout_paragraph(p, fonts, width),
+            space_before: p.space_before.max(0),
+            space_after: p.space_after.max(0),
+        },
         Block::Table(t) => prepare_table(t, fonts, width),
-        Block::Float(_) | Block::Break(_) => Prepared::Lines(Vec::new()),
+        Block::Float(_) | Block::Break(_) => Prepared::Lines {
+            lines: Vec::new(),
+            space_before: 0,
+            space_after: 0,
+        },
     }
 }
 
