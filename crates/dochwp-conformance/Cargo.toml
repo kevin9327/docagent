@@ -14,6 +14,7 @@ path = "src/main.rs"
 dochwp-api.workspace = true
 dochwp-font.workspace = true
 dochwp-hwp5.workspace = true
+dochwp-hwp3.workspace = true
 dochwp-hwpx.workspace = true
 dochwp-layout.workspace = true
 dochwp-model.workspace = true

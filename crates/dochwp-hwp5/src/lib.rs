@@ -13,7 +13,7 @@ use dochwp_model::{
     Alignment, Block, Diagnostic, Document, LayoutHint, Paragraph, Section, SplitPolicy, Table,
     TableBorders, TableCell, TableRow,
 };
-use flate2::read::ZlibDecoder;
+use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
 
 /// Spec §4.2: tag origin.
@@ -78,38 +78,39 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
         return Err(Error::NotHwp5);
     }
     let mut comp = CompoundFile::open(Cursor::new(bytes.to_vec()))?;
-    let header = read_stream(&mut comp, "FileHeader").unwrap_or_default();
+    let header = read_named_stream(&mut comp, "FileHeader").unwrap_or_default();
     if header.len() < 32 || !header.starts_with(FILE_SIGNATURE) {
         return Err(Error::NotHwp5);
     }
-    let compressed = header.get(36).map(|b| b & 1 == 1).unwrap_or(false);
+    let flags = if header.len() >= 40 {
+        u32::from_le_bytes(header[36..40].try_into().unwrap())
+    } else {
+        0
+    };
+    let compressed = flags & 1 != 0;
     let mut diagnostics = Vec::new();
-    let docinfo = read_stream(&mut comp, "DocInfo").unwrap_or_default();
-    let docinfo = maybe_inflate(&docinfo, compressed);
+    let docinfo = read_named_stream(&mut comp, "DocInfo").unwrap_or_default();
+    let docinfo = inflate_hwp_stream(&docinfo, compressed);
     let _info_recs = parse_records(&docinfo).unwrap_or_default();
 
     let mut sections = Vec::new();
-    let mut idx = 0u32;
-    loop {
-        let path = format!("BodyText/Section{idx}");
-        let Some(raw) = read_stream(&mut comp, &path) else {
-            break;
-        };
-        let data = maybe_inflate(&raw, compressed);
-        match parse_records(&data) {
-            Ok(recs) => sections.push(section_from_records(&recs, &mut diagnostics)),
+    let section_blobs = collect_body_sections(&mut comp);
+    if section_blobs.is_empty() {
+        diagnostics.push(Diagnostic::parse_loss("no BodyText section stream"));
+    }
+    for (idx, raw) in section_blobs.into_iter().enumerate() {
+        let data = inflate_hwp_stream(&raw, compressed);
+        let recs = match parse_records(&data) {
+            Ok(recs) => recs,
             Err(_) => {
                 diagnostics.push(Diagnostic::parse_loss(format!(
                     "section {idx} record stream unreadable"
                 )));
                 sections.push(Section::default());
+                continue;
             }
-        }
-        idx += 1;
-        if idx > 256 {
-            diagnostics.push(Diagnostic::parse_loss("section count capped at 256"));
-            break;
-        }
+        };
+        sections.push(section_from_records(&recs, &mut diagnostics));
     }
     if sections.is_empty() {
         sections.push(Section::default());
@@ -157,27 +158,73 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
     Ok(cursor.into_inner())
 }
 
-fn read_stream(comp: &mut CompoundFile<Cursor<Vec<u8>>>, path: &str) -> Option<Vec<u8>> {
-    if !comp.exists(path) {
-        return None;
+fn read_named_stream(comp: &mut CompoundFile<Cursor<Vec<u8>>>, path: &str) -> Option<Vec<u8>> {
+    for candidate in [
+        path.to_string(),
+        path.replace('/', "\\"),
+        format!("/{path}"),
+    ] {
+        if !comp.exists(&candidate) {
+            continue;
+        }
+        let mut s = comp.open_stream(&candidate).ok()?;
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).ok()?;
+        return Some(buf);
     }
-    let mut s = comp.open_stream(path).ok()?;
-    let mut buf = Vec::new();
-    s.read_to_end(&mut buf).ok()?;
-    Some(buf)
+    None
 }
 
-fn maybe_inflate(data: &[u8], compressed: bool) -> Vec<u8> {
-    if !compressed || data.is_empty() {
+fn collect_body_sections(comp: &mut CompoundFile<Cursor<Vec<u8>>>) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for idx in 0..256u32 {
+        let name = format!("BodyText/Section{idx}");
+        match read_named_stream(comp, &name) {
+            Some(raw) => out.push(raw),
+            None => break,
+        }
+    }
+    out
+}
+
+/// Hangul 5.0 BodyText/DocInfo use raw deflate (wbits=-15); zlib wrapper is fallback.
+fn inflate_hwp_stream(data: &[u8], compressed: bool) -> Vec<u8> {
+    if data.is_empty() {
+        return Vec::new();
+    }
+    if !compressed {
+        if looks_like_records(data) {
+            return data.to_vec();
+        }
+        if let Some(plain) = try_inflate(data)
+            && looks_like_records(&plain)
+        {
+            return plain;
+        }
         return data.to_vec();
     }
-    let mut dec = ZlibDecoder::new(data);
-    let mut out = Vec::new();
-    if dec.read_to_end(&mut out).is_ok() && !out.is_empty() {
-        out
-    } else {
-        data.to_vec()
+    try_inflate(data).unwrap_or_else(|| data.to_vec())
+}
+
+fn try_inflate(data: &[u8]) -> Option<Vec<u8>> {
+    let mut raw = Vec::new();
+    if DeflateDecoder::new(data).read_to_end(&mut raw).is_ok() && !raw.is_empty() {
+        return Some(raw);
     }
+    let mut zlib = Vec::new();
+    if ZlibDecoder::new(data).read_to_end(&mut zlib).is_ok() && !zlib.is_empty() {
+        return Some(zlib);
+    }
+    None
+}
+
+fn looks_like_records(data: &[u8]) -> bool {
+    if data.len() < 4 {
+        return false;
+    }
+    let header = u32::from_le_bytes(data[0..4].try_into().unwrap());
+    let tag = (header & 0x3FF) as u16;
+    (HWPTAG_BEGIN..=HWPTAG_BEGIN + 90).contains(&tag)
 }
 
 fn file_header_bytes() -> Vec<u8> {
@@ -236,31 +283,29 @@ fn write_record(out: &mut Vec<u8>, tag: u16, level: u16, payload: &[u8]) {
 
 fn section_from_records(recs: &[Rec], diagnostics: &mut Vec<Diagnostic>) -> Section {
     let mut section = Section::default();
+    for rec in recs {
+        if rec.tag == HWPTAG_PAGE_DEF {
+            apply_page_def(&mut section, &rec.payload);
+        }
+    }
     let mut body = Vec::new();
     let mut i = 0usize;
     while i < recs.len() {
         match recs[i].tag {
-            HWPTAG_PAGE_DEF => {
-                if recs[i].payload.len() >= 36 {
-                    let p = &recs[i].payload;
-                    section.page.width = i32_at(p, 0);
-                    section.page.height = i32_at(p, 4);
-                    section.page.margin_left = i32_at(p, 8);
-                    section.page.margin_right = i32_at(p, 12);
-                    section.page.margin_top = i32_at(p, 16);
-                    section.page.margin_bottom = i32_at(p, 20);
-                    section.page.header_distance = i32_at(p, 24);
-                    section.page.footer_distance = i32_at(p, 28);
-                    section.page.gutter = i32_at(p, 32);
-                }
-                i += 1;
-            }
             HWPTAG_PARA_HEADER => {
+                if paragraph_is_section_def(recs, i) {
+                    i = skip_tree(recs, i);
+                    continue;
+                }
                 let (block, next) = read_paragraph_or_control(recs, i, diagnostics);
                 body.push(block);
                 i = next;
             }
             HWPTAG_CTRL_HEADER => {
+                if ctrl_id(&recs[i].payload) == CTRL_SECTION {
+                    i = skip_tree(recs, i);
+                    continue;
+                }
                 let (block, next) = read_control(recs, i, diagnostics);
                 if let Some(b) = block {
                     body.push(b);
@@ -274,6 +319,38 @@ fn section_from_records(recs: &[Rec], diagnostics: &mut Vec<Diagnostic>) -> Sect
     }
     section.body = body;
     section
+}
+
+fn apply_page_def(section: &mut Section, p: &[u8]) {
+    if p.len() < 36 {
+        return;
+    }
+    section.page.width = i32_at(p, 0);
+    section.page.height = i32_at(p, 4);
+    section.page.margin_left = i32_at(p, 8);
+    section.page.margin_right = i32_at(p, 12);
+    section.page.margin_top = i32_at(p, 16);
+    section.page.margin_bottom = i32_at(p, 20);
+    section.page.header_distance = i32_at(p, 24);
+    section.page.footer_distance = i32_at(p, 28);
+    section.page.gutter = i32_at(p, 32);
+}
+
+fn skip_tree(recs: &[Rec], start: usize) -> usize {
+    let level = recs[start].level;
+    let mut end = start + 1;
+    while end < recs.len() && recs[end].level > level {
+        end += 1;
+    }
+    end
+}
+
+fn paragraph_is_section_def(recs: &[Rec], start: usize) -> bool {
+    let level = recs[start].level;
+    recs[start + 1..]
+        .iter()
+        .take_while(|r| r.level > level)
+        .any(|r| r.tag == HWPTAG_CTRL_HEADER && ctrl_id(&r.payload) == CTRL_SECTION)
 }
 
 fn read_paragraph_or_control(
@@ -722,5 +799,43 @@ mod tests {
         let mut long = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
         long.extend_from_slice(&[0u8; 2048]);
         let _ = read(&long);
+    }
+
+    #[test]
+    fn hangul_office_file_yields_body_text_and_lineseg() {
+        let dir = std::env::var("RHWP_DIR").unwrap_or_else(|_| r"C:\Users\swsz9\rhwp".into());
+        let path = std::path::PathBuf::from(dir)
+            .join("samples")
+            .join("basic")
+            .join("pau-004.hwp");
+        let bytes = std::fs::read(&path).expect("sibling Hangul sample must be readable");
+        let doc = read(&bytes).expect("parse Hangul HWP5");
+        assert!(
+            !doc.plain_text().trim().is_empty(),
+            "body empty; diagnostics={:?}",
+            doc.diagnostics
+        );
+        let hints: usize = doc
+            .sections
+            .iter()
+            .flat_map(|s| s.body.iter())
+            .map(|b| match b {
+                Block::Paragraph(p) => p.layout_hints.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(hints > 0, "PARA_LINE_SEG must be preserved as LayoutHint");
+        assert!(
+            !doc.diagnostics
+                .iter()
+                .any(|d| d.code == dochwp_model::DiagnosticCode::ParseLoss),
+            "unexpected parse loss: {:?}",
+            doc.diagnostics
+        );
+        let page = &doc.sections[0].page;
+        assert!(
+            page.margin_top >= 1000 && page.width >= 10_000,
+            "PAGE_DEF must be applied from nested secd; page={page:?}"
+        );
     }
 }

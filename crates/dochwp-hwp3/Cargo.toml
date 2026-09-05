@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 dochwp-model.workspace = true
+flate2.workspace = true
 thiserror.workspace = true
 
 [lints]

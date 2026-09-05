@@ -569,6 +569,7 @@ version = "0.1.0"
 dependencies = [
  "dochwp-api",
  "dochwp-font",
+ "dochwp-hwp3",
  "dochwp-hwp5",
  "dochwp-hwpx",
  "dochwp-layout",
@@ -618,6 +619,7 @@ name = "dochwp-hwp3"
 version = "0.1.0"
 dependencies = [
  "dochwp-model",
+ "flate2",
  "thiserror 2.0.20",
 ]
 

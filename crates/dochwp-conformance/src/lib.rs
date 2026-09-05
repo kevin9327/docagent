@@ -71,16 +71,68 @@ pub fn score_dochwp(name: &str, bytes: &[u8], expected_pages: usize) -> DocScore
 pub fn score_document(name: &str, engine: &str, doc: &Document, expected_pages: usize) -> DocScore {
     let fonts = FontSet::bundled();
     let tree = layout_document(doc, &fonts);
-    let parse = if doc.sections.is_empty() { 0.0 } else { 100.0 };
+    let parse = parse_axis(doc);
     let pages = page_count(&tree);
-    let page_score = if expected_pages == 0 || pages == expected_pages {
+    let page_score = page_axis(pages, expected_pages);
+    let hints = collect_line_hints(doc);
+    let laid: Vec<i32> = tree
+        .pages
+        .iter()
+        .flat_map(|p| p.lines.iter().map(|l| l.y))
+        .collect();
+    let lineseg = match_axis(&hints.iter().map(|h| h.y).collect::<Vec<_>>(), &laid, 50);
+    let expected_rows = collect_row_heights(doc);
+    let got_rows = table_row_heights(&tree);
+    let row_height = match_axis(&expected_rows, &got_rows, 200);
+    finish_score(name, engine, lineseg, page_score, row_height, parse)
+}
+
+fn parse_axis(doc: &Document) -> f64 {
+    if document_has_body(doc) {
         100.0
     } else {
-        let diff = (pages as i32 - expected_pages as i32).unsigned_abs() as f64;
+        0.0
+    }
+}
+
+fn document_has_body(doc: &Document) -> bool {
+    doc.sections.iter().any(|s| {
+        s.body.iter().any(|b| match b {
+            Block::Paragraph(p) => !p.plain_text().trim().is_empty(),
+            Block::Table(t) => t.rows.iter().any(|r| !r.cells.is_empty()),
+            _ => false,
+        })
+    })
+}
+
+fn page_axis(got: usize, expected: usize) -> f64 {
+    if expected == 0 {
+        0.0
+    } else if got == expected {
+        100.0
+    } else {
+        let diff = (got as i32 - expected as i32).unsigned_abs() as f64;
         (100.0 - diff * 25.0).max(0.0)
-    };
-    let hints: Vec<LayoutHint> = doc
-        .sections
+    }
+}
+
+/// Missing oracle scores 0. An empty expected list is not a perfect score.
+fn match_axis(expected: &[i32], got: &[i32], tol: i32) -> f64 {
+    if expected.is_empty() {
+        return 0.0;
+    }
+    if got.is_empty() {
+        return 0.0;
+    }
+    let n = expected.len().min(got.len());
+    let hits = (0..n)
+        .filter(|i| (expected[*i] - got[*i]).abs() <= tol)
+        .count();
+    (hits as f64) * 100.0 / (expected.len() as f64)
+}
+
+fn collect_line_hints(doc: &Document) -> Vec<LayoutHint> {
+    doc.sections
         .iter()
         .flat_map(|s| s.body.iter())
         .filter_map(|b| match b {
@@ -88,30 +140,11 @@ pub fn score_document(name: &str, engine: &str, doc: &Document, expected_pages: 
             _ => None,
         })
         .flatten()
-        .collect();
-    let laid: Vec<i32> = tree
-        .pages
-        .iter()
-        .flat_map(|p| p.lines.iter().map(|l| l.y))
-        .collect();
-    let lineseg = if hints.is_empty() {
-        100.0
-    } else {
-        let n = hints.len().min(laid.len());
-        if n == 0 {
-            0.0
-        } else {
-            let mut hits = 0u32;
-            for i in 0..n {
-                if (hints[i].y - laid[i]).abs() <= 50 {
-                    hits += 1;
-                }
-            }
-            (hits as f64) * 100.0 / (hints.len() as f64)
-        }
-    };
-    let expected_rows: Vec<i32> = doc
-        .sections
+        .collect()
+}
+
+fn collect_row_heights(doc: &Document) -> Vec<i32> {
+    doc.sections
         .iter()
         .flat_map(|s| s.body.iter())
         .filter_map(|b| match b {
@@ -119,24 +152,33 @@ pub fn score_document(name: &str, engine: &str, doc: &Document, expected_pages: 
             _ => None,
         })
         .flatten()
-        .collect();
-    let got_rows = table_row_heights(&tree);
-    let row_height = if expected_rows.is_empty() {
-        100.0
-    } else {
-        let n = expected_rows.len().min(got_rows.len());
-        if n == 0 {
-            0.0
-        } else {
-            let mut hits = 0u32;
-            for i in 0..n {
-                if (expected_rows[i] - got_rows[i]).abs() <= 200 {
-                    hits += 1;
-                }
-            }
-            (hits as f64) * 100.0 / (expected_rows.len() as f64)
+        .collect()
+}
+
+/// Hangul PARA_LINE_SEG / LineInfo y drops when a new page starts.
+pub fn pages_from_line_hints(hints: &[LayoutHint]) -> usize {
+    if hints.is_empty() {
+        return 0;
+    }
+    let mut pages = 1usize;
+    let mut prev = hints[0].y;
+    for h in hints.iter().skip(1) {
+        if h.y + 400 < prev {
+            pages += 1;
         }
-    };
+        prev = h.y;
+    }
+    pages
+}
+
+fn finish_score(
+    name: &str,
+    engine: &str,
+    lineseg: f64,
+    page_score: f64,
+    row_height: f64,
+    parse: f64,
+) -> DocScore {
     let total = (lineseg * f64::from(WEIGHT_LINESEG)
         + page_score * f64::from(WEIGHT_PAGE_COUNT)
         + row_height * f64::from(WEIGHT_ROW_HEIGHT)
@@ -200,7 +242,8 @@ fn find_rhwp_bin(root: &Path) -> Option<PathBuf> {
 
 fn try_rhwp_cli(name: &str, bytes: &[u8], expected_pages: usize, root: &Path) -> Option<DocScore> {
     let bin = find_rhwp_bin(root)?;
-    let tmp = std::env::temp_dir().join(format!("dochwp-rhwp-{name}.hwp"));
+    let ext = if dochwp_hwpx::sniff(bytes) { "hwpx" } else { "hwp" };
+    let tmp = std::env::temp_dir().join(format!("dochwp-rhwp-{name}.{ext}"));
     std::fs::write(&tmp, bytes).ok()?;
     let path = tmp.to_str()?.to_string();
 
@@ -221,28 +264,11 @@ fn try_rhwp_cli(name: &str, bytes: &[u8], expected_pages: usize, root: &Path) ->
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
     let parse = 100.0;
-    let page_score = if expected_pages == 0 || rhwp_pages == expected_pages {
-        100.0
-    } else {
-        let diff = (rhwp_pages as i32 - expected_pages as i32).unsigned_abs() as f64;
-        (100.0 - diff * 25.0).max(0.0)
-    };
+    let page_score = page_axis(rhwp_pages, expected_pages);
 
-    let oracle = dochwp_hwp5::read(bytes).ok();
-    let hints: Vec<LayoutHint> = oracle
-        .as_ref()
-        .map(|d| {
-            d.sections
-                .iter()
-                .flat_map(|s| s.body.iter())
-                .filter_map(|b| match b {
-                    Block::Paragraph(p) => Some(p.layout_hints.clone()),
-                    _ => None,
-                })
-                .flatten()
-                .collect()
-        })
-        .unwrap_or_default();
+    let oracle = oracle_document(bytes);
+    let hints = oracle.as_ref().map(collect_line_hints).unwrap_or_default();
+    let expected_rows = oracle.as_ref().map(collect_row_heights).unwrap_or_default();
 
     let dump = Proc::new(&bin)
         .args(["dump-pages", &path, "--json"])
@@ -252,60 +278,24 @@ fn try_rhwp_cli(name: &str, bytes: &[u8], expected_pages: usize, root: &Path) ->
         .as_ref()
         .filter(|o| o.status.success())
         .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok());
-    let rhwp_ys = extract_y_hu(dump_json.as_ref());
-    let lineseg = if hints.is_empty() {
-        100.0
-    } else if rhwp_ys.is_empty() {
-        0.0
-    } else {
-        let n = hints.len().min(rhwp_ys.len());
-        let hits = (0..n)
-            .filter(|i| (hints[*i].y - rhwp_ys[*i]).abs() <= 50)
-            .count();
-        (hits as f64) * 100.0 / (hints.len() as f64)
-    };
-
-    let expected_rows: Vec<i32> = oracle
-        .as_ref()
-        .map(|d| {
-            d.sections
-                .iter()
-                .flat_map(|s| s.body.iter())
-                .filter_map(|b| match b {
-                    Block::Table(t) => Some(t.rows.iter().filter_map(|r| r.height).collect::<Vec<_>>()),
-                    _ => None,
-                })
-                .flatten()
-                .collect()
-        })
-        .unwrap_or_default();
+    // Item layout y from cumulative height.total — not dump-pages lineSegs (file echo).
+    let rhwp_ys = extract_item_layout_y_hu(dump_json.as_ref());
+    let hint_ys: Vec<i32> = hints.iter().map(|h| h.y).collect();
+    let lineseg = match_axis(&hint_ys, &rhwp_ys, 50);
     let rhwp_rows = extract_row_heights_hu(dump_json.as_ref());
-    let row_height = if expected_rows.is_empty() {
-        100.0
-    } else if rhwp_rows.is_empty() {
-        0.0
-    } else {
-        let n = expected_rows.len().min(rhwp_rows.len());
-        let hits = (0..n)
-            .filter(|i| (expected_rows[*i] - rhwp_rows[*i]).abs() <= 200)
-            .count();
-        (hits as f64) * 100.0 / (expected_rows.len() as f64)
-    };
+    let row_height = match_axis(&expected_rows, &rhwp_rows, 200);
 
-    let total = (lineseg * f64::from(WEIGHT_LINESEG)
-        + page_score * f64::from(WEIGHT_PAGE_COUNT)
-        + row_height * f64::from(WEIGHT_ROW_HEIGHT)
-        + parse * f64::from(WEIGHT_PARSE))
-        / 100.0;
-    Some(DocScore {
-        name: name.into(),
-        engine: "rhwp".into(),
-        total,
-        lineseg,
-        page_count: page_score,
-        row_height,
-        parse,
-    })
+    Some(finish_score(name, "rhwp", lineseg, page_score, row_height, parse))
+}
+
+fn oracle_document(bytes: &[u8]) -> Option<Document> {
+    if dochwp_hwp5::sniff(bytes) {
+        return dochwp_hwp5::read(bytes).ok();
+    }
+    if dochwp_hwp3::sniff(bytes) {
+        return dochwp_hwp3::read(bytes).ok();
+    }
+    None
 }
 
 /// rhwp dump-pages / render trees mix px and HU. 96 dpi Hangul uses 75 HU/px
@@ -339,12 +329,41 @@ fn walk_numbers(value: &serde_json::Value, keys: &[&str], out: &mut Vec<i32>) {
     }
 }
 
-fn extract_y_hu(dump: Option<&serde_json::Value>) -> Vec<i32> {
-    let Some(v) = dump else {
+/// rhwp layout y: body origin + cumulative `items[].height.total`.
+/// Stored `lineSegs` are Hangul file cache, not rhwp's independent layout.
+fn extract_item_layout_y_hu(dump: Option<&serde_json::Value>) -> Vec<i32> {
+    let Some(root) = dump else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    walk_numbers(v, &["y", "top", "vertpos", "verticalPos"], &mut out);
+    let Some(pages) = root.get("pages").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for page in pages {
+        let origin_px = page
+            .get("bodyArea")
+            .and_then(|b| b.get("y"))
+            .and_then(|y| y.as_f64())
+            .unwrap_or(0.0);
+        let mut y_px = origin_px;
+        let Some(columns) = page.get("columns").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for col in columns {
+            let Some(items) = col.get("items").and_then(|i| i.as_array()) else {
+                continue;
+            };
+            for item in items {
+                out.push(to_hu_maybe_px(y_px));
+                let h = item
+                    .get("height")
+                    .and_then(|h| h.get("total"))
+                    .and_then(|t| t.as_f64())
+                    .unwrap_or(0.0);
+                y_px += h;
+            }
+        }
+    }
     out
 }
 
@@ -407,18 +426,24 @@ pub fn sibling_sample_fixtures(rhwp_root: Option<&Path>) -> Vec<(String, Vec<u8>
         "samples/basic/BlogForm_BookReview.hwp",
         "samples/basic/english.hwp",
         "samples/basic/Textmail.hwp",
+        "samples/basic/BookReview.hwp",
+        "samples/basic/interview.hwp",
+        "samples/hwp3-sample.hwp",
     ];
-    let bin = find_rhwp_bin(root);
     let mut out = Vec::new();
     for rel in names {
         let path = root.join(rel);
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        let pages = bin
-            .as_ref()
-            .and_then(|b| rhwp_info_page_count(b, &path))
-            .unwrap_or(1);
+        let Some(doc) = oracle_document(&bytes) else {
+            continue;
+        };
+        if !document_has_body(&doc) {
+            continue;
+        }
+        let hints = collect_line_hints(&doc);
+        let pages = pages_from_line_hints(&hints);
         out.push((
             path.file_stem()
                 .and_then(|s| s.to_str())
@@ -429,18 +454,6 @@ pub fn sibling_sample_fixtures(rhwp_root: Option<&Path>) -> Vec<(String, Vec<u8>
         ));
     }
     out
-}
-
-fn rhwp_info_page_count(bin: &Path, file: &Path) -> Option<usize> {
-    let out = Proc::new(bin)
-        .args(["info", file.to_str()?, "--json"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    v.get("pageCount").and_then(|x| x.as_u64()).map(|n| n as usize)
 }
 
 #[cfg(test)]
@@ -457,39 +470,46 @@ mod tests {
     }
 
     #[test]
-    fn dochwp_scores_authored_fixture_above_rhwp() {
+    fn empty_body_parse_scores_zero() {
+        let doc = Document::new();
+        let score = score_document("empty", "dochwp", &doc, 0);
+        assert_eq!(score.parse, 0.0);
+        assert_eq!(score.lineseg, 0.0);
+        assert_eq!(score.row_height, 0.0);
+        assert_eq!(score.page_count, 0.0);
+        assert_eq!(score.total, 0.0);
+    }
+
+    #[test]
+    fn missing_lineseg_oracle_is_not_perfect() {
         let mut doc = Document::new();
         let mut section = Section::default();
         section
             .body
-            .push(Block::Paragraph(Paragraph::from_text("scoreboard")));
+            .push(Block::Paragraph(Paragraph::from_text("no hints")));
         doc.sections.push(section);
-        let tree = layout_document(&doc, &FontSet::bundled());
-        if let Some(Block::Paragraph(p)) = doc.sections[0].body.get_mut(0) {
-            p.layout_hints = tree
-                .pages
-                .iter()
-                .flat_map(|page| page.lines.iter())
-                .map(|line| LayoutHint {
-                    text_start: 0,
-                    x: line.x,
-                    y: line.y,
-                    width: line.width,
-                    line_height: line.height,
-                    text_height: line.font_size,
-                    baseline: line.baseline,
-                    spacing: 0,
-                    flags: 0,
-                })
-                .collect();
-        }
-        let bytes = dochwp_hwp5::write(&doc).unwrap();
-        let board = compare_fixture_set(&[("authored".into(), bytes, 1)], rhwp_root_guess());
+        let score = score_document("no-hints", "dochwp", &doc, 1);
+        assert_eq!(score.parse, 100.0);
+        assert_eq!(score.lineseg, 0.0);
+        assert_eq!(score.row_height, 0.0);
+        assert!(score.total < 100.0);
+    }
+
+    #[test]
+    fn dochwp_mean_exceeds_rhwp_on_hangul_oracles() {
+        let root = rhwp_root_guess();
+        let docs = sibling_sample_fixtures(root.as_deref());
+        assert!(
+            !docs.is_empty(),
+            "sibling Hangul samples required for an honest scoreboard"
+        );
+        let board = compare_fixture_set(&docs, root);
         assert!(
             board.dochwp_mean > board.rhwp_mean,
-            "dochwp {} rhwp {}",
+            "dochwp {} rhwp {} scores={:?}",
             board.dochwp_mean,
-            board.rhwp_mean
+            board.rhwp_mean,
+            board.scores
         );
     }
 }

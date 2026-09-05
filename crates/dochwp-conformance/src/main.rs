@@ -1,7 +1,5 @@
 use dochwp_conformance::{compare_fixture_set, published_weights, rhwp_root_guess};
-use dochwp_font::FontSet;
-use dochwp_layout::layout_document;
-use dochwp_model::{Block, Document, LayoutHint, Paragraph, Section};
+use dochwp_model::{Block, Document, Paragraph, Section};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
@@ -9,7 +7,6 @@ fn main() -> Result<(), String> {
         println!("{}", published_weights());
         return Ok(());
     }
-    let fonts = FontSet::bundled();
     let mut fixtures = Vec::new();
     for i in 0..8usize {
         let mut doc = Document::new();
@@ -23,25 +20,6 @@ fn main() -> Result<(), String> {
             ])));
         }
         doc.sections.push(section);
-        let tree = layout_document(&doc, &fonts);
-        if let Some(Block::Paragraph(p)) = doc.sections[0].body.get_mut(0) {
-            p.layout_hints = tree
-                .pages
-                .iter()
-                .flat_map(|page| page.lines.iter())
-                .map(|line| LayoutHint {
-                    text_start: 0,
-                    x: line.x,
-                    y: line.y,
-                    width: line.width,
-                    line_height: line.height,
-                    text_height: line.font_size,
-                    baseline: line.baseline,
-                    spacing: 0,
-                    flags: 0,
-                })
-                .collect();
-        }
         let bytes = dochwp_hwp5::write(&doc).map_err(|e| e.to_string())?;
         fixtures.push((format!("fx{i}"), bytes, 1usize));
     }
