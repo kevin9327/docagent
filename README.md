@@ -59,7 +59,10 @@ cd docagent
 cargo test --workspace
 cargo run -p docagent-cli -- convert examples/letter.md \
   --pdf out.pdf --html out.html --odt out.odt --docx out.docx --capsule cap.json
+cargo run -p docagent-cli -- prove examples/letter.md
 ```
+
+`prove` converts twice (PDF/A + HTML) and exits 0 only when the bytes and the three SHA-256 hashes match. Fixture: [`docs/assets/letter-prove.json`](docs/assets/letter-prove.json).
 
 Binaries: `docagent` (CLI) · `docagentd` (daemon) · MCP + WIT adapters.
 
@@ -74,6 +77,23 @@ let out = engine.execute(Command::Convert {
 })?;
 // out.capsule.{input_hash, plan_hash, output_hash}
 ```
+
+## Same bytes twice
+
+Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/letter.md) (PDF/A + HTML) produced the same files. The test is `letter_md_is_byte_identical_across_two_runs`.
+
+<p align="center">
+  <img src="docs/assets/output-rerun.png" alt="Two converts of examples/letter.md with identical input, plan, and output SHA-256 hashes" width="100%">
+</p>
+<p align="center"><sub>Run 1 and run 2. <code>identical: true</code>. PDF bytes equal. HTML bytes equal.</sub></p>
+
+| Hash | SHA-256 (both runs) |
+| --- | --- |
+| input | `2465c17a0efd5023bcd4fe48be2f355c4a09eaf70b1f8b72197b5122545d4e7b` |
+| plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
+| output | `74be5c0e8f71cd8162236dfb8802408c34145344636d0c5bec94e08244c0a894` |
+
+These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this. We do not ship OmniDocBench numbers.
 
 ## What you get
 

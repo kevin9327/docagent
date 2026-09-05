@@ -401,6 +401,25 @@ mod tests {
     }
 
     #[test]
+    fn letter_md_is_byte_identical_across_two_runs() {
+        let bytes = include_bytes!("../../../examples/letter.md");
+        let mut a = Engine::new();
+        let mut b = Engine::new();
+        let cmd = Command::Convert {
+            input: bytes.to_vec(),
+            input_kind: None,
+            targets: vec![ExportTarget::PdfA, ExportTarget::Html],
+        };
+        let oa = a.execute(cmd.clone()).unwrap();
+        let ob = b.execute(cmd).unwrap();
+        assert_eq!(oa.pdf.as_ref().unwrap(), ob.pdf.as_ref().unwrap());
+        assert_eq!(oa.html.as_ref().unwrap(), ob.html.as_ref().unwrap());
+        assert_eq!(oa.capsule, ob.capsule);
+        assert_eq!(oa.capsule.input_hash.len(), 64);
+        assert_ne!(oa.capsule.input_hash, oa.capsule.output_hash);
+    }
+
+    #[test]
     fn ts_contract_is_nonempty() {
         let d = ts_decls();
         assert!(d.contains("Command"));

@@ -1,21 +1,26 @@
 # DocAgent #1 loop state
 
-Last cycle: 3 (2026-09-06) — PDF/A table grid + refreshed convert screenshots
+Last cycle: 4 (2026-09-06) — byte-identical rerun proof on the landing page
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- PDF/A now paints table cell fills and 1pt grid strokes from the display list (HTML already had borders; the README PDF shot was tab-separated columns).
-- Header row uses the same mint fill as HTML `<th>`.
-- Markdown tables set border width to 1pt (`HU_PER_POINT`). Stroke rects live on `PageFrag.strokes` so Hangul `table_row_heights` is unchanged.
-- Reconverted `examples/letter.md` and refreshed `output-pdf.png` / `output-html.png` / `output-capsule.png` / `output-trio.png`.
+- CLI `prove`: convert twice (PDF/A + HTML), print both capsules, exit 0 only if bytes and hashes match.
+- Test `letter_md_is_byte_identical_across_two_runs` pins `examples/letter.md`.
+- README **Same bytes twice** shows the real hashes from that prove (same as `letter-capsule.json`) plus `output-rerun.png`.
+- Fixture JSON: `docs/assets/letter-prove.json`. No OmniDocBench / OCR numbers.
+
+Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
+- input  `2465c17a0efd5023bcd4fe48be2f355c4a09eaf70b1f8b72197b5122545d4e7b`
+- plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
+- output `74be5c0e8f71cd8162236dfb8802408c34145344636d0c5bec94e08244c0a894`
 
 ## Next
 
-1. Byte-identical rerun proof on the README (two-run hash equality fixture from `convert_is_byte_identical_across_two_runs`). Still no invented OmniDocBench numbers.
-2. Then the next layout gap that still loses on a real letter: list markers, or PDF drawing of non-table fills.
+1. List markers on the sample letter (markdown `- ` currently strips the bullet).
+2. Or PDF drawing of non-table fills beyond the grid.
 3. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule

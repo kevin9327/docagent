@@ -40,3 +40,4 @@ Accumulators are `i64`. `f32`/`f64` are forbidden in `docagent-layout`. LineSeg 
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo run -p docagent-lint`
 - `cargo run -p docagent-cli -- convert <file> --pdf out.pdf --html out.html --ir out.json`
+- `cargo run -p docagent-cli -- prove examples/letter.md`

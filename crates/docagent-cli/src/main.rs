@@ -36,12 +36,46 @@ enum Cmd {
         #[arg(long)]
         hml: Option<PathBuf>,
     },
+    /// Convert twice. Exit 0 only if PDF/A, HTML, and capsule hashes match.
+    Prove {
+        input: PathBuf,
+    },
     Version,
 }
 
 fn main() -> Result<(), String> {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Prove { input } => {
+            let bytes = std::fs::read(&input).map_err(|e| e.to_string())?;
+            let cmd = Command::Convert {
+                input: bytes,
+                input_kind: None,
+                targets: vec![ExportTarget::PdfA, ExportTarget::Html],
+            };
+            let mut a = Engine::new();
+            let mut b = Engine::new();
+            let oa = a.execute(cmd.clone()).map_err(|e| e.to_string())?;
+            let ob = b.execute(cmd).map_err(|e| e.to_string())?;
+            let pdf_eq = oa.pdf == ob.pdf;
+            let html_eq = oa.html == ob.html;
+            let cap_eq = oa.capsule == ob.capsule;
+            let identical = pdf_eq && html_eq && cap_eq;
+            let report = serde_json::json!({
+                "identical": identical,
+                "pdf_bytes_equal": pdf_eq,
+                "html_bytes_equal": html_eq,
+                "run1": oa.capsule,
+                "run2": ob.capsule,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+            );
+            if !identical {
+                return Err("rerun produced different bytes".into());
+            }
+        }
         Cmd::Version => {
             println!("{}", env!("CARGO_PKG_VERSION"));
         }

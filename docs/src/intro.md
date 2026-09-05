@@ -21,6 +21,7 @@ Every Command writes a three-hash capsule (input, plan, output).
 
 ```
 docagent convert examples/letter.md --pdf out.pdf --html out.html --md out.md --odt out.odt --capsule cap.json
+docagent prove examples/letter.md
 ```
 
 No GUI. No spreadsheet or presentation models.
