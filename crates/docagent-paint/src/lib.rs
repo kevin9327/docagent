@@ -58,7 +58,10 @@ pub fn paint(tree: &FragmentTree) -> DisplayList {
             h: page.height,
             color: [255, 255, 255, 255],
         });
-        for rect in &page.rects {
+        for rect in page.rects.iter().chain(page.strokes.iter()) {
+            if rect.fill[3] == 0 {
+                continue;
+            }
             ops.push(Op::FillRect {
                 x: rect.x,
                 y: rect.y,

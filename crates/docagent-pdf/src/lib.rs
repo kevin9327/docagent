@@ -4,10 +4,13 @@
 
 use docagent_font::FontSet;
 use docagent_paint::{DisplayList, Op};
+use krilla::color::rgb;
 use krilla::configure::{Archival, ConfigurationBuilder, Validator};
-use krilla::geom::Point;
+use krilla::geom::{PathBuilder, Point, Rect};
 use krilla::metadata::{DateTime, Metadata};
+use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
+use krilla::paint::Fill;
 use krilla::text::{Font, TextDirection};
 use krilla::{Document, SerializeSettings};
 
@@ -72,27 +75,51 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
             {
                 let mut surface = page.surface();
                 for op in &ops {
-                    if let Op::Text {
-                        x,
-                        y,
-                        size,
-                        text,
-                        color: _,
-                    } = op
-                    {
-                        let mapped = docagent_font::retain_mapped_chars(fonts, text);
-                        if mapped.is_empty() {
-                            continue;
+                    match op {
+                        Op::FillRect { x, y, w, h, color } => {
+                            if color[3] == 0 || (*w <= 0 || *h <= 0) {
+                                continue;
+                            }
+                            if *color == [255, 255, 255, 255] {
+                                continue;
+                            }
+                            fill_rect(
+                                &mut surface,
+                                *x as f32 / HU_PER_PT,
+                                *y as f32 / HU_PER_PT,
+                                *w as f32 / HU_PER_PT,
+                                *h as f32 / HU_PER_PT,
+                                *color,
+                            );
                         }
-                        let pt = (*size as f32 / HU_PER_PT).max(1.0);
-                        surface.draw_text(
-                            Point::from_xy(*x as f32 / HU_PER_PT, *y as f32 / HU_PER_PT),
-                            font.clone(),
-                            pt,
-                            &mapped,
-                            false,
-                            TextDirection::Auto,
-                        );
+                        Op::Text {
+                            x,
+                            y,
+                            size,
+                            text,
+                            color: _,
+                        } => {
+                            let mapped = docagent_font::retain_mapped_chars(fonts, text);
+                            if mapped.is_empty() {
+                                continue;
+                            }
+                            surface.set_fill(Some(Fill {
+                                paint: rgb::Color::black().into(),
+                                opacity: NormalizedF32::ONE,
+                                rule: Default::default(),
+                            }));
+                            surface.set_stroke(None);
+                            let pt = (*size as f32 / HU_PER_PT).max(1.0);
+                            surface.draw_text(
+                                Point::from_xy(*x as f32 / HU_PER_PT, *y as f32 / HU_PER_PT),
+                                font.clone(),
+                                pt,
+                                &mapped,
+                                false,
+                                TextDirection::Auto,
+                            );
+                        }
+                        Op::Page { .. } => {}
                     }
                 }
                 surface.finish();
@@ -101,6 +128,32 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
         }
     }
     document.finish().map_err(|e| format!("{e:?}"))
+}
+
+fn fill_rect(
+    surface: &mut krilla::surface::Surface<'_>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: [u8; 4],
+) {
+    let Some(rect) = Rect::from_xywh(x, y, w.max(0.05), h.max(0.05)) else {
+        return;
+    };
+    let mut pb = PathBuilder::new();
+    pb.push_rect(rect);
+    let Some(path) = pb.finish() else {
+        return;
+    };
+    let opacity = NormalizedF32::new(f32::from(color[3]) / 255.0).unwrap_or(NormalizedF32::ONE);
+    surface.set_fill(Some(Fill {
+        paint: rgb::Color::new(color[0], color[1], color[2]).into(),
+        opacity,
+        rule: Default::default(),
+    }));
+    surface.set_stroke(None);
+    surface.draw_path(&path);
 }
 
 pub fn claims_pdfa(bytes: &[u8]) -> bool {
@@ -135,5 +188,27 @@ mod tests {
         let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
         assert!(pdf.starts_with(b"%PDF"));
         assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+    }
+
+    #[test]
+    fn table_pdf_paints_cell_paths() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Table(
+            docagent_model::Table::from_cells(vec![vec!["a".into(), "b".into()]]),
+        ));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let list = paint(&tree);
+        assert!(
+            list.ops.iter().any(
+                |op| matches!(op, Op::FillRect { color, w, h, .. } if *color == [0, 0, 0, 255] && *w > 0 && *h > 0)
+            ),
+            "table grid must paint black strokes"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf));
+        assert!(pdf.len() > 1000);
     }
 }

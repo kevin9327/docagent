@@ -92,6 +92,13 @@ fn flush_table(section: &mut Section, rows: &mut Vec<Vec<String>>) {
         first.header = true;
     }
     table.header_row_count = 1;
+    let w = docagent_model::HU_PER_POINT;
+    table.borders.top.width = w;
+    table.borders.bottom.width = w;
+    table.borders.left.width = w;
+    table.borders.right.width = w;
+    table.borders.inside_h.width = w;
+    table.borders.inside_v.width = w;
     section.body.push(Block::Table(table));
 }
 

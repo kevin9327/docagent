@@ -1,30 +1,22 @@
 # DocAgent #1 loop state
 
-Last cycle: 2 (2026-09-06) — real convert screenshots + wrap/ligature/table layout
+Last cycle: 3 (2026-09-06) — PDF/A table grid + refreshed convert screenshots
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- `examples/letter.md` is the copy-paste sample (README command no longer points at a missing `letter.docx`).
-- Converted it with `cargo run -p docagent-cli -- convert examples/letter.md`.
-- Committed actual artifacts: `docs/assets/letter.pdf`, `letter.html`, `letter-capsule.json`.
-- Committed screenshots of those artifacts: `output-pdf.png`, `output-html.png`, `output-capsule.png`, `output-trio.png`.
-- README above-the-fold now has the trio; **What you get** leads with real PDF/HTML/capsule, then the photographs.
-- `docagent-cli` `default-run = "docagent"` so the README `cargo run -p docagent-cli -- convert ...` line works.
-
-Engine (needed for an honest PDF screenshot, not a broken wrap):
-- Shaping maps rustybuzz clusters onto characters so ligatures no longer drop the last letters (`48291`, `hoping`).
-- Line breaking prefers spaces (no `fo/nts`).
-- Markdown tables stretch to the content width; first row is a header.
-- Markdown headings carry size (18pt / 14pt). HTML emits `<h1>`/`<h2>`.
+- PDF/A now paints table cell fills and 1pt grid strokes from the display list (HTML already had borders; the README PDF shot was tab-separated columns).
+- Header row uses the same mint fill as HTML `<th>`.
+- Markdown tables set border width to 1pt (`HU_PER_POINT`). Stroke rects live on `PageFrag.strokes` so Hangul `table_row_heights` is unchanged.
+- Reconverted `examples/letter.md` and refreshed `output-pdf.png` / `output-html.png` / `output-capsule.png` / `output-trio.png`.
 
 ## Next
 
-1. Table borders in PDF/A (HTML has them; the PDF page still looks like tab-separated columns).
-2. Paint `FillRect` borders from layout so the PDF screenshot matches the HTML table.
-3. Then the next matrix gap: byte-identical rerun proof on the README (two-run hash equality fixture), still no invented OmniDocBench numbers.
+1. Byte-identical rerun proof on the README (two-run hash equality fixture from `convert_is_byte_identical_across_two_runs`). Still no invented OmniDocBench numbers.
+2. Then the next layout gap that still loses on a real letter: list markers, or PDF drawing of non-table fills.
+3. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule
 

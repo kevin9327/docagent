@@ -7,7 +7,8 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, Document, Hu, LineSpacing, Paragraph, Section, Table, DEFAULT_FONT_SIZE_HU,
+    Alignment, Block, BorderStyle, Document, Hu, LineSpacing, Paragraph, Section, Table,
+    DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
 
@@ -26,6 +27,8 @@ pub struct PageFrag {
     pub height: Hu,
     pub lines: Vec<LineFrag>,
     pub rects: Vec<RectFrag>,
+    /// Table grid strokes. Not counted by `table_row_heights`.
+    pub strokes: Vec<RectFrag>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +63,7 @@ pub fn layout_document(doc: &Document, fonts: &FontSet) -> FragmentTree {
             height: p.height,
             lines: Vec::new(),
             rects: Vec::new(),
+            strokes: Vec::new(),
         });
     }
     FragmentTree { pages }
@@ -102,7 +106,12 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                 }
                 y += space_after;
             }
-            Prepared::Table { rows, col_widths } => {
+            Prepared::Table {
+                rows,
+                col_widths,
+                stroke_w,
+                stroke,
+            } => {
                 let table_w: Hu = col_widths.iter().copied().sum();
                 let x0 = origin_x;
                 for (ri, row) in rows.iter().enumerate() {
@@ -116,20 +125,28 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                     }
                     let mut x = x0;
                     for (ci, cell) in row.iter().enumerate() {
+                        let cw = *col_widths.get(ci).unwrap_or(&10000);
                         current.rects.push(RectFrag {
                             x,
                             y,
-                            width: *col_widths.get(ci).unwrap_or(&10000),
+                            width: cw,
                             height: row_h,
-                            fill: [255, 255, 255, 255],
+                            fill: if cell.header {
+                                [240, 253, 250, 255]
+                            } else {
+                                [255, 255, 255, 255]
+                            },
                         });
+                        if stroke_w > 0 {
+                            push_cell_strokes(&mut current.strokes, x, y, cw, row_h, stroke_w, stroke);
+                        }
                         for line in &cell.lines {
                             let mut placed = line.clone();
                             placed.x = x + 80;
                             placed.y += y + 80;
                             current.lines.push(placed);
                         }
-                        x += *col_widths.get(ci).unwrap_or(&10000);
+                        x += cw;
                     }
                     y += row_h;
                     let _ = (ri, table_w);
@@ -148,7 +165,36 @@ fn empty_page(width: Hu, height: Hu) -> PageFrag {
         height,
         lines: Vec::new(),
         rects: Vec::new(),
+        strokes: Vec::new(),
     }
+}
+
+fn push_cell_strokes(
+    strokes: &mut Vec<RectFrag>,
+    x: Hu,
+    y: Hu,
+    w: Hu,
+    h: Hu,
+    t: Hu,
+    color: [u8; 4],
+) {
+    let t = t.min(w).min(h).max(1);
+    strokes.push(RectFrag { x, y, width: w, height: t, fill: color });
+    strokes.push(RectFrag { x, y, width: t, height: h, fill: color });
+    strokes.push(RectFrag {
+        x,
+        y: y + h - t,
+        width: w,
+        height: t,
+        fill: color,
+    });
+    strokes.push(RectFrag {
+        x: x + w - t,
+        y,
+        width: t,
+        height: h,
+        fill: color,
+    });
 }
 
 enum Prepared {
@@ -160,12 +206,15 @@ enum Prepared {
     Table {
         rows: Vec<Vec<PreparedCell>>,
         col_widths: Vec<Hu>,
+        stroke_w: Hu,
+        stroke: [u8; 4],
     },
 }
 
 struct PreparedCell {
     lines: Vec<LineFrag>,
     height: Hu,
+    header: bool,
 }
 
 fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
@@ -346,11 +395,40 @@ fn prepare_table(table: &Table, fonts: &FontSet, width: Hu) -> Prepared {
                 + cell.padding.bottom
                 + 160;
             let height = row.height.unwrap_or(height).max(height);
-            cells.push(PreparedCell { lines, height });
+            cells.push(PreparedCell {
+                lines,
+                height,
+                header: row.header,
+            });
         }
         rows.push(cells);
     }
-    Prepared::Table { rows, col_widths }
+    let (stroke_w, stroke) = table_stroke(table);
+    Prepared::Table {
+        rows,
+        col_widths,
+        stroke_w,
+        stroke,
+    }
+}
+
+fn table_stroke(table: &Table) -> (Hu, [u8; 4]) {
+    let b = &table.borders;
+    if b.top.style == BorderStyle::None
+        && b.left.style == BorderStyle::None
+        && b.inside_h.style == BorderStyle::None
+        && b.inside_v.style == BorderStyle::None
+    {
+        return (0, [0, 0, 0, 255]);
+    }
+    let w = b
+        .top
+        .width
+        .max(b.left.width)
+        .max(b.inside_h.width)
+        .max(b.inside_v.width);
+    let c = b.top.color;
+    (w.max(1), [c.r, c.g, c.b, c.a])
 }
 
 pub fn page_count(tree: &FragmentTree) -> usize {
@@ -379,7 +457,7 @@ pub fn table_row_heights(tree: &FragmentTree) -> Vec<Hu> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docagent_model::{Paragraph, Section};
+    use docagent_model::{Paragraph, Section, Table};
 
     #[test]
     fn layout_uses_integer_hwpunit_only() {
@@ -463,5 +541,21 @@ mod tests {
                 "mid-word wrap: {t}"
             );
         }
+    }
+
+    #[test]
+    fn tables_emit_grid_strokes() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Table(Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ])));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        assert_eq!(page.rects.len(), 4, "one fill per cell");
+        assert!(page.strokes.len() >= 16, "four edges per cell");
+        assert_eq!(table_row_heights(&tree).len(), 4);
     }
 }
