@@ -1,26 +1,25 @@
 # DocAgent #1 loop state
 
-Last cycle: 5 (2026-09-06) — markdown/PDF/HTML list markers on the sample letter
+Last cycle: 6 (2026-09-06) — ordered lists (`1.`) on the sample letter
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- Markdown `- ` / `* ` keeps `NumberFormat::Bullet` on the IR instead of stripping the marker.
-- Layout prefixes `• ` on the first line with hanging indent. HTML emits `<ul><li>`.
-- `examples/letter.md` now has a three-item confirm list. Convert screenshots and prove hashes refreshed.
+- Markdown `1. item` keeps `NumberFormat::Decimal` and `start` on the IR.
+- Layout prefixes `1. ` / `2. ` with hanging indent. HTML emits `<ol><li>`.
+- `examples/letter.md` now has an agent-replay numbered list. Convert screenshots and prove hashes refreshed.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `c863f8c0aacec10b0665dcdf2893c909427f76f49c64db9167a9a6f68ab34c28`
+- input  `e28e664baf239f721fd4965f699ef959a8c7d0ef4e84412768d39342db21cd6f`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `5164eb2e67d76ef690895002b8ec1451a6dcd1cb43f5838e1d621f707028feb0`
+- output `2da54d85c18913bb9df41d6df7ac015f3a915969af796fc0aa81fc9ab7e90833`
 
 ## Next
 
-1. Ordered lists (`1.`) on the same numbering path.
-2. Or PDF drawing of non-table fills beyond the grid.
-3. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
+1. Nested lists, or PDF drawing of non-table fills beyond the grid.
+2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule
 

@@ -20,4 +20,10 @@ Please confirm before 09:00 local:
 - Capsule hashes travel with the files
 - Replay the convert instead of hoping
 
+Agent replay:
+
+1. Hash the input
+2. Run Convert
+3. Compare the capsule
+
 DocAgent runtime — DOCX · ODT · Markdown · HTML · PDF/A

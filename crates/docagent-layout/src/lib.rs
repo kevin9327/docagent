@@ -261,6 +261,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
     };
     let marker = list_marker(p);
     let marker_w = marker
+        .as_deref()
         .map(|m| shape(fonts, m, size).width)
         .unwrap_or(0);
     let usable = (width - p.indent_left - p.indent_right - marker_w).max(1);
@@ -273,7 +274,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
             width: 0,
             height: lh,
             baseline: (lh * 4) / 5,
-            text: marker.unwrap_or("").to_string(),
+            text: marker.unwrap_or_default(),
             font_size: size,
         }];
     }
@@ -286,7 +287,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
             let w: i32 = shaped.advances.get(a..b).unwrap_or(&[]).iter().sum();
             let extra_indent = if i == 0 { p.indent_first } else { 0 };
             let (text_out, x_off, extra_w) = if i == 0 {
-                if let Some(m) = marker {
+                if let Some(m) = marker.as_deref() {
                     (format!("{m}{slice}"), 0, marker_w)
                 } else {
                     (slice, 0, 0)
@@ -309,9 +310,13 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
         .collect()
 }
 
-fn list_marker(p: &Paragraph) -> Option<&'static str> {
-    match p.numbering.as_ref()?.format {
-        Some(NumberFormat::Bullet) => Some("• "),
+fn list_marker(p: &Paragraph) -> Option<String> {
+    let n = p.numbering.as_ref()?;
+    match n.format {
+        Some(NumberFormat::Bullet) => Some("• ".into()),
+        Some(NumberFormat::Decimal) => {
+            Some(format!("{}. ", n.start.unwrap_or(1)))
+        }
         _ => None,
     }
 }
@@ -596,5 +601,24 @@ mod tests {
         let text = &tree.pages[0].lines[0].text;
         assert!(text.starts_with('•'), "{text}");
         assert!(text.contains("Receiving dock is clear"), "{text}");
+    }
+
+    #[test]
+    fn decimal_prefix_uses_start() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Hash the input");
+        p.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(3),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let text = &tree.pages[0].lines[0].text;
+        assert!(text.starts_with("3. "), "{text}");
+        assert!(text.contains("Hash the input"), "{text}");
     }
 }

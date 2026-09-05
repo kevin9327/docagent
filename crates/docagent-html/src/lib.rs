@@ -6,7 +6,7 @@ use docagent_model::{Block, Document, Paragraph, Table};
 
 pub fn to_html(doc: &Document) -> String {
     let mut s = String::from(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a}p{margin:0 0 .7rem}ul{margin:0 0 1rem;padding-left:1.25rem}li{margin:0 0 .35rem}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#f0fdfa;color:#134e4a}</style></head><body>"#,
+        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a}p{margin:0 0 .7rem}ul,ol{margin:0 0 1rem;padding-left:1.25rem}li{margin:0 0 .35rem}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#f0fdfa;color:#134e4a}</style></head><body>"#,
     );
     for (i, section) in doc.sections.iter().enumerate() {
         s.push_str(&format!(r#"<article data-section="{i}">"#));
@@ -29,30 +29,50 @@ pub fn to_html(doc: &Document) -> String {
     s
 }
 
-fn is_bullet(block: &Block) -> bool {
-    matches!(
-        block,
-        Block::Paragraph(p) if p.numbering.as_ref().is_some_and(|n| n.format == Some(docagent_model::NumberFormat::Bullet))
-    )
+fn list_format(block: &Block) -> Option<docagent_model::NumberFormat> {
+    match block {
+        Block::Paragraph(p) => p.numbering.as_ref().and_then(|n| n.format),
+        _ => None,
+    }
+}
+
+fn push_list_items(s: &mut String, blocks: &[Block], i: &mut usize, fmt: docagent_model::NumberFormat) {
+    while *i < blocks.len() && list_format(&blocks[*i]) == Some(fmt) {
+        if let Block::Paragraph(p) = &blocks[*i] {
+            s.push_str("<li>");
+            s.push_str(&escape(&p.plain_text()));
+            s.push_str("</li>");
+        }
+        *i += 1;
+    }
 }
 
 fn push_blocks(s: &mut String, blocks: &[Block]) {
     let mut i = 0;
     while i < blocks.len() {
-        if is_bullet(&blocks[i]) {
-            s.push_str("<ul>");
-            while i < blocks.len() && is_bullet(&blocks[i]) {
-                if let Block::Paragraph(p) = &blocks[i] {
-                    s.push_str("<li>");
-                    s.push_str(&escape(&p.plain_text()));
-                    s.push_str("</li>");
+        match list_format(&blocks[i]) {
+            Some(docagent_model::NumberFormat::Bullet) => {
+                s.push_str("<ul>");
+                push_list_items(s, blocks, &mut i, docagent_model::NumberFormat::Bullet);
+                s.push_str("</ul>");
+            }
+            Some(docagent_model::NumberFormat::Decimal) => {
+                let start = match &blocks[i] {
+                    Block::Paragraph(p) => p.numbering.as_ref().and_then(|n| n.start).unwrap_or(1),
+                    _ => 1,
+                };
+                if start == 1 {
+                    s.push_str("<ol>");
+                } else {
+                    s.push_str(&format!("<ol start=\"{start}\">"));
                 }
+                push_list_items(s, blocks, &mut i, docagent_model::NumberFormat::Decimal);
+                s.push_str("</ol>");
+            }
+            _ => {
+                push_block(s, &blocks[i]);
                 i += 1;
             }
-            s.push_str("</ul>");
-        } else {
-            push_block(s, &blocks[i]);
-            i += 1;
         }
     }
 }
@@ -177,5 +197,33 @@ mod tests {
         assert!(html.contains("<li>dock</li>"));
         assert!(html.contains("<li>replay</li>"));
         assert!(!html.contains("<p>dock</p>"));
+    }
+
+    #[test]
+    fn ordered_items_are_ol() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut a = Paragraph::from_text("Hash the input");
+        a.numbering = Some(docagent_model::NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(docagent_model::NumberFormat::Decimal),
+        });
+        let mut b = Paragraph::from_text("Run Convert");
+        b.numbering = Some(docagent_model::NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(2),
+            format: Some(docagent_model::NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(a));
+        section.body.push(Block::Paragraph(b));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<ol>"));
+        assert!(html.contains("<li>Hash the input</li>"));
+        assert!(html.contains("<li>Run Convert</li>"));
+        assert!(!html.contains("<ul>"));
     }
 }

@@ -63,6 +63,8 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             .or_else(|| trimmed.strip_prefix("* "))
         {
             section.body.push(Block::Paragraph(bullet_item(rest)));
+        } else if let Some((n, rest)) = ordered_item(trimmed) {
+            section.body.push(Block::Paragraph(decimal_item(rest, n)));
         } else {
             let mut p = Paragraph::from_text(trimmed);
             p.space_after = 200;
@@ -72,6 +74,28 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     flush_table(&mut section, &mut table_rows);
     doc.sections.push(section);
     Ok(doc)
+}
+
+fn ordered_item(line: &str) -> Option<(u32, &str)> {
+    let (num, rest) = line.split_once(". ")?;
+    if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n: u32 = num.parse().ok()?;
+    (n > 0).then_some((n, rest))
+}
+
+fn decimal_item(text: &str, n: u32) -> Paragraph {
+    let mut p = Paragraph::from_text(text);
+    p.space_after = 80;
+    p.indent_left = 1440;
+    p.numbering = Some(NumberingRef {
+        definition_id: 1,
+        level: 0,
+        start: Some(n),
+        format: Some(NumberFormat::Decimal),
+    });
+    p
 }
 
 fn bullet_item(text: &str) -> Paragraph {
@@ -128,6 +152,17 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                     match p.outline_level {
                         Some(1) => out.push_str(&format!("# {t}\n\n")),
                         Some(2) => out.push_str(&format!("## {t}\n\n")),
+                        _ if p.numbering.as_ref().is_some_and(|n| {
+                            n.format == Some(NumberFormat::Decimal)
+                        }) =>
+                        {
+                            let i = p
+                                .numbering
+                                .as_ref()
+                                .and_then(|n| n.start)
+                                .unwrap_or(1);
+                            out.push_str(&format!("{i}. {t}\n"));
+                        }
                         _ if p.numbering.is_some() => out.push_str(&format!("- {t}\n")),
                         _ => out.push_str(&format!("{t}\n\n")),
                     }
@@ -200,6 +235,25 @@ mod tests {
             .filter(|b| matches!(b, Block::Paragraph(p) if p.numbering.is_some()))
             .count();
         assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn ordered_items_keep_start_on_roundtrip() {
+        let src = b"1. Hash the input\n2. Run Convert\n";
+        let doc = read(src).unwrap();
+        let nums: Vec<_> = doc.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().and_then(|n| n.start),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(nums, [1, 2]);
+        let back = write(&doc).unwrap();
+        let text = String::from_utf8(back).unwrap();
+        assert!(text.contains("1. Hash the input"));
+        assert!(text.contains("2. Run Convert"));
     }
 
     #[test]
