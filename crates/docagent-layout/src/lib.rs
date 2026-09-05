@@ -212,7 +212,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
     };
     let usable = (width - p.indent_left - p.indent_right).max(1);
     let shaped = shape(fonts, &text, size);
-    let ranges = break_lines(shaped.advances.clone(), usable);
+    let ranges = break_lines(text.clone(), shaped.advances.clone(), usable);
     if ranges.is_empty() {
         return vec![LineFrag {
             x: p.indent_left,
@@ -256,22 +256,44 @@ fn align_x(x: Hu, width: Hu, usable: Hu, alignment: Alignment) -> Hu {
 }
 
 #[comemo::memoize]
-fn break_lines(advances: Vec<i32>, width: i32) -> Vec<(usize, usize)> {
-    let mut lines = Vec::new();
-    let mut start = 0usize;
-    let mut acc = 0i32;
+fn break_lines(text: String, advances: Vec<i32>, width: i32) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    if n == 0 {
+        return vec![(0, 0)];
+    }
     let width = width.max(1);
-    for (i, adv) in advances.iter().copied().enumerate() {
-        if i > start && acc + adv > width {
-            lines.push((start, i));
-            start = i;
-            acc = adv;
-        } else {
+    let mut lines = Vec::new();
+    let mut i = 0usize;
+    while i < n {
+        let start = i;
+        let mut acc = 0i32;
+        let mut last_space: Option<usize> = None;
+        let mut wrapped = false;
+        while i < n {
+            let adv = advances.get(i).copied().unwrap_or(0);
+            if i > start && acc + adv > width {
+                let at = last_space.filter(|&b| b > start).unwrap_or(i);
+                lines.push((start, at));
+                i = at;
+                while i < n && chars[i].is_whitespace() {
+                    i += 1;
+                }
+                wrapped = true;
+                break;
+            }
             acc += adv;
+            if chars[i].is_whitespace() {
+                last_space = Some(i + 1);
+            }
+            i += 1;
+        }
+        if !wrapped {
+            lines.push((start, n));
         }
     }
-    if start < advances.len() || advances.is_empty() {
-        lines.push((start, advances.len()));
+    if lines.is_empty() {
+        lines.push((0, n));
     }
     lines
 }
@@ -299,6 +321,13 @@ fn prepare_table(table: &Table, fonts: &FontSet, width: Hu) -> Prepared {
             .iter()
             .map(|w| ((*w as i64) * i64::from(width) / i64::from(sum)) as i32)
             .collect();
+    } else if n_cols > 0 && sum < width {
+        let equal = width / n_cols as i32;
+        col_widths = vec![equal; n_cols];
+        let used = equal.saturating_mul(n_cols as i32);
+        if let Some(last) = col_widths.last_mut() {
+            *last = last.saturating_add(width - used);
+        }
     }
     let mut rows = Vec::new();
     for row in &table.rows {
@@ -404,5 +433,35 @@ mod tests {
         let tree = layout_document(&doc, &FontSet::bundled());
         let n: usize = tree.pages.iter().map(|p| p.lines.len()).sum();
         assert!(n > 1);
+    }
+
+    #[test]
+    fn wraps_on_spaces_and_keeps_ligature_tails() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            "Delivery confirmation — order 48291. The files match and we are hoping.",
+        )));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let joined: String = tree
+            .pages
+            .iter()
+            .flat_map(|p| p.lines.iter().map(|l| l.text.as_str()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(joined.contains("48291"), "{joined}");
+        assert!(joined.contains("hoping"), "{joined}");
+        assert!(joined.contains("confirmation"), "{joined}");
+        for line in tree.pages.iter().flat_map(|p| p.lines.iter()) {
+            let t = line.text.trim();
+            if t.is_empty() {
+                continue;
+            }
+            assert!(
+                !t.starts_with("nts") && !t.starts_with("ing"),
+                "mid-word wrap: {t}"
+            );
+        }
     }
 }

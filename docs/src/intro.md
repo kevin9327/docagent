@@ -20,7 +20,7 @@ is the only API. CLI `docagent`, daemon `docagentd`, MCP, and WIT are thin adapt
 Every Command writes a three-hash capsule (input, plan, output).
 
 ```
-docagent convert letter.docx --pdf out.pdf --html out.html --md out.md --odt out.odt --capsule cap.json
+docagent convert examples/letter.md --pdf out.pdf --html out.html --md out.md --odt out.odt --capsule cap.json
 ```
 
 No GUI. No spreadsheet or presentation models.

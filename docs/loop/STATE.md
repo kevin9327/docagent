@@ -1,27 +1,30 @@
 # DocAgent #1 loop state
 
-Last cycle: 1 (bootstrap 2026-09-06, commit 0593d06 pushed)
+Last cycle: 2 (2026-09-06) — real convert screenshots + wrap/ligature/table layout
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
-It must look like MinerU / Docling / Pandoc: hero, pipeline art, badges,
-capability matrix, copy-paste command, real output pictures.
 
-Current:
-- Hero SVG + pipeline SVG landed.
-- README rewritten to the #1-repo pattern.
-- Still missing: photographs of *real* engine output (PDF page, HTML, capsule JSON).
+Shipped this cycle:
+- `examples/letter.md` is the copy-paste sample (README command no longer points at a missing `letter.docx`).
+- Converted it with `cargo run -p docagent-cli -- convert examples/letter.md`.
+- Committed actual artifacts: `docs/assets/letter.pdf`, `letter.html`, `letter-capsule.json`.
+- Committed screenshots of those artifacts: `output-pdf.png`, `output-html.png`, `output-capsule.png`, `output-trio.png`.
+- README above-the-fold now has the trio; **What you get** leads with real PDF/HTML/capsule, then the photographs.
+- `docagent-cli` `default-run = "docagent"` so the README `cargo run -p docagent-cli -- convert ...` line works.
 
-Next public-page work:
-1. Convert a sample letter through `docagent` and commit actual PDF/HTML screenshots under `docs/assets/`.
-2. Put those images in the README under **What you get**.
-3. Keep the first screen (above the fold) denser than the 10 competitors' READMEs.
+Engine (needed for an honest PDF screenshot, not a broken wrap):
+- Shaping maps rustybuzz clusters onto characters so ligatures no longer drop the last letters (`48291`, `hoping`).
+- Line breaking prefers spaces (no `fo/nts`).
+- Markdown tables stretch to the content width; first row is a header.
+- Markdown headings carry size (18pt / 14pt). HTML emits `<h1>`/`<h2>`.
 
-## Engine
+## Next
 
-Do not invent OmniDocBench / OCR scores. Win the agent-runtime matrix.
-Hangul/rhwp LineSeg is a regional scoreboard, not the GitHub-front north star.
+1. Table borders in PDF/A (HTML has them; the PDF page still looks like tab-separated columns).
+2. Paint `FillRect` borders from layout so the PDF screenshot matches the HTML table.
+3. Then the next matrix gap: byte-identical rerun proof on the README (two-run hash equality fixture), still no invented OmniDocBench numbers.
 
 ## Rule
 

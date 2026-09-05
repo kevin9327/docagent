@@ -6,7 +6,7 @@ use docagent_model::{Block, Document, Paragraph, Table};
 
 pub fn to_html(doc: &Document) -> String {
     let mut s = String::from(
-        r#"<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"/><title>DocAgent</title><style>article{max-width:48rem;margin:auto;font-family:sans-serif}table{border-collapse:collapse}td,th{border:1px solid #333;padding:0.25rem}</style></head><body>"#,
+        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a}p{margin:0 0 .7rem}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#f0fdfa;color:#134e4a}</style></head><body>"#,
     );
     for (i, section) in doc.sections.iter().enumerate() {
         s.push_str(&format!(r#"<article data-section="{i}">"#));
@@ -45,9 +45,19 @@ fn push_block(s: &mut String, block: &Block) {
 }
 
 fn push_para(s: &mut String, p: &Paragraph) {
-    s.push_str("<p>");
+    let tag = match p.outline_level {
+        Some(1) => "h1",
+        Some(2) => "h2",
+        Some(3) => "h3",
+        _ => "p",
+    };
+    s.push_str("<");
+    s.push_str(tag);
+    s.push_str(">");
     s.push_str(&escape(&p.plain_text()));
-    s.push_str("</p>");
+    s.push_str("</");
+    s.push_str(tag);
+    s.push_str(">");
 }
 
 fn push_table(s: &mut String, t: &Table) {
@@ -101,5 +111,21 @@ mod tests {
         assert!(html.contains("<p>hello</p>"));
         assert!(html.contains("<table>"));
         assert!(html.contains("<td>a</td>"));
+    }
+
+    #[test]
+    fn headings_are_semantic() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h = Paragraph::from_text("Title");
+        h.outline_level = Some(1);
+        section.body.push(Block::Paragraph(h));
+        let mut h2 = Paragraph::from_text("Section");
+        h2.outline_level = Some(2);
+        section.body.push(Block::Paragraph(h2));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<h1>Title</h1>"));
+        assert!(html.contains("<h2>Section</h2>"));
     }
 }

@@ -81,15 +81,29 @@ pub fn shape(font: &FontSet, text: &str, size_hu: i32) -> ShapedRun {
     let mut buf = UnicodeBuffer::new();
     buf.push_str(text);
     let glyphs = rustybuzz::shape(&face, &[], buf);
-    let mut advances = Vec::with_capacity(glyphs.len());
-    let mut glyph_ids = Vec::with_capacity(glyphs.len());
+    // rustybuzz clusters are byte offsets. Ligatures must not drop trailing
+    // characters when layout slices by char index.
+    let mut byte_to_char = vec![0usize; text.len() + 1];
+    let mut ci = 0usize;
+    for (bi, _) in text.char_indices() {
+        byte_to_char[bi] = ci;
+        ci += 1;
+    }
+    byte_to_char[text.len()] = ci;
+    let n_chars = ci;
+    let mut advances = vec![0i32; n_chars];
+    let mut glyph_ids = vec![0u16; n_chars];
     let mut width: i64 = 0;
     let size = i64::from(size_hu.max(1));
     for (info, pos) in glyphs.glyph_infos().iter().zip(glyphs.glyph_positions()) {
         let adv = (i64::from(pos.x_advance) * size) / upem;
         let adv_i32 = adv.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-        advances.push(adv_i32);
-        glyph_ids.push(info.glyph_id as u16);
+        let byte = (info.cluster as usize).min(text.len());
+        let char_i = byte_to_char[byte];
+        if char_i < n_chars {
+            advances[char_i] = advances[char_i].saturating_add(adv_i32);
+            glyph_ids[char_i] = info.glyph_id as u16;
+        }
         width += i64::from(adv_i32);
     }
     ShapedRun {
@@ -174,5 +188,14 @@ mod tests {
         let b = shape(&set, "DocAgent", 1200);
         assert_eq!(a.advances, b.advances);
         assert_eq!(a.width, b.width);
+    }
+
+    #[test]
+    fn ligatures_keep_one_advance_per_char() {
+        let set = FontSet::bundled();
+        let text = "confirmation files 48291";
+        let shaped = shape(&set, text, 1000);
+        assert_eq!(shaped.advances.len(), text.chars().count());
+        assert_eq!(shaped.text, text);
     }
 }

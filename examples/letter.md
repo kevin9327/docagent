@@ -1,0 +1,19 @@
+# Northwind Freight
+
+## Delivery confirmation — order 48291
+
+6 September 2026
+
+To: operations desk, Duisburg terminal.
+
+The shipment left Busan on 4 September and is booked on the 11 September rail window. This is a flow document: one convert, three hashes, no GPU. Run it twice with the same fonts and the PDF/A bytes match.
+
+| Hop | File | Proof |
+| --- | --- | --- |
+| Input | letter.md | input SHA-256 |
+| Plan | layout i32 @ 1/7200 in | plan SHA-256 |
+| Output | PDF/A · HTML · ODT | output SHA-256 |
+
+Please confirm the receiving dock before 09:00 local. The capsule travels with the files so an agent can replay the convert instead of hoping.
+
+DocAgent runtime — DOCX · ODT · Markdown · HTML · PDF/A

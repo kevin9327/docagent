@@ -29,6 +29,11 @@ Hangul HWP / HWPX / HML are regional codecs on the same IR. There is no GUI.</p>
   <img src="docs/assets/pipeline.svg" alt="Input formats → one integer engine → PDF/A HTML DOCX + capsule hashes" width="100%">
 </p>
 
+<p align="center">
+  <img src="docs/assets/output-trio.png" alt="Real convert of examples/letter.md: PDF/A page, semantic HTML, capsule SHA-256 ×3" width="100%">
+</p>
+<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A page, HTML, capsule hashes. Not mockups.</sub></p>
+
 ## Why this exists
 
 MinerU, Docling, Marker, and Unstructured turn documents into tokens for models.
@@ -52,8 +57,8 @@ People still receive a normal file. The agent receives a capsule.
 git clone https://github.com/kevin9327/docagent
 cd docagent
 cargo test --workspace
-cargo run -p docagent-cli -- convert letter.docx \
-  --pdf out.pdf --html out.html --md out.md --odt out.odt --capsule cap.json
+cargo run -p docagent-cli -- convert examples/letter.md \
+  --pdf out.pdf --html out.html --odt out.odt --docx out.docx --capsule cap.json
 ```
 
 Binaries: `docagent` (CLI) · `docagentd` (daemon) · MCP + WIT adapters.
@@ -63,7 +68,7 @@ use docagent_api::{Command, Engine, ExportTarget};
 
 let mut engine = Engine::new();
 let out = engine.execute(Command::Convert {
-    input: std::fs::read("letter.docx")?,
+    input: std::fs::read("examples/letter.md")?,
     input_kind: None,
     targets: vec![ExportTarget::PdfA, ExportTarget::Html, ExportTarget::Markdown],
 })?;
@@ -71,6 +76,23 @@ let out = engine.execute(Command::Convert {
 ```
 
 ## What you get
+
+These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [capsule JSON](docs/assets/letter-capsule.json).
+
+<p align="center">
+  <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
+</p>
+<p align="center"><sub>PDF/A from the integer layout engine. Same fonts → same bytes on the next run.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
+</p>
+<p align="center"><sub>HTML from the same IR. Headings and tables an agent can read back.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
+</p>
+<p align="center"><sub>Capsule from that convert: input / plan / output SHA-256. Replay is evidence.</sub></p>
 
 <p align="center">
   <img src="docs/assets/convert-story.jpg" alt="Paper in, PDF/A and HTML out, capsule on the desk" width="100%">
@@ -115,7 +137,7 @@ DocAgent does not claim MinerU's VLM scores. MinerU does not ship a replayable c
 | No GUI in the product | **yes** | | | **yes** | | **yes** | **yes** | **yes** | **yes** | |
 | VLM / OCR (not our job) | | **yes** | **yes** | | **yes** | **yes** | | | | |
 
-**North star:** an agent drops `letter.docx` and gets PDF/A + HTML + Markdown + ODT whose
+**North star:** an agent drops `examples/letter.md` (or DOCX/ODT) and gets PDF/A + HTML + Markdown + ODT whose
 bytes match the next run, with three hashes in the capsule. That is the merge gate.
 Hangul LineSeg vs rhwp is a regional CI track, not this page.
 

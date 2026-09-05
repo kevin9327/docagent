@@ -53,19 +53,17 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("# ") {
-            let mut p = Paragraph::from_text(rest);
-            p.outline_level = Some(1);
-            section.body.push(Block::Paragraph(p));
+            section.body.push(Block::Paragraph(heading(rest, 1, 1800, 200, 400)));
         } else if let Some(rest) = trimmed.strip_prefix("## ") {
-            let mut p = Paragraph::from_text(rest);
-            p.outline_level = Some(2);
-            section.body.push(Block::Paragraph(p));
+            section.body.push(Block::Paragraph(heading(rest, 2, 1400, 360, 240)));
         } else {
             let item = trimmed
                 .strip_prefix("- ")
                 .or_else(|| trimmed.strip_prefix("* "))
                 .unwrap_or(trimmed);
-            section.body.push(Block::Paragraph(Paragraph::from_text(item)));
+            let mut p = Paragraph::from_text(item);
+            p.space_after = 200;
+            section.body.push(Block::Paragraph(p));
         }
     }
     flush_table(&mut section, &mut table_rows);
@@ -73,13 +71,28 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     Ok(doc)
 }
 
+fn heading(text: &str, level: u8, size_hu: i32, before: i32, after: i32) -> Paragraph {
+    let mut p = Paragraph::from_text(text);
+    p.outline_level = Some(level);
+    p.space_before = before;
+    p.space_after = after;
+    if let Some(run) = p.runs.first_mut() {
+        run.style.size = size_hu;
+        run.style.bold = true;
+    }
+    p
+}
+
 fn flush_table(section: &mut Section, rows: &mut Vec<Vec<String>>) {
     if rows.is_empty() {
         return;
     }
-    section
-        .body
-        .push(Block::Table(Table::from_cells(std::mem::take(rows))));
+    let mut table = Table::from_cells(std::mem::take(rows));
+    if let Some(first) = table.rows.first_mut() {
+        first.header = true;
+    }
+    table.header_row_count = 1;
+    section.body.push(Block::Table(table));
 }
 
 pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
@@ -140,6 +153,18 @@ mod tests {
         let again = read(&back).unwrap();
         assert!(again.plain_text().contains("Title"));
         assert!(again.plain_text().contains("a"));
+    }
+
+    #[test]
+    fn headings_carry_size_for_layout() {
+        let doc = read(b"# Title\n\n## Sub\n\nBody\n").unwrap();
+        let h1 = match &doc.sections[0].body[0] {
+            Block::Paragraph(p) => p,
+            _ => panic!("h1"),
+        };
+        assert_eq!(h1.outline_level, Some(1));
+        assert_eq!(h1.runs[0].style.size, 1800);
+        assert!(h1.runs[0].style.bold);
     }
 
     #[test]
