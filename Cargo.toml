@@ -28,7 +28,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["DocHWP contributors"]
-repository = "https://github.com/dochwp/dochwp"
+repository = "https://github.com/kevin9327/dochwp"
 rust-version = "1.93"
 description = "Deterministic flow-document runtime for agents"
 

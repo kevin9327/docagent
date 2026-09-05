@@ -233,6 +233,8 @@ fn parse_section_xml(xml: &str) -> Result<Section, Error> {
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_text_buf = String::new();
     let mut cell_width: i32 = 10000;
+    let mut cell_height: Option<i32> = None;
+    let mut row_height: Option<i32> = None;
     let mut hints = Vec::new();
     let mut in_lineseg = false;
 
@@ -246,10 +248,14 @@ fn parse_section_xml(xml: &str) -> Result<Section, Error> {
                         flush_para(&mut body, &mut cur_text, &mut hints);
                         in_table = true;
                     }
-                    "tr" if in_table => cur_row.clear(),
+                    "tr" if in_table => {
+                        cur_row.clear();
+                        row_height = attr_i32(&e, "height").filter(|h| *h > 0);
+                    }
                     "tc" if in_table => {
                         cell_text_buf.clear();
                         cell_width = attr_i32(&e, "width").unwrap_or(10000);
+                        cell_height = attr_i32(&e, "height").filter(|h| *h > 0 && *h < 20_000);
                     }
                     "lineseg" => {
                         in_lineseg = true;
@@ -308,12 +314,15 @@ fn parse_section_xml(xml: &str) -> Result<Section, Error> {
                         cell_text_buf.clear();
                     }
                     "tr" if in_table => {
+                        let h = row_height.or(cell_height);
                         table_rows.push(TableRow {
                             cells: std::mem::take(&mut cur_row),
-                            height: None,
+                            height: h,
                             header: false,
                             cant_split: None,
                         });
+                        row_height = None;
+                        cell_height = None;
                     }
                     "tbl" => {
                         in_table = false;
@@ -392,6 +401,29 @@ mod tests {
         doc.sections.push(section);
         let back = roundtrip(&doc).unwrap();
         assert!(back.plain_text().contains("HWPX 안녕"));
+    }
+
+    #[test]
+    fn shipped_read_parses_hangul_hwpx_when_present() {
+        let dir = std::env::var("RHWP_DIR").unwrap_or_else(|_| r"C:\Users\swsz9\rhwp".into());
+        let path = std::path::PathBuf::from(dir).join("samples").join("hwp3-sample-hwpx.hwpx");
+        let bytes = std::fs::read(&path).expect("sibling HWPX sample");
+        let doc = read(&bytes).expect("parse HWPX");
+        assert!(
+            !doc.plain_text().trim().is_empty(),
+            "empty HWPX body diagnostics={:?}",
+            doc.diagnostics
+        );
+        let hints: usize = doc
+            .sections
+            .iter()
+            .flat_map(|s| s.body.iter())
+            .map(|b| match b {
+                Block::Paragraph(p) => p.layout_hints.len(),
+                _ => 0,
+            })
+            .sum();
+        assert!(hints > 0, "hp:lineseg must become LayoutHint");
     }
 
     #[test]

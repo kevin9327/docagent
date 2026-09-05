@@ -299,6 +299,9 @@ fn oracle_document(bytes: &[u8]) -> Option<Document> {
     if dochwp_hwp5::sniff(bytes) {
         return dochwp_hwp5::read(bytes).ok();
     }
+    if dochwp_hwpx::sniff(bytes) {
+        return dochwp_hwpx::read(bytes).ok();
+    }
     if dochwp_hwp3::sniff(bytes) {
         return dochwp_hwp3::read(bytes).ok();
     }
