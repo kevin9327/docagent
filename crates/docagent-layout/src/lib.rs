@@ -7,8 +7,8 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, BorderStyle, Document, Hu, LineSpacing, Paragraph, Section, Table,
-    DEFAULT_FONT_SIZE_HU,
+    Alignment, Block, BorderStyle, Document, Hu, LineSpacing, NumberFormat, Paragraph, Section,
+    Table, DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
 
@@ -259,7 +259,11 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
         LineSpacing::AtLeast(hu) => line_height(fonts, size, 100).max(hu),
         LineSpacing::Percent(_) => line_height(fonts, size, spacing_pct),
     };
-    let usable = (width - p.indent_left - p.indent_right).max(1);
+    let marker = list_marker(p);
+    let marker_w = marker
+        .map(|m| shape(fonts, m, size).width)
+        .unwrap_or(0);
+    let usable = (width - p.indent_left - p.indent_right - marker_w).max(1);
     let shaped = shape(fonts, &text, size);
     let ranges = break_lines(text.clone(), shaped.advances.clone(), usable);
     if ranges.is_empty() {
@@ -269,7 +273,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
             width: 0,
             height: lh,
             baseline: (lh * 4) / 5,
-            text: String::new(),
+            text: marker.unwrap_or("").to_string(),
             font_size: size,
         }];
     }
@@ -281,19 +285,35 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
             let slice: String = chars.get(a..b).unwrap_or(&[]).iter().collect();
             let w: i32 = shaped.advances.get(a..b).unwrap_or(&[]).iter().sum();
             let extra_indent = if i == 0 { p.indent_first } else { 0 };
-            let x = p.indent_left + extra_indent;
-            let aligned_x = align_x(x, w, usable, p.alignment);
+            let (text_out, x_off, extra_w) = if i == 0 {
+                if let Some(m) = marker {
+                    (format!("{m}{slice}"), 0, marker_w)
+                } else {
+                    (slice, 0, 0)
+                }
+            } else {
+                (slice, marker_w, 0)
+            };
+            let x = p.indent_left + extra_indent + x_off;
+            let aligned_x = align_x(x, w + extra_w, usable + marker_w, p.alignment);
             LineFrag {
                 x: aligned_x,
                 y: 0,
-                width: w,
+                width: w + extra_w,
                 height: lh,
                 baseline: (lh * 4) / 5,
-                text: slice,
+                text: text_out,
                 font_size: size,
             }
         })
         .collect()
+}
+
+fn list_marker(p: &Paragraph) -> Option<&'static str> {
+    match p.numbering.as_ref()?.format {
+        Some(NumberFormat::Bullet) => Some("• "),
+        _ => None,
+    }
 }
 
 fn align_x(x: Hu, width: Hu, usable: Hu, alignment: Alignment) -> Hu {
@@ -457,7 +477,7 @@ pub fn table_row_heights(tree: &FragmentTree) -> Vec<Hu> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docagent_model::{Paragraph, Section, Table};
+    use docagent_model::{NumberFormat, NumberingRef, Paragraph, Section, Table};
 
     #[test]
     fn layout_uses_integer_hwpunit_only() {
@@ -557,5 +577,24 @@ mod tests {
         assert_eq!(page.rects.len(), 4, "one fill per cell");
         assert!(page.strokes.len() >= 16, "four edges per cell");
         assert_eq!(table_row_heights(&tree).len(), 4);
+    }
+
+    #[test]
+    fn bullets_prefix_first_line() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Receiving dock is clear");
+        p.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let text = &tree.pages[0].lines[0].text;
+        assert!(text.starts_with('•'), "{text}");
+        assert!(text.contains("Receiving dock is clear"), "{text}");
     }
 }

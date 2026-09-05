@@ -4,7 +4,9 @@
 
 #![forbid(unsafe_code)]
 
-use docagent_model::{Block, Document, Paragraph, Section, Table};
+use docagent_model::{
+    Block, Document, NumberFormat, NumberingRef, Paragraph, Section, Table,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -56,12 +58,13 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             section.body.push(Block::Paragraph(heading(rest, 1, 1800, 200, 400)));
         } else if let Some(rest) = trimmed.strip_prefix("## ") {
             section.body.push(Block::Paragraph(heading(rest, 2, 1400, 360, 240)));
+        } else if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            section.body.push(Block::Paragraph(bullet_item(rest)));
         } else {
-            let item = trimmed
-                .strip_prefix("- ")
-                .or_else(|| trimmed.strip_prefix("* "))
-                .unwrap_or(trimmed);
-            let mut p = Paragraph::from_text(item);
+            let mut p = Paragraph::from_text(trimmed);
             p.space_after = 200;
             section.body.push(Block::Paragraph(p));
         }
@@ -69,6 +72,19 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     flush_table(&mut section, &mut table_rows);
     doc.sections.push(section);
     Ok(doc)
+}
+
+fn bullet_item(text: &str) -> Paragraph {
+    let mut p = Paragraph::from_text(text);
+    p.space_after = 80;
+    p.indent_left = 1440;
+    p.numbering = Some(NumberingRef {
+        definition_id: 0,
+        level: 0,
+        start: None,
+        format: Some(NumberFormat::Bullet),
+    });
+    p
 }
 
 fn heading(text: &str, level: u8, size_hu: i32, before: i32, after: i32) -> Paragraph {
@@ -112,6 +128,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                     match p.outline_level {
                         Some(1) => out.push_str(&format!("# {t}\n\n")),
                         Some(2) => out.push_str(&format!("## {t}\n\n")),
+                        _ if p.numbering.is_some() => out.push_str(&format!("- {t}\n")),
                         _ => out.push_str(&format!("{t}\n\n")),
                     }
                 }
@@ -160,6 +177,29 @@ mod tests {
         let again = read(&back).unwrap();
         assert!(again.plain_text().contains("Title"));
         assert!(again.plain_text().contains("a"));
+    }
+
+    #[test]
+    fn bullets_keep_numbering_on_roundtrip() {
+        let src = b"# Title\n\n- dock is clear\n- replay the convert\n";
+        let doc = read(src).unwrap();
+        let items: Vec<_> = doc.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) if p.numbering.is_some() => Some(p.plain_text()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(items, ["dock is clear", "replay the convert"]);
+        let back = write(&doc).unwrap();
+        let again = read(&back).unwrap();
+        let n = again.sections[0]
+            .body
+            .iter()
+            .filter(|b| matches!(b, Block::Paragraph(p) if p.numbering.is_some()))
+            .count();
+        assert_eq!(n, 2);
     }
 
     #[test]

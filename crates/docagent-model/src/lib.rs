@@ -330,6 +330,7 @@ pub enum NumberFormat {
     AlphaLower,
     AlphaUpper,
     Circled,
+    Bullet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
