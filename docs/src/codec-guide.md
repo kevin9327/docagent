@@ -1,10 +1,16 @@
-# 커뮤니티 코덱 가이드 (ODT / RTF / Markdown)
+# Community codec guide
 
-1. `crates/docagent-codec-template`를 복사해 `docagent-odt` / `docagent-rtf` / `docagent-md`로 이름을 바꾼다.
-2. 의존성은 `docagent-model`과 포맷 파서 크레이트만. `docagent-layout` 이하는 금지.
-3. `sniff` / `read` / `write` 세 함수가 계약이다. 왕복 텍스트와 표를 `proptest`로 잠근다.
-4. IR에 포맷 식별자를 넣지 않는다. 포맷 특유 값은 명시적 `Option` 필드로 정규화한다.
-5. `docagent-conformance` 점수판의 파싱 손실 0을 통과한 뒤에만 워크스페이스 멤버로 승격한다.
+Markdown (`docagent-md`) and OpenDocument Text (`docagent-odt`) ship as first-class
+codecs next to DOCX. For RTF or another format:
 
-ODT는 ZIP+`content.xml`, RTF는 `{\rtf`, Markdown은 CommonMark 부분집합부터.
-세 코덱의 본문은 v1 제품 범위 밖이다. 이 가이드와 템플릿만 제공한다.
+1. Copy `crates/docagent-codec-template` and rename it (for example `docagent-rtf`).
+2. Depend only on `docagent-model` and a format parser crate. Nothing at
+   `docagent-layout` or below.
+3. The contract is `sniff` / `read` / `write`. Lock round-trip text and tables with
+   `proptest`.
+4. Do not put a format identifier on the IR. Format-specific values become explicit
+   `Option` fields.
+5. Promote the crate to a workspace member only after parse-loss 0 on the
+   `docagent-conformance` scoreboard.
+
+RTF still uses the template crate only.

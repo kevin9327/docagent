@@ -1,15 +1,16 @@
 # DocAgent
 
-Document-only runtime for agents. No GUI, no spreadsheet, no slides.
+Document-only runtime for agents. Not an office suite. Not a Hangul-only tool.
 
-Agents open HWP / HWPX / HWP 3 / HML / DOCX, work through one integer-HWPUNIT IR and one layout engine, and emit PDF/A plus semantic HTML. Every Command records input, plan, and output SHA-256 hashes.
+Agents convert **DOCX, ODT, Markdown, HTML, and PDF/A** through one integer layout
+engine (1/7200 inch). Regional office formats (**HWP / HWPX / HML**) use the same
+IR. Every Command records input, plan, and output SHA-256 hashes.
 
-Repository: https://github.com/kevin9327/docagent
+https://github.com/kevin9327/docagent
 
 ```
 cargo test --workspace
-cargo run -p docagent-cli -- convert path/to/file.hwp --pdf out.pdf --html out.html --ir out.json --capsule out.capsule.json
-cargo run -p docagent-conformance -- --require-win
+cargo run -p docagent-cli -- convert letter.docx --pdf out.pdf --html out.html --md out.md --odt out.odt --capsule cap.json
 ```
 
-CLI binary: `docagent`. Daemon: `docagentd`. See `AGENTS.md` and `docs/`.
+Binary: `docagent`. Daemon: `docagentd`. See `AGENTS.md` and `docs/`.

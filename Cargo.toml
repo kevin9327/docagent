@@ -2,11 +2,13 @@
 resolver = "2"
 members = [
     "crates/docagent-model",
+    "crates/docagent-docx",
+    "crates/docagent-md",
+    "crates/docagent-odt",
     "crates/docagent-hwp5",
     "crates/docagent-hwpx",
     "crates/docagent-hwp3",
     "crates/docagent-hml",
-    "crates/docagent-docx",
     "crates/docagent-font",
     "crates/docagent-layout",
     "crates/docagent-paint",
@@ -30,15 +32,17 @@ license = "MIT"
 authors = ["DocAgent contributors"]
 repository = "https://github.com/kevin9327/docagent"
 rust-version = "1.93"
-description = "Deterministic flow-document runtime for agents"
+description = "Deterministic document runtime for agents (DOCX, ODT, Markdown, PDF/A, HTML)"
 
 [workspace.dependencies]
 docagent-model = { path = "crates/docagent-model" }
+docagent-docx = { path = "crates/docagent-docx" }
+docagent-md = { path = "crates/docagent-md" }
+docagent-odt = { path = "crates/docagent-odt" }
 docagent-hwp5 = { path = "crates/docagent-hwp5" }
 docagent-hwpx = { path = "crates/docagent-hwpx" }
 docagent-hwp3 = { path = "crates/docagent-hwp3" }
 docagent-hml = { path = "crates/docagent-hml" }
-docagent-docx = { path = "crates/docagent-docx" }
 docagent-font = { path = "crates/docagent-font" }
 docagent-layout = { path = "crates/docagent-layout" }
 docagent-paint = { path = "crates/docagent-paint" }

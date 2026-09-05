@@ -5,10 +5,12 @@ interface api {
         pdf-a,
         html,
         ir-json,
+        docx,
+        odt,
+        markdown,
         hwp5,
         hwpx,
         hml,
-        docx,
     }
 
     record capsule {

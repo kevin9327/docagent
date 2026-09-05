@@ -518,7 +518,9 @@ dependencies = [
  "docagent-hwp5",
  "docagent-hwpx",
  "docagent-layout",
+ "docagent-md",
  "docagent-model",
+ "docagent-odt",
  "docagent-paint",
  "docagent-pdf",
  "serde",
@@ -667,10 +669,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "docagent-md"
+version = "0.1.0"
+dependencies = [
+ "docagent-model",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "docagent-model"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "docagent-odt"
+version = "0.1.0"
+dependencies = [
+ "docagent-model",
+ "quick-xml",
+ "thiserror 2.0.20",
+ "zip",
 ]
 
 [[package]]

@@ -38,7 +38,7 @@ fn walk(dir: &Path, f: &mut impl FnMut(&Path, &str)) {
 fn lint_file(path: &Path, text: &str, errors: &mut Vec<String>) {
     let rel = path.display().to_string();
     let is_layout = rel.replace('\\', "/").contains("/docagent-layout/");
-    let is_codec = ["docagent-hwp5", "docagent-hwpx", "docagent-hwp3", "docagent-hml", "docagent-docx"]
+    let is_codec = ["docagent-docx", "docagent-md", "docagent-odt", "docagent-hwp5", "docagent-hwpx", "docagent-hwp3", "docagent-hml"]
         .iter()
         .any(|c| rel.replace('\\', "/").contains(&format!("/{c}/")));
 

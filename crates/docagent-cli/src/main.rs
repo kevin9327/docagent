@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use docagent_api::{Command, Engine, ExportTarget};
 
 #[derive(Parser)]
-#[command(name = "docagent", version, about = "Deterministic document runtime")]
+#[command(name = "docagent", version, about = "Document-only runtime for agents")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -24,13 +24,17 @@ enum Cmd {
         #[arg(long)]
         capsule: Option<PathBuf>,
         #[arg(long)]
+        docx: Option<PathBuf>,
+        #[arg(long)]
+        odt: Option<PathBuf>,
+        #[arg(long)]
+        md: Option<PathBuf>,
+        #[arg(long)]
         hwp5: Option<PathBuf>,
         #[arg(long)]
         hwpx: Option<PathBuf>,
         #[arg(long)]
         hml: Option<PathBuf>,
-        #[arg(long)]
-        docx: Option<PathBuf>,
     },
     Version,
 }
@@ -47,10 +51,12 @@ fn main() -> Result<(), String> {
             html,
             ir,
             capsule,
+            docx,
+            odt,
+            md,
             hwp5,
             hwpx,
             hml,
-            docx,
         } => {
             let bytes = std::fs::read(&input).map_err(|e| e.to_string())?;
             let mut targets = Vec::new();
@@ -63,6 +69,15 @@ fn main() -> Result<(), String> {
             if ir.is_some() {
                 targets.push(ExportTarget::IrJson);
             }
+            if docx.is_some() {
+                targets.push(ExportTarget::Docx);
+            }
+            if odt.is_some() {
+                targets.push(ExportTarget::Odt);
+            }
+            if md.is_some() {
+                targets.push(ExportTarget::Markdown);
+            }
             if hwp5.is_some() {
                 targets.push(ExportTarget::Hwp5);
             }
@@ -71,9 +86,6 @@ fn main() -> Result<(), String> {
             }
             if hml.is_some() {
                 targets.push(ExportTarget::Hml);
-            }
-            if docx.is_some() {
-                targets.push(ExportTarget::Docx);
             }
             if targets.is_empty() {
                 targets.extend([
@@ -99,6 +111,15 @@ fn main() -> Result<(), String> {
             if let Some(path) = ir {
                 std::fs::write(path, out.ir_json.as_ref().ok_or("ir missing")?).map_err(|e| e.to_string())?;
             }
+            if let Some(path) = docx {
+                std::fs::write(path, out.docx.as_ref().ok_or("docx missing")?).map_err(|e| e.to_string())?;
+            }
+            if let Some(path) = odt {
+                std::fs::write(path, out.odt.as_ref().ok_or("odt missing")?).map_err(|e| e.to_string())?;
+            }
+            if let Some(path) = md {
+                std::fs::write(path, out.markdown.as_ref().ok_or("markdown missing")?).map_err(|e| e.to_string())?;
+            }
             if let Some(path) = hwp5 {
                 std::fs::write(path, out.hwp5.as_ref().ok_or("hwp5 missing")?).map_err(|e| e.to_string())?;
             }
@@ -107,9 +128,6 @@ fn main() -> Result<(), String> {
             }
             if let Some(path) = hml {
                 std::fs::write(path, out.hml.as_ref().ok_or("hml missing")?).map_err(|e| e.to_string())?;
-            }
-            if let Some(path) = docx {
-                std::fs::write(path, out.docx.as_ref().ok_or("docx missing")?).map_err(|e| e.to_string())?;
             }
             let cap_json = serde_json::to_string_pretty(&out.capsule).map_err(|e| e.to_string())?;
             if let Some(path) = capsule {

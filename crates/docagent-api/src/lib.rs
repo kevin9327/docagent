@@ -15,11 +15,13 @@ use ts_rs::TS;
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub enum InputKind {
+    Docx,
+    Odt,
+    Markdown,
     Hwp5,
     Hwpx,
     Hwp3,
     Hml,
-    Docx,
     IrJson,
 }
 
@@ -28,10 +30,12 @@ pub enum ExportTarget {
     PdfA,
     Html,
     IrJson,
+    Docx,
+    Odt,
+    Markdown,
     Hwp5,
     Hwpx,
     Hml,
-    Docx,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -86,6 +90,8 @@ pub struct Converted {
     pub hwpx: Option<Vec<u8>>,
     pub hml: Option<Vec<u8>>,
     pub docx: Option<Vec<u8>>,
+    pub odt: Option<Vec<u8>>,
+    pub markdown: Option<Vec<u8>>,
     pub capsule: Capsule,
     pub events: Vec<Event>,
 }
@@ -104,6 +110,10 @@ pub enum Error {
     Hml(String),
     #[error("docx: {0}")]
     Docx(String),
+    #[error("odt: {0}")]
+    Odt(String),
+    #[error("markdown: {0}")]
+    Markdown(String),
     #[error("pdf: {0}")]
     Pdf(String),
     #[error("json: {0}")]
@@ -194,6 +204,8 @@ impl Engine {
             hwpx: None,
             hml: None,
             docx: None,
+            odt: None,
+            markdown: None,
             capsule: Capsule {
                 input_hash: String::new(),
                 plan_hash: String::new(),
@@ -249,6 +261,16 @@ impl Engine {
                     output_chunks.extend_from_slice(&b);
                     out.docx = Some(b);
                 }
+                ExportTarget::Odt => {
+                    let b = docagent_odt::write(&document).map_err(|e| Error::Odt(e.to_string()))?;
+                    output_chunks.extend_from_slice(&b);
+                    out.odt = Some(b);
+                }
+                ExportTarget::Markdown => {
+                    let b = docagent_md::write(&document).map_err(|e| Error::Markdown(e.to_string()))?;
+                    output_chunks.extend_from_slice(&b);
+                    out.markdown = Some(b);
+                }
             }
         }
         let plan = Plan {
@@ -278,11 +300,17 @@ pub fn sniff(bytes: &[u8]) -> Option<InputKind> {
     if docagent_docx::sniff(bytes) {
         return Some(InputKind::Docx);
     }
+    if docagent_odt::sniff(bytes) {
+        return Some(InputKind::Odt);
+    }
     if docagent_hml::sniff(bytes) {
         return Some(InputKind::Hml);
     }
     if bytes.first() == Some(&b'{') {
         return Some(InputKind::IrJson);
+    }
+    if docagent_md::sniff(bytes) {
+        return Some(InputKind::Markdown);
     }
     None
 }
@@ -294,6 +322,8 @@ fn parse_kind(bytes: &[u8], kind: InputKind) -> Result<Document, Error> {
         InputKind::Hwp3 => docagent_hwp3::read(bytes).map_err(|e| Error::Hwp3(e.to_string())),
         InputKind::Hml => docagent_hml::read(bytes).map_err(|e| Error::Hml(e.to_string())),
         InputKind::Docx => docagent_docx::read(bytes).map_err(|e| Error::Docx(e.to_string())),
+        InputKind::Odt => docagent_odt::read(bytes).map_err(|e| Error::Odt(e.to_string())),
+        InputKind::Markdown => docagent_md::read(bytes).map_err(|e| Error::Markdown(e.to_string())),
         InputKind::IrJson => Ok(serde_json::from_slice(bytes)?),
     }
 }

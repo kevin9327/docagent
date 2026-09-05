@@ -1,21 +1,21 @@
-# 포맷 간 파일 이동 검증
+# Inter-format file hops
 
-요구: DocAgent가 생성·소비하는 포맷 사이에서 **100건 이상**의 파일 이동이 손실 없이 동작할 것.
+Requirement: at least **100** lossless hops among formats DocAgent authors and
+consumes.
 
-구현: `crates/docagent-api/tests/format_hops.rs`
+Implementation: `crates/docagent-api/tests/format_hops.rs`
 
-| 항목 | 값 |
+| Item | Value |
 | --- | --- |
-| 문서 수 | 120 |
-| 문서당 홉 | 5 (`IR→HWP5→HWPX→HML→DOCX→HWP5`) |
-| 총 이동 | 600 |
-| 검사 | 원본 `plain_text()`의 모든 비공백 줄이 도착 IR에 존재 |
-| 구동 대상 | shipped `docagent-hwp5/hwpx/hml/docx::{read,write}` |
-
-실행:
+| Documents | 120 |
+| Hops per document | 6 (`IR→DOCX→Markdown→ODT→HWP5→HWPX→HML`) |
+| Total hops | 720 |
+| Check | every non-blank `plain_text()` line of the source IR is present in the destination IR |
+| Drivers | shipped `docagent-docx/md/odt/hwp5/hwpx/hml::{read,write}` |
 
 ```
 cargo test -p docagent-api --test format_hops
 ```
 
-표가 있는 문서는 `i % 3 == 0`마다 넣어 표 경로도 같은 홉을 탄다.
+Documents with `i % 3 == 0` also carry a table so the table path takes the same hops.
+Global interchange (DOCX, Markdown, ODT) runs first; Hangul codecs follow on the same IR.

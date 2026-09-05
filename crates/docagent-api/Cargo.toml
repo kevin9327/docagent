@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 docagent-capsule.workspace = true
 docagent-docx.workspace = true
+docagent-md.workspace = true
+docagent-odt.workspace = true
 docagent-font.workspace = true
 docagent-hml.workspace = true
 docagent-html.workspace = true
@@ -29,6 +31,8 @@ docagent-hwp5.workspace = true
 docagent-hwpx.workspace = true
 docagent-hml.workspace = true
 docagent-docx.workspace = true
+docagent-md.workspace = true
+docagent-odt.workspace = true
 docagent-model.workspace = true
 
 [lints]
