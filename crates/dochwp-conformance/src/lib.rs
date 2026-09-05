@@ -170,7 +170,7 @@ pub fn pages_from_line_hints(hints: &[LayoutHint]) -> usize {
     let mut pages = 1usize;
     let mut prev = hints[0].y;
     for h in hints.iter().skip(1) {
-        if h.y + 400 < prev {
+        if prev > 4000 && h.y + 400 < prev && h.y < prev / 2 {
             pages += 1;
         }
         prev = h.y;

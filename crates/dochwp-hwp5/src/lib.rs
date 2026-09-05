@@ -402,7 +402,14 @@ fn section_from_records(
         match recs[i].tag {
             HWPTAG_PARA_HEADER => {
                 if paragraph_is_section_def(recs, i) {
-                    i = skip_tree(recs, i);
+                    let end = skip_tree(recs, i);
+                    body.extend(tables_in_paragraph(recs, i, catalog, diagnostics));
+                    if let Block::Paragraph(p) = read_plain_paragraph(recs, i, end, catalog)
+                        && !p.plain_text().trim().is_empty()
+                    {
+                        body.push(Block::Paragraph(p));
+                    }
+                    i = end;
                     continue;
                 }
                 let (block, next) = read_paragraph_or_control(recs, i, catalog, diagnostics);
@@ -410,7 +417,7 @@ fn section_from_records(
                 i = next;
             }
             HWPTAG_CTRL_HEADER => {
-                if ctrl_id(&recs[i].payload) == CTRL_SECTION {
+                if matches_ctrl(&recs[i].payload, CTRL_SECTION) {
                     i = skip_tree(recs, i);
                     continue;
                 }
@@ -458,7 +465,41 @@ fn paragraph_is_section_def(recs: &[Rec], start: usize) -> bool {
     recs[start + 1..]
         .iter()
         .take_while(|r| r.level > level)
-        .any(|r| r.tag == HWPTAG_CTRL_HEADER && ctrl_id(&r.payload) == CTRL_SECTION)
+        .any(|r| r.tag == HWPTAG_CTRL_HEADER && matches_ctrl(&r.payload, CTRL_SECTION))
+}
+
+fn matches_ctrl(payload: &[u8], want: u32) -> bool {
+    if payload.len() < 4 {
+        return false;
+    }
+    let raw = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+    raw == want || raw.swap_bytes() == want
+}
+
+fn tables_in_paragraph(
+    recs: &[Rec],
+    start: usize,
+    catalog: &StyleCatalog,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<Block> {
+    let level = recs[start].level;
+    let mut out = Vec::new();
+    let mut j = start + 1;
+    while j < recs.len() && recs[j].level > level {
+        if recs[j].tag == HWPTAG_CTRL_HEADER
+            && recs[j].level == level + 1
+            && matches_ctrl(&recs[j].payload, CTRL_TABLE)
+        {
+            let (block, next) = read_control(recs, j, catalog, diagnostics);
+            if let Some(b) = block {
+                out.push(b);
+            }
+            j = next;
+            continue;
+        }
+        j += 1;
+    }
+    out
 }
 
 fn read_paragraph_or_control(
@@ -473,14 +514,17 @@ fn read_paragraph_or_control(
         end += 1;
     }
     let children = &recs[start + 1..end];
-    if let Some(ctrl_idx) = children.iter().position(|r| r.tag == HWPTAG_CTRL_HEADER) {
-        if ctrl_id(&children[ctrl_idx].payload) == CTRL_TABLE {
-            let table = read_table(children, ctrl_idx, catalog, diagnostics);
-            return (Block::Table(table), end);
-        }
-        if ctrl_id(&children[ctrl_idx].payload) == CTRL_SECTION {
-            return (read_plain_paragraph(recs, start, end, catalog), end);
-        }
+    if let Some(ctrl_idx) = children.iter().position(|r| {
+        r.tag == HWPTAG_CTRL_HEADER && matches_ctrl(&r.payload, CTRL_TABLE)
+    }) {
+        let table = read_table(children, ctrl_idx, catalog, diagnostics);
+        return (Block::Table(table), end);
+    }
+    if children
+        .iter()
+        .any(|r| r.tag == HWPTAG_CTRL_HEADER && matches_ctrl(&r.payload, CTRL_SECTION))
+    {
+        return (read_plain_paragraph(recs, start, end, catalog), end);
     }
     (read_plain_paragraph(recs, start, end, catalog), end)
 }
@@ -516,12 +560,11 @@ fn read_control(
     while end < recs.len() && recs[end].level > level {
         end += 1;
     }
-    let id = ctrl_id(&recs[start].payload);
-    if id == CTRL_TABLE {
+    if matches_ctrl(&recs[start].payload, CTRL_TABLE) {
         let table = read_table(&recs[start..end], 0, catalog, diagnostics);
         return (Some(Block::Table(table)), end);
     }
-    if id == u32::from_be_bytes(*b"    ") {
+    if ctrl_id(&recs[start].payload) == u32::from_be_bytes(*b"    ") {
         diagnostics.push(Diagnostic::unsupported("empty control id"));
     }
     (None, end)
@@ -538,13 +581,10 @@ fn read_table(
     let mut widths = Vec::new();
     for rec in recs {
         if rec.tag == HWPTAG_TABLE && rec.payload.len() >= 4 {
-            n_rows = u16_at(&rec.payload, 0);
-            n_cols = u16_at(&rec.payload, 2);
-            let mut off = 4;
-            while off + 4 <= rec.payload.len() && widths.len() < n_cols as usize {
-                widths.push(i32_at(&rec.payload, off));
-                off += 4;
-            }
+            let (rows, cols, cols_w) = table_geometry(&rec.payload);
+            n_rows = rows;
+            n_cols = cols;
+            widths = cols_w;
         }
     }
     if n_rows == 0 || n_cols == 0 {
@@ -553,13 +593,21 @@ fn read_table(
         n_cols = n_cols.max(1);
     }
     let mut cell_heights = Vec::new();
+    let mut cell_widths = Vec::new();
     for rec in recs {
         if rec.tag == HWPTAG_LIST_HEADER && rec.payload.len() >= 14 {
+            let w = i32_at(&rec.payload, 6);
             let h = i32_at(&rec.payload, 10);
-            if h > 0 {
+            if w > 0 {
+                cell_widths.push(w);
+            }
+            if h > 0 && h < 20_000 {
                 cell_heights.push(h);
             }
         }
+    }
+    if widths.is_empty() {
+        widths = cell_widths;
     }
     let mut paras = Vec::new();
     let mut i = ctrl_at;
@@ -679,6 +727,26 @@ fn encode_lineseg(hints: &[LayoutHint]) -> Vec<u8> {
         out.extend_from_slice(&h.flags.to_le_bytes());
     }
     out
+}
+
+/// Hangul 5.0 TABLE: UINT32 attr, UINT16 rows, UINT16 cols, then optional
+/// cell-spacing / margins / row-size array. Self-authored files store
+/// rows, cols, then i32 column widths.
+fn table_geometry(p: &[u8]) -> (u16, u16, Vec<i32>) {
+    let spec_rows = u16_at(p, 4);
+    let spec_cols = u16_at(p, 6);
+    if p.len() >= 18 && (1..128).contains(&spec_rows) && (1..64).contains(&spec_cols) {
+        return (spec_rows, spec_cols, Vec::new());
+    }
+    let rows = u16_at(p, 0);
+    let cols = u16_at(p, 2);
+    let mut widths = Vec::new();
+    let mut off = 4;
+    while off + 4 <= p.len() && widths.len() < cols as usize {
+        widths.push(i32_at(p, off));
+        off += 4;
+    }
+    (rows, cols, widths)
 }
 
 fn ctrl_id(payload: &[u8]) -> u32 {
@@ -981,6 +1049,22 @@ mod tests {
             "Hangul PARA_LINE_SEG vertpos is body-relative"
         );
         assert!(hint.line_height > 0);
+    }
+
+    #[test]
+    fn hangul_english_file_yields_a_table() {
+        let dir = std::env::var("RHWP_DIR").unwrap_or_else(|_| r"C:\Users\swsz9\rhwp".into());
+        let path = std::path::PathBuf::from(dir)
+            .join("samples")
+            .join("basic")
+            .join("english.hwp");
+        let doc = read(&std::fs::read(&path).unwrap()).expect("parse english.hwp");
+        assert!(
+            doc.table_count() >= 1,
+            "Hangul table next to secd must become IR Table, body={}",
+            doc.sections[0].body.len()
+        );
+        assert!(!doc.plain_text().trim().is_empty());
     }
 
     #[test]
