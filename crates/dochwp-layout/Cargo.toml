@@ -1,0 +1,16 @@
+[package]
+name = "dochwp-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Integer-coordinate flow layout"
+publish = false
+
+[dependencies]
+dochwp-model.workspace = true
+dochwp-font.workspace = true
+comemo.workspace = true
+rayon.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,35 @@
+[package]
+name = "dochwp-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command/Query/Event API — sole engine entry"
+publish = false
+
+[dependencies]
+dochwp-capsule.workspace = true
+dochwp-docx.workspace = true
+dochwp-font.workspace = true
+dochwp-hml.workspace = true
+dochwp-html.workspace = true
+dochwp-hwp3.workspace = true
+dochwp-hwp5.workspace = true
+dochwp-hwpx.workspace = true
+dochwp-layout.workspace = true
+dochwp-paint.workspace = true
+dochwp-pdf.workspace = true
+dochwp-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+dochwp-hwp5.workspace = true
+dochwp-hwpx.workspace = true
+dochwp-hml.workspace = true
+dochwp-docx.workspace = true
+dochwp-model.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "dochwp-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Corpus conformance scoring harness"
+publish = false
+
+[[bin]]
+name = "dochwp-conformance"
+path = "src/main.rs"
+
+[dependencies]
+dochwp-api.workspace = true
+dochwp-font.workspace = true
+dochwp-hwp5.workspace = true
+dochwp-hwpx.workspace = true
+dochwp-layout.workspace = true
+dochwp-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

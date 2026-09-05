@@ -1,0 +1,8 @@
+[book]
+title = "DocHWP"
+authors = ["DocHWP contributors"]
+language = "ko"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/dochwp/dochwp"

@@ -1,0 +1,20 @@
+[package]
+name = "dochwp-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Display list to PDF/A via krilla"
+publish = false
+
+[dependencies]
+dochwp-font.workspace = true
+dochwp-paint.workspace = true
+krilla.workspace = true
+
+[dev-dependencies]
+dochwp-layout.workspace = true
+dochwp-model.workspace = true
+dochwp-paint.workspace = true
+
+[lints]
+workspace = true

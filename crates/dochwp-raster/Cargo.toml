@@ -1,0 +1,19 @@
+[package]
+name = "dochwp-raster"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Display list to pixels (tiny-skia CPU, optional vello GPU)"
+publish = false
+
+[features]
+default = []
+gpu = ["dep:vello"]
+
+[dependencies]
+dochwp-paint.workspace = true
+tiny-skia.workspace = true
+vello = { version = "0.5", optional = true }
+
+[lints]
+workspace = true

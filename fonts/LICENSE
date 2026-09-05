@@ -1,0 +1,6 @@
+This directory bundles Noto Sans Regular (SIL Open Font License 1.1).
+Source: https://github.com/notofonts/notofonts.github.io
+The OFL text is at https://openfontlicense.org/
+
+Hangul-specific 함초롬 redistributable faces should be dropped in alongside
+this file for production determinism; tests use Noto Sans Regular.

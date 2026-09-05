@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+.idea/
+.vscode/
+*.pdb
+/bindings
+/scoreboard/local
+.DS_Store
+Thumbs.db

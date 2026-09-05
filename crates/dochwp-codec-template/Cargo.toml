@@ -1,0 +1,14 @@
+[package]
+name = "dochwp-codec-template"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Template crate for community ODT/RTF/Markdown codecs"
+publish = false
+
+[dependencies]
+dochwp-model.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

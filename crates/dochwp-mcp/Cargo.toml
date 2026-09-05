@@ -1,0 +1,19 @@
+[package]
+name = "dochwp-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Thin MCP adapter over dochwp-api"
+publish = false
+
+[[bin]]
+name = "dochwp-mcp"
+path = "src/main.rs"
+
+[dependencies]
+dochwp-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

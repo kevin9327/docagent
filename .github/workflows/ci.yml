@@ -1,0 +1,31 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.1
+        with:
+          components: clippy, rustfmt
+      - name: lint invariants
+        run: cargo run -p dochwp-lint
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+      - name: scoreboard must not drop
+        run: cargo run -p dochwp-conformance -- --require-win
+      - name: format hops
+        run: cargo test -p dochwp-api --test format_hops -- --nocapture
+
+  determinism:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.1
+      - name: native double-run is covered by unit tests
+        run: cargo test -p dochwp-api convert_is_byte_identical_across_two_runs
