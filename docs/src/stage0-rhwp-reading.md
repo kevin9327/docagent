@@ -10,7 +10,7 @@
 
 레코드 헤더: 한글 문서 파일 형식 5.0 r1.3 §4 — tag 10bit, level 10bit, size 12bit, size=`0xFFF`이면 추가 u32. 태그 원점 `HWPTAG_BEGIN = 0x10` (`rhwp/src/parser/tags.rs:6`).
 
-| Tag | 값 | 스펙 이름 | DocHWP IR |
+| Tag | 값 | 스펙 이름 | DocAgent IR |
 | --- | ---: | --- | --- |
 | DOCUMENT_PROPERTIES | 16 | 문서 속성 | `Document` 메타 |
 | ID_MAPPINGS | 17 | ID 개수 표 | 스타일/폰트 카탈로그 |
@@ -90,7 +90,7 @@
 
 `all_match`는 `vertical_pos`를 제외한다 (`:28–35`) — y 위치는 줄바꿈 일치와 별개.
 
-역할: **오라클·점수**. 조판이 LineSeg를 입력으로 소비한다는 계약은 이 파일에 없다. DocHWP는 IR `LayoutHint`로 보존하고 `dochwp-layout`은 읽지 않는다.
+역할: **오라클·점수**. 조판이 LineSeg를 입력으로 소비한다는 계약은 이 파일에 없다. DocAgent는 IR `LayoutHint`로 보존하고 `docagent-layout`은 읽지 않는다.
 
 레코드 크기: 본 구현은 한글 5.0 본문 레이아웃 캐시 관례 36바이트(`textpos, y, line_height, text_height, baseline, spacing, x, width, flags`).
 
@@ -145,7 +145,7 @@
 | render_tree.rs:57 | TAB_DOT_LEADER_DASH_PX | 0.1 | |
 | svg.rs:3994 | HU_PER_PX | 75.0 | 단위 변환. 96dpi면 75 HU/px (7200/96). |
 
-분류: **한컴 규칙에 가까운 것** — `HU_PER_PX=75` (96dpi). **커브피팅** — landscape short-row 260 vs HWPX 320, endnote off-canvas 56, squeeze 13/100/12. DocHWP는 이 값을 이식하지 않는다.
+분류: **한컴 규칙에 가까운 것** — `HU_PER_PX=75` (96dpi). **커브피팅** — landscape short-row 260 vs HWPX 320, endnote off-canvas 56, squeeze 13/100/12. DocAgent는 이 값을 이식하지 않는다.
 
 ## (e) §5 기여물 목록
 
@@ -156,7 +156,7 @@ HEAD에서 해당 경로를 만진 커밋 저자(단정하지 않음): `Taesup J
 | 지정 경로 | 존재 | 비고 |
 | --- | --- | --- |
 | `src/agent/` | 예 | `mod.rs`, `dsel/` (ast, eval, lex, parse, glob, suggest, token, tests) |
-| `src/capsule_sign.rs` | 예 | 캡슐 서명 → `dochwp-capsule` |
+| `src/capsule_sign.rs` | 예 | 캡슐 서명 → `docagent-capsule` |
 | `src/lineage_bundle.rs` | 예 | 계보 |
 | `src/audit_standard.rs` | 예 | 감사 |
 | `src/anchor_log.rs` | 예 | |
@@ -167,14 +167,14 @@ HEAD에서 해당 경로를 만진 커밋 저자(단정하지 않음): `Taesup J
 | `src/agent_seal.rs` | 예 | |
 | `src/disclose.rs` | 예 | v1 밖, trait만 |
 | `src/settle.rs` | 예 | v1 밖, trait만 |
-| `src/mcp_serve.rs` | 예 | → `dochwp-mcp` |
+| `src/mcp_serve.rs` | 예 | → `docagent-mcp` |
 | `mydocs/tech/standards/agent_work_standard.{md,json}` | 예 | |
 | `tests/agent_*_contract.rs` | 예 | `agent_codex_contract.rs`, `agent_context_cost_contract.rs`, `agent_profile_router_contract.rs`, `agent_toolkit_contract.rs` |
 | `tools/agent-toolkit/` | 예 | |
 | `tools/agent_bench/` | 예 | |
 | `{{추가 경로}}` | 미기입 | 추가하지 않음 |
 
-이식 원칙: 3해시·계보·감사는 `dochwp-api` 기본. 정산·선택 공개·PQ는 인터페이스만 (`Settlement`, `OptionalDisclose`).
+이식 원칙: 3해시·계보·감사는 `docagent-api` 기본. 정산·선택 공개·PQ는 인터페이스만 (`Settlement`, `OptionalDisclose`).
 
 ## (f) HWP ↔ OOXML 문단·런·표 초안
 
@@ -203,6 +203,6 @@ DOCX에만 있는 `w:outlineLvl`, `w:keepNext` 등은 IR에 명시적 `Option`. 
 | 레이아웃 엔진 둘 | **확인.** `typeset.rs:3–5`가 `height_measurer → pagination → layout`을 구형으로 지목하고 TypesetEngine을 신형으로 둔다. `layout.rs`가 살아 있다. |
 | 튜닝 76개 | renderer `const *_PX` **79** (중복 지역 const 포함) |
 | LineSeg 오라클 | `lineseg_compare.rs` 존재, 개념만 참조 |
-| 포맷 식별자 렌더러 침투 | landscape 상수가 HWP5/HWPX로 갈림 (`HWPX_LANDSCAPE_*`) — DocHWP 금지 목록의 근거 |
+| 포맷 식별자 렌더러 침투 | landscape 상수가 HWP5/HWPX로 갈림 (`HWPX_LANDSCAPE_*`) — DocAgent 금지 목록의 근거 |
 
 단어 수는 이 절까지 5,000 미만이다.

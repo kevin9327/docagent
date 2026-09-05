@@ -1,0 +1,15 @@
+[package]
+name = "docagent-hwp3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HWP 3.x reader → IR"
+publish = false
+
+[dependencies]
+docagent-model.workspace = true
+flate2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

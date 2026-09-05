@@ -1,0 +1,25 @@
+[package]
+name = "docagent-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Corpus conformance scoring harness"
+publish = false
+
+[[bin]]
+name = "docagent-conformance"
+path = "src/main.rs"
+
+[dependencies]
+docagent-api.workspace = true
+docagent-font.workspace = true
+docagent-hwp5.workspace = true
+docagent-hwp3.workspace = true
+docagent-hwpx.workspace = true
+docagent-layout.workspace = true
+docagent-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "docagent-html"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "IR to semantic HTML+CSS"
+publish = false
+
+[dependencies]
+docagent-model.workspace = true
+
+[lints]
+workspace = true

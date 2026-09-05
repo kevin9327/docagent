@@ -1,0 +1,20 @@
+[package]
+name = "docagent-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Display list to PDF/A via krilla"
+publish = false
+
+[dependencies]
+docagent-font.workspace = true
+docagent-paint.workspace = true
+krilla.workspace = true
+
+[dev-dependencies]
+docagent-layout.workspace = true
+docagent-model.workspace = true
+docagent-paint.workspace = true
+
+[lints]
+workspace = true

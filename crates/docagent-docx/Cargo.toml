@@ -1,0 +1,16 @@
+[package]
+name = "docagent-docx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DOCX WordprocessingML codec ↔ IR"
+publish = false
+
+[dependencies]
+docagent-model.workspace = true
+quick-xml.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+
+[lints]
+workspace = true

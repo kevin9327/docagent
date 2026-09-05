@@ -1,0 +1,14 @@
+[package]
+name = "docagent-codec-template"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Template crate for community ODT/RTF/Markdown codecs"
+publish = false
+
+[dependencies]
+docagent-model.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

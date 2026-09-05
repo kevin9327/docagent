@@ -9,4 +9,4 @@ Status: accepted
 | Table row heights | 20 |
 | Parse | 10 |
 
-A PR that lowers mean score cannot merge (`dochwp-conformance --require-win`).
+A PR that lowers mean score cannot merge (`docagent-conformance --require-win`).

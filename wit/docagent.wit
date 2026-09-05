@@ -1,0 +1,30 @@
+package docagent:engine@0.1.0;
+
+interface api {
+    variant export-target {
+        pdf-a,
+        html,
+        ir-json,
+        hwp5,
+        hwpx,
+        hml,
+        docx,
+    }
+
+    record capsule {
+        input-hash: string,
+        plan-hash: string,
+        output-hash: string,
+        engine-version: string,
+    }
+
+    /// Command::Convert. Input bytes in, capsule JSON out. Same contract as native FFI/MCP/CLI.
+    convert: func(input: list<u8>, targets: list<export-target>) -> result<string, string>;
+
+    /// Query::EngineVersion / Query::LastCapsule
+    query: func(name: string) -> result<string, string>;
+}
+
+world engine {
+    export api;
+}

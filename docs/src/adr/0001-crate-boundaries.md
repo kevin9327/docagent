@@ -2,5 +2,5 @@
 
 Status: accepted
 
-Codec crates depend only on `dochwp-model`. Layout does not know formats.
-Reverse imports fail in `dochwp-lint` and CI.
+Codec crates depend only on `docagent-model`. Layout does not know formats.
+Reverse imports fail in `docagent-lint` and CI.

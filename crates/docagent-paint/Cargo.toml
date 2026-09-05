@@ -1,0 +1,18 @@
+[package]
+name = "docagent-paint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Fragment tree to rkyv display list"
+publish = false
+
+[dependencies]
+docagent-layout.workspace = true
+rkyv.workspace = true
+
+[dev-dependencies]
+docagent-font.workspace = true
+docagent-model.workspace = true
+
+[lints]
+workspace = true

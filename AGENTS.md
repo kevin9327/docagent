@@ -1,17 +1,17 @@
-# DocHWP agent instructions
+# DocAgent agent instructions
 
 This is the only agent instruction file in the engine repository.
 
 ## Product
 
-DocHWP is a deterministic document runtime for LLM agents, RPA, and backends.
-Humans receive PDF/HWP/HWPX/DOCX. There is no GUI, cursor, undo, or hwpctl layer.
+DocAgent is a document-only deterministic runtime for LLM agents, RPA, and backends.
+It reads and writes flow documents. Humans receive PDF/HWP/HWPX/DOCX. There is no GUI, cursor, undo, spreadsheet, presentation, or hwpctl layer.
 
 ## Crate graph
 
-Depend downward only. Codec crates (`dochwp-hwp5`, `dochwp-hwpx`, `dochwp-hwp3`,
-`dochwp-hml`, `dochwp-docx`) must not import each other or anything at
-`dochwp-layout` and below. `dochwp-model` has no format identifier.
+Depend downward only. Codec crates (`docagent-hwp5`, `docagent-hwpx`, `docagent-hwp3`,
+`docagent-hml`, `docagent-docx`) must not import each other or anything at
+`docagent-layout` and below. `docagent-model` has no format identifier.
 
 ## Invariants CI enforces
 
@@ -28,12 +28,12 @@ Depend downward only. Codec crates (`dochwp-hwp5`, `dochwp-hwpx`, `dochwp-hwp3`,
 ## Layout
 
 All layout coordinates are HWPUNIT `i32` (1/7200 inch). Accumulators are `i64`.
-`f32`/`f64` are forbidden in `dochwp-layout`. LineSeg is a `LayoutHint` oracle
+`f32`/`f64` are forbidden in `docagent-layout`. LineSeg is a `LayoutHint` oracle
 for the scoreboard; layout must not consume it.
 
 ## Commands
 
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo run -p dochwp-lint`
-- `cargo run -p dochwp-cli -- convert <file> --pdf out.pdf --html out.html --ir out.json`
+- `cargo run -p docagent-lint`
+- `cargo run -p docagent-cli -- convert <file> --pdf out.pdf --html out.html --ir out.json`

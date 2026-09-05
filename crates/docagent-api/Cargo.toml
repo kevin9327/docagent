@@ -1,0 +1,35 @@
+[package]
+name = "docagent-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command/Query/Event API — sole engine entry"
+publish = false
+
+[dependencies]
+docagent-capsule.workspace = true
+docagent-docx.workspace = true
+docagent-font.workspace = true
+docagent-hml.workspace = true
+docagent-html.workspace = true
+docagent-hwp3.workspace = true
+docagent-hwp5.workspace = true
+docagent-hwpx.workspace = true
+docagent-layout.workspace = true
+docagent-paint.workspace = true
+docagent-pdf.workspace = true
+docagent-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+docagent-hwp5.workspace = true
+docagent-hwpx.workspace = true
+docagent-hml.workspace = true
+docagent-docx.workspace = true
+docagent-model.workspace = true
+
+[lints]
+workspace = true

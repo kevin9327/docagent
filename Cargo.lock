@@ -506,21 +506,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "dochwp-api"
+name = "docagent-api"
 version = "0.1.0"
 dependencies = [
- "dochwp-capsule",
- "dochwp-docx",
- "dochwp-font",
- "dochwp-hml",
- "dochwp-html",
- "dochwp-hwp3",
- "dochwp-hwp5",
- "dochwp-hwpx",
- "dochwp-layout",
- "dochwp-model",
- "dochwp-paint",
- "dochwp-pdf",
+ "docagent-capsule",
+ "docagent-docx",
+ "docagent-font",
+ "docagent-hml",
+ "docagent-html",
+ "docagent-hwp3",
+ "docagent-hwp5",
+ "docagent-hwpx",
+ "docagent-layout",
+ "docagent-model",
+ "docagent-paint",
+ "docagent-pdf",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -528,7 +528,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dochwp-capsule"
+name = "docagent-capsule"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
@@ -539,166 +539,166 @@ dependencies = [
 ]
 
 [[package]]
-name = "dochwp-cli"
+name = "docagent-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
- "dochwp-api",
+ "docagent-api",
  "serde_json",
 ]
 
 [[package]]
-name = "dochwp-codec-template"
+name = "docagent-codec-template"
 version = "0.1.0"
 dependencies = [
- "dochwp-model",
+ "docagent-model",
  "thiserror 2.0.20",
 ]
 
 [[package]]
-name = "dochwp-component"
+name = "docagent-component"
 version = "0.1.0"
 dependencies = [
- "dochwp-api",
+ "docagent-api",
  "serde_json",
 ]
 
 [[package]]
-name = "dochwp-conformance"
+name = "docagent-conformance"
 version = "0.1.0"
 dependencies = [
- "dochwp-api",
- "dochwp-font",
- "dochwp-hwp3",
- "dochwp-hwp5",
- "dochwp-hwpx",
- "dochwp-layout",
- "dochwp-model",
+ "docagent-api",
+ "docagent-font",
+ "docagent-hwp3",
+ "docagent-hwp5",
+ "docagent-hwpx",
+ "docagent-layout",
+ "docagent-model",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "dochwp-docx"
+name = "docagent-docx"
 version = "0.1.0"
 dependencies = [
- "dochwp-model",
+ "docagent-model",
  "quick-xml",
  "thiserror 2.0.20",
  "zip",
 ]
 
 [[package]]
-name = "dochwp-font"
+name = "docagent-font"
 version = "0.1.0"
 dependencies = [
- "dochwp-model",
+ "docagent-model",
  "rustybuzz",
  "thiserror 2.0.20",
  "ttf-parser",
 ]
 
 [[package]]
-name = "dochwp-hml"
+name = "docagent-hml"
 version = "0.1.0"
 dependencies = [
- "dochwp-model",
+ "docagent-model",
  "quick-xml",
  "thiserror 2.0.20",
 ]
 
 [[package]]
-name = "dochwp-html"
+name = "docagent-html"
 version = "0.1.0"
 dependencies = [
- "dochwp-model",
+ "docagent-model",
 ]
 
 [[package]]
-name = "dochwp-hwp3"
+name = "docagent-hwp3"
 version = "0.1.0"
 dependencies = [
- "dochwp-model",
+ "docagent-model",
  "flate2",
  "thiserror 2.0.20",
 ]
 
 [[package]]
-name = "dochwp-hwp5"
+name = "docagent-hwp5"
 version = "0.1.0"
 dependencies = [
  "cfb",
- "dochwp-model",
+ "docagent-model",
  "flate2",
  "thiserror 2.0.20",
 ]
 
 [[package]]
-name = "dochwp-hwpx"
+name = "docagent-hwpx"
 version = "0.1.0"
 dependencies = [
- "dochwp-model",
+ "docagent-model",
  "quick-xml",
  "thiserror 2.0.20",
  "zip",
 ]
 
 [[package]]
-name = "dochwp-layout"
+name = "docagent-layout"
 version = "0.1.0"
 dependencies = [
  "comemo",
- "dochwp-font",
- "dochwp-model",
+ "docagent-font",
+ "docagent-model",
  "rayon",
 ]
 
 [[package]]
-name = "dochwp-lint"
+name = "docagent-lint"
 version = "0.1.0"
 
 [[package]]
-name = "dochwp-mcp"
+name = "docagent-mcp"
 version = "0.1.0"
 dependencies = [
- "dochwp-api",
+ "docagent-api",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "dochwp-model"
+name = "docagent-model"
 version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "dochwp-paint"
+name = "docagent-paint"
 version = "0.1.0"
 dependencies = [
- "dochwp-font",
- "dochwp-layout",
- "dochwp-model",
+ "docagent-font",
+ "docagent-layout",
+ "docagent-model",
  "rkyv",
 ]
 
 [[package]]
-name = "dochwp-pdf"
+name = "docagent-pdf"
 version = "0.1.0"
 dependencies = [
- "dochwp-font",
- "dochwp-layout",
- "dochwp-model",
- "dochwp-paint",
+ "docagent-font",
+ "docagent-layout",
+ "docagent-model",
+ "docagent-paint",
  "krilla",
 ]
 
 [[package]]
-name = "dochwp-raster"
+name = "docagent-raster"
 version = "0.1.0"
 dependencies = [
- "dochwp-paint",
+ "docagent-paint",
  "tiny-skia",
  "vello",
 ]
