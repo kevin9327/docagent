@@ -6,7 +6,7 @@ use docagent_font::FontSet;
 use docagent_paint::{DisplayList, Op};
 use krilla::color::rgb;
 use krilla::configure::{Archival, ConfigurationBuilder, Validator};
-use krilla::geom::{PathBuilder, Point, Rect};
+use krilla::geom::{PathBuilder, Point, Rect, Transform};
 use krilla::metadata::{DateTime, Metadata};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
@@ -15,6 +15,8 @@ use krilla::text::{Font, TextDirection};
 use krilla::{Document, SerializeSettings};
 
 const HU_PER_PT: f32 = 100.0;
+/// tan(~11.3°). Y-down shear so glyph tops lean right around the baseline.
+const ITALIC_SHEAR: f32 = 0.20;
 
 pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
     let font = Font::new(fonts.data.clone().into(), 0).ok_or("font")?;
@@ -99,7 +101,7 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                             text,
                             color: _,
                             bold,
-                            italic: _,
+                            italic,
                         } => {
                             let mapped = docagent_font::retain_mapped_chars(fonts, text);
                             if mapped.is_empty() {
@@ -114,6 +116,17 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                             let pt = (*size as f32 / HU_PER_PT).max(1.0);
                             let px = *x as f32 / HU_PER_PT;
                             let py = *y as f32 / HU_PER_PT;
+                            if *italic {
+                                // x' = x + k*(py - y): tops (y < py) shift right.
+                                surface.push_transform(&Transform::from_row(
+                                    1.0,
+                                    0.0,
+                                    -ITALIC_SHEAR,
+                                    1.0,
+                                    ITALIC_SHEAR * py,
+                                    0.0,
+                                ));
+                            }
                             surface.draw_text(
                                 Point::from_xy(px, py),
                                 font.clone(),
@@ -133,6 +146,9 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                                     false,
                                     TextDirection::Auto,
                                 );
+                            }
+                            if *italic {
+                                surface.pop();
                             }
                         }
                         Op::Page { .. } => {}
@@ -249,5 +265,26 @@ mod tests {
         let heavy = pdf_for(true);
         assert_ne!(plain, heavy, "synthetic bold must change PDF bytes");
         assert!(heavy.len() >= plain.len());
+    }
+
+    #[test]
+    fn synthetic_italic_changes_pdf_bytes() {
+        fn pdf_for(italic: bool) -> Vec<u8> {
+            let mut doc = Document::new();
+            let mut section = Section::default();
+            let mut p = Paragraph::from_text("byte-for-byte");
+            p.runs[0].style.italic = italic;
+            section.body.push(Block::Paragraph(p));
+            doc.sections.push(section);
+            let tree = layout_document(&doc, &FontSet::bundled());
+            let list = paint(&tree);
+            assert!(list.ops.iter().any(|op| {
+                matches!(op, Op::Text { text, italic: i, .. } if text.contains("byte-for-byte") && *i == italic)
+            }));
+            to_pdfa(&list, &FontSet::bundled()).expect("pdf")
+        }
+        let roman = pdf_for(false);
+        let oblique = pdf_for(true);
+        assert_ne!(roman, oblique, "synthetic italic must change PDF bytes");
     }
 }

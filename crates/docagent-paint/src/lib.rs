@@ -128,4 +128,24 @@ mod tests {
             matches!(op, Op::Text { text, bold: false, .. } if text.contains("plain"))
         }));
     }
+
+    #[test]
+    fn paint_forwards_italic_on_text_ops() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut italic = docagent_model::Run::text("byte-for-byte");
+        italic.style.italic = true;
+        p.runs.push(italic);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let list = paint(&tree);
+        assert!(list.ops.iter().any(|op| {
+            matches!(op, Op::Text { text, italic: true, .. } if text.contains("byte-for-byte"))
+        }));
+        assert!(list.ops.iter().any(|op| {
+            matches!(op, Op::Text { text, italic: false, .. } if text.contains("plain"))
+        }));
+    }
 }

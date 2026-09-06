@@ -753,4 +753,29 @@ mod tests {
             .expect("plain span");
         assert!(!plain.bold);
     }
+
+    #[test]
+    fn italic_runs_mark_line_frags() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut italic = docagent_model::Run::text("byte-for-byte");
+        italic.style.italic = true;
+        p.runs.push(italic);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let italic_frag = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.text.contains("byte-for-byte"))
+            .expect("italic span");
+        assert!(italic_frag.italic);
+        let plain = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.text.contains("plain"))
+            .expect("plain span");
+        assert!(!plain.italic);
+    }
 }
