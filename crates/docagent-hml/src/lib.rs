@@ -2,8 +2,11 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
+
 use docagent_model::{
-    Alignment, Block, Document, Paragraph, Section, Table, TableCell, TableRow,
+    Alignment, Block, CharStyle, Document, Paragraph, Run, Section, Table, TableCell, TableRow,
+    Underline,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -32,9 +35,12 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
 }
 
 pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
-    let mut s = String::from(r#"<?xml version="1.0" encoding="UTF-8"?><HWPML><BODY>"#);
+    let styles = collect_char_styles(doc);
+    let mut s = String::from(r#"<?xml version="1.0" encoding="UTF-8"?><HWPML>"#);
+    s.push_str(&charshape_head(&styles));
+    s.push_str("<BODY>");
     if doc.sections.is_empty() {
-        s.push_str("<SECTION><P><TEXT></TEXT></P></SECTION>");
+        s.push_str(r#"<SECTION><P><TEXT CharShape="0"></TEXT></P></SECTION>"#);
     } else {
         for section in &doc.sections {
             s.push_str(&format!(
@@ -47,18 +53,15 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                 section.page.margin_bottom
             ));
             if section.body.is_empty() {
-                s.push_str("<P><TEXT></TEXT></P>");
+                s.push_str(r#"<P><TEXT CharShape="0"></TEXT></P>"#);
             } else {
                 for block in &section.body {
                     match block {
-                        Block::Paragraph(p) => {
-                            s.push_str(&format!(
-                                "<P><TEXT>{}</TEXT></P>",
-                                xml_escape(&p.plain_text())
-                            ));
-                        }
+                        Block::Paragraph(p) => s.push_str(&p_xml(p, &styles)),
                         Block::Table(t) => s.push_str(&table_xml(t)),
-                        Block::Float(_) | Block::Break(_) => s.push_str("<P><TEXT></TEXT></P>"),
+                        Block::Float(_) | Block::Break(_) => {
+                            s.push_str(r#"<P><TEXT CharShape="0"></TEXT></P>"#)
+                        }
                     }
                 }
             }
@@ -67,6 +70,89 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
     }
     s.push_str("</BODY></HWPML>");
     Ok(s.into_bytes())
+}
+
+fn collect_char_styles(doc: &Document) -> Vec<CharStyle> {
+    let mut out = vec![CharStyle::default()];
+    for section in &doc.sections {
+        collect_block_styles(&section.body, &mut out);
+    }
+    out
+}
+
+fn collect_block_styles(blocks: &[Block], out: &mut Vec<CharStyle>) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(p) => {
+                for run in &p.runs {
+                    if !out.iter().any(|s| s == &run.style) {
+                        out.push(run.style.clone());
+                    }
+                }
+            }
+            Block::Table(t) => {
+                for row in &t.rows {
+                    for cell in &row.cells {
+                        collect_block_styles(&cell.blocks, out);
+                    }
+                }
+            }
+            Block::Float(_) | Block::Break(_) => {}
+        }
+    }
+}
+
+fn style_id(styles: &[CharStyle], style: &CharStyle) -> u32 {
+    styles.iter().position(|s| s == style).unwrap_or(0) as u32
+}
+
+fn charshape_head(styles: &[CharStyle]) -> String {
+    let mut s = format!(
+        r#"<HEAD><MAPPINGTABLE><CHARSHAPELIST Count="{}">"#,
+        styles.len()
+    );
+    for (i, st) in styles.iter().enumerate() {
+        s.push_str(&format!(
+            r#"<CHARSHAPE Id="{i}" Height="{}">"#,
+            st.size.max(1)
+        ));
+        if st.bold {
+            s.push_str("<BOLD/>");
+        }
+        if st.italic {
+            s.push_str("<ITALIC/>");
+        }
+        if st.underline != Underline::None {
+            s.push_str(r#"<UNDERLINE Type="Bottom"/>"#);
+        }
+        if st.strike {
+            s.push_str(r#"<STRIKEOUT Shape="Solid"/>"#);
+        }
+        if st.superscript {
+            s.push_str("<SUPERSCRIPT/>");
+        }
+        if st.subscript {
+            s.push_str("<SUBSCRIPT/>");
+        }
+        s.push_str("</CHARSHAPE>");
+    }
+    s.push_str("</CHARSHAPELIST></MAPPINGTABLE></HEAD>");
+    s
+}
+
+fn p_xml(p: &Paragraph, styles: &[CharStyle]) -> String {
+    let mut s = String::from("<P>");
+    if p.runs.is_empty() {
+        s.push_str(r#"<TEXT CharShape="0"></TEXT>"#);
+    } else {
+        for run in &p.runs {
+            let t = xml_escape(run.display_text());
+            let sid = style_id(styles, &run.style);
+            s.push_str(&format!(r#"<TEXT CharShape="{sid}">{t}</TEXT>"#));
+        }
+    }
+    s.push_str("</P>");
+    s
 }
 
 fn table_xml(table: &Table) -> String {
@@ -108,13 +194,20 @@ fn xml_escape(s: &str) -> String {
 fn parse_hml(xml: &str) -> Result<Document, Error> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
+    reader.config_mut().expand_empty_elements = true;
     let mut buf = Vec::new();
     let mut doc = Document::new();
     let mut section = Section::default();
     let mut body = Vec::new();
     let mut in_text = false;
     let mut in_table = false;
-    let mut cur = String::new();
+    let mut in_charshape = false;
+    let mut chars: HashMap<u32, CharStyle> = HashMap::new();
+    let mut char_id: Option<u32> = None;
+    let mut char_style = CharStyle::default();
+    let mut para_runs: Vec<Run> = Vec::new();
+    let mut run_text = String::new();
+    let mut run_style = CharStyle::default();
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_buf = String::new();
@@ -140,9 +233,33 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                             section.page.height = v;
                         }
                     }
-                    "TEXT" | "CHAR" => in_text = true,
+                    "CHARSHAPE" => {
+                        in_charshape = true;
+                        char_id = attr_u32(&e, "Id");
+                        char_style = CharStyle::default();
+                        if let Some(h) = attr_i32(&e, "Height").filter(|h| *h > 0) {
+                            char_style.size = h;
+                        }
+                    }
+                    "BOLD" if in_charshape => char_style.bold = true,
+                    "ITALIC" if in_charshape => char_style.italic = true,
+                    "UNDERLINE" if in_charshape => char_style.underline = Underline::Single,
+                    "STRIKEOUT" if in_charshape => char_style.strike = true,
+                    "SUPERSCRIPT" if in_charshape => char_style.superscript = true,
+                    "SUBSCRIPT" if in_charshape => char_style.subscript = true,
+                    "TEXT" | "CHAR" => {
+                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        in_text = true;
+                        run_style = CharStyle::default();
+                        if let Some(id) = attr_u32(&e, "CharShape")
+                            && let Some(st) = chars.get(&id)
+                        {
+                            run_style = st.clone();
+                        }
+                    }
                     "TABLE" => {
-                        flush_p(&mut body, &mut cur);
+                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_p(&mut body, &mut para_runs);
                         in_table = true;
                     }
                     "TR" if in_table => cur_row.clear(),
@@ -156,8 +273,17 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 match name.as_str() {
+                    "CHARSHAPE" => {
+                        if let Some(id) = char_id.take() {
+                            chars.insert(id, char_style.clone());
+                        }
+                        in_charshape = false;
+                    }
                     "TEXT" | "CHAR" => in_text = false,
-                    "P" if !in_table => flush_p(&mut body, &mut cur),
+                    "P" if !in_table => {
+                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_p(&mut body, &mut para_runs);
+                    }
                     "TD" if in_table => {
                         cur_row.push(TableCell {
                             width: cell_width,
@@ -194,7 +320,7 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                 if in_table {
                     cell_buf.push_str(&decoded);
                 } else if in_text {
-                    cur.push_str(&decoded);
+                    run_text.push_str(&decoded);
                 }
             }
             Ok(Event::Eof) => break,
@@ -203,7 +329,8 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
         }
         buf.clear();
     }
-    flush_p(&mut body, &mut cur);
+    flush_run(&mut para_runs, &mut run_text, &run_style);
+    flush_p(&mut body, &mut para_runs);
     if have_section || !body.is_empty() {
         section.body = body;
         doc.sections.push(section);
@@ -214,11 +341,22 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
     Ok(doc)
 }
 
-fn flush_p(body: &mut Vec<Block>, text: &mut String) {
+fn flush_run(runs: &mut Vec<Run>, text: &mut String, style: &CharStyle) {
     if text.is_empty() {
         return;
     }
-    body.push(Block::Paragraph(Paragraph::from_text(std::mem::take(text))));
+    let mut run = Run::text(std::mem::take(text));
+    run.style = style.clone();
+    runs.push(run);
+}
+
+fn flush_p(body: &mut Vec<Block>, runs: &mut Vec<Run>) {
+    if runs.is_empty() {
+        return;
+    }
+    let mut p = Paragraph::from_text("");
+    p.runs = std::mem::take(runs);
+    body.push(Block::Paragraph(p));
 }
 
 fn local_name(e: &BytesStart<'_>) -> String {
@@ -226,6 +364,13 @@ fn local_name(e: &BytesStart<'_>) -> String {
 }
 
 fn attr_i32(e: &BytesStart<'_>, key: &str) -> Option<i32> {
+    e.try_get_attribute(key)
+        .ok()
+        .flatten()
+        .and_then(|a| String::from_utf8_lossy(&a.value).parse().ok())
+}
+
+fn attr_u32(e: &BytesStart<'_>, key: &str) -> Option<u32> {
     e.try_get_attribute(key)
         .ok()
         .flatten()
@@ -250,5 +395,34 @@ mod tests {
         doc.sections.push(section);
         let back = roundtrip(&doc).unwrap();
         assert!(back.plain_text().contains("HML 본문"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_charshape_marks() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut bold = Run::text("GPU-free");
+        bold.style.bold = true;
+        p.runs.push(bold);
+        let mut strike = Run::text(" guess");
+        strike.style.strike = true;
+        p.runs.push(strike);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains("<BOLD/>"), "{xml}");
+        assert!(xml.contains("<STRIKEOUT"), "{xml}");
+        assert!(xml.contains(r#"CharShape=""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        assert!(p.runs.iter().any(|r| {
+            r.style.strike && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
+        }));
     }
 }
