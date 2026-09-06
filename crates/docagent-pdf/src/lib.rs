@@ -1098,4 +1098,55 @@ mod tests {
             s.chars().take(400).collect::<String>()
         );
     }
+
+    fn doc_with_table_cell_mark() -> Document {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = docagent_model::Table::from_cells(vec![vec![String::new()]]);
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run {
+            style: docagent_model::CharStyle::default(),
+            content: docagent_model::RunContent::Inline(docagent_model::InlineObject::Image(
+                docagent_model::ImageData {
+                    bytes: MARK_PNG.to_vec(),
+                    mime: "image/png".into(),
+                    width: 1600,
+                    height: 1600,
+                    alt_text: Some("mark".into()),
+                    wrap: docagent_model::WrapMode::Inline,
+                },
+            )),
+        }];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        doc
+    }
+
+    #[test]
+    fn table_cell_image_embeds_in_pdfa() {
+        let list = paint(&layout_document(
+            &doc_with_table_cell_mark(),
+            &FontSet::bundled(),
+        ));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Image { w, h, bytes, mime, .. }
+                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                )
+            }),
+            "paint must forward table-cell PNG bytes"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(
+            s.contains("/Image"),
+            "PDF image XObject missing: {}",
+            s.chars().take(400).collect::<String>()
+        );
+    }
 }

@@ -33,8 +33,8 @@ bytes, identical input / plan / output SHA-256.
 ## Flow marks on the IR
 
 These marks round-trip through the named codec. A dash is a real gap, not a
-teaser. Hangul images, first-class lists, and table headers
-are not claimed.
+teaser. Hangul images and first-class lists are not claimed.
+Hangul table headers ship on HWP 5 / HWPX / HML, not HWP 3.
 
 | Mark | Markdown | HTML | PDF/A | DOCX | ODT | Hangul |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -48,15 +48,26 @@ are not claimed.
 | Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** · CHAR_SHAPE shade |
 | Superscript / subscript | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline shift | `w:vertAlign` | Tsuper / Tsub | CHAR_SHAPE |
 | Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | CHAR_SHAPE |
-| Table header row | GFM `\| --- \|` | `<th>` | header fill | `w:tblHeader` | `THcell` | — |
-| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | PDF/A XObject | `a:blip` | `draw:image` | — |
+| Table header row | GFM `\| --- \|` | `<th>` | header fill | `w:tblHeader` | `THcell` | **yes** · not HWP 3 |
+| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | XObject · float | `a:blip` · wrapSquare | `draw:image` · cell | — |
 
 Images are **yes** (PNG and JPEG) on Markdown, HTML, PDF/A, DOCX, and ODT. They
 stay **—** on Hangul. `examples/letter.md` has no image; convert shots of that
 fixture do not show one.
 
+| Placement | What ships |
+| --- | --- |
+| PDF/A | `Block::Float(Float::Image)` layouts and paints as a PDF/A XObject. Oversized floats clamp to content width. |
+| DOCX | `WrapMode::Square` round-trips as `wp:wrapSquare wrapText="bothSides"`. |
+| ODT | `draw:image` inside table cells; `svg:desc` alt fallback. |
+| HTML `read` | data-URI `<img>`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>`. |
+| Hangul | table headers on HWP 5 / HWPX / HML (not HWP 3). Still **—**: images, first-class lists. |
+
 HTML `read` recovers `<img src="data:image/png|jpeg;base64,…">` into
-`InlineObject::Image` (Pandoc-class import). Write emits the same data-URI form.
+`InlineObject::Image`, `<ul>`/`<ol>`/`<ul class="tasks">` into numbering,
+`<blockquote>` into a quote paragraph, `<pre>` into a
+code-block paragraph, `<a href>` into `InlineObject::Hyperlink`, and `<mark>`
+into `CharStyle.highlight` (Pandoc-class import). Write emits those tags.
 `http(s):` `src` is skipped. This is not a full HTML5 engine: no CSS layout, no
 JavaScript, no remote fetch.
 
@@ -71,7 +82,7 @@ Hangul files are regional codecs on the same IR, not a second product.
 | HML | `CHARSHAPE`: BOLD, ITALIC, UNDERLINE, STRIKEOUT, SUPERSCRIPT, SUBSCRIPT; SHADECOLOR → highlight | `FIELDBEGIN Type="Hyperlink"` | `STYLE` `Quote` / `CodeBlock` / `HorizontalLine` / `Task` |
 | HWP 3 | char-shape attr bits: bold, italic, underline, super, sub (no strike bit); shade ratio → highlight | control char 10 (`other_options & 0x10`) + additional-info TagID 3 (617-byte kchar URL) | style list `Quote` / `CodeBlock` / `HorizontalLine` / `Task` |
 
-Not yet on Hangul: images, first-class numbering, table header rows.
+Not yet on Hangul: images, first-class numbering. Table header rows: HWP 5 / HWPX / HML yes; HWP 3 no primitive.
 
 ## Not this product
 

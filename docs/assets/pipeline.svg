@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="280" viewBox="0 0 1280 280" role="img" aria-label="DocAgent conversion pipeline">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="280" viewBox="0 0 1280 280" role="img" aria-label="Input formats to one integer engine to PDF/A HTML DOCX wrapSquare ODT cell PNG JPEG float XObject to capsule hashes">
   <defs>
     <linearGradient id="pbg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#071018"/>
@@ -28,9 +28,10 @@
 
     <rect x="706" y="70" width="250" height="160" rx="16" fill="#111827" stroke="#1f2937"/>
     <text x="831" y="104" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="700">OUTPUT</text>
-    <text x="831" y="140" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">PDF/A HTML</text>
-    <text x="831" y="168" text-anchor="middle" fill="#cbd5e1" font-size="16">DOCX · ODT · MD</text>
-    <text x="831" y="200" text-anchor="middle" fill="#64748b" font-size="13">PNG · JPEG · same bytes</text>
+    <text x="831" y="136" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">PDF/A HTML</text>
+    <text x="831" y="162" text-anchor="middle" fill="#cbd5e1" font-size="15">DOCX wrapSquare · ODT cell</text>
+    <text x="831" y="186" text-anchor="middle" fill="#cbd5e1" font-size="15">PNG · JPEG · float XObject</text>
+    <text x="831" y="210" text-anchor="middle" fill="#64748b" font-size="12">same bytes · not Hangul images</text>
 
     <polygon points="970,150 998,138 998,162" fill="#2dd4bf"/>
 

@@ -394,16 +394,34 @@ fn para_xml(id: usize, p: &Paragraph, styles: &[CharStyle]) -> String {
     s
 }
 
+fn table_header_row_count(table: &Table) -> u8 {
+    table
+        .header_row_count
+        .max(table.rows.iter().take_while(|r| r.header).count() as u8)
+}
+
 fn table_xml(table: &Table) -> String {
     let rows = table.rows.len();
     let cols = table.rows.first().map(|r| r.cells.len()).unwrap_or(0);
-    let mut s = format!(r#"<hp:tbl rowCnt="{rows}" colCnt="{cols}"><hp:tbody>"#);
-    for row in &table.rows {
-        s.push_str("<hp:tr>");
+    let header_n = table_header_row_count(table);
+    let repeat = if header_n > 0 {
+        r#" repeatHeader="1""#
+    } else {
+        ""
+    };
+    let mut s = format!(r#"<hp:tbl rowCnt="{rows}" colCnt="{cols}"{repeat}><hp:tbody>"#);
+    for (ri, row) in table.rows.iter().enumerate() {
+        let is_header = row.header || ri < header_n as usize;
+        if is_header {
+            s.push_str(r#"<hp:tr header="1">"#);
+        } else {
+            s.push_str("<hp:tr>");
+        }
         for cell in &row.cells {
             let text = xml_escape(&cell_text(cell));
+            let header_attr = if is_header { r#" header="1""# } else { "" };
             s.push_str(&format!(
-                r#"<hp:tc width="{}"><hp:p><hp:run><hp:t>{text}</hp:t></hp:run></hp:p></hp:tc>"#,
+                r#"<hp:tc{header_attr} width="{}"><hp:p><hp:run><hp:t>{text}</hp:t></hp:run></hp:p></hp:tc>"#,
                 cell.width
             ));
         }
@@ -551,6 +569,8 @@ fn parse_section_xml(
     let mut cell_width: i32 = 10000;
     let mut cell_height: Option<i32> = None;
     let mut row_height: Option<i32> = None;
+    let mut tbl_repeat_header = false;
+    let mut row_header = false;
     let mut hints = Vec::new();
     let mut in_lineseg = false;
     let mut pending_href: Option<String> = None;
@@ -618,15 +638,20 @@ fn parse_section_xml(
                         );
                         flush_para(&mut body, &mut para_runs, &mut hints, &mut para_kind);
                         in_table = true;
+                        tbl_repeat_header = attr_on(&e, "repeatHeader");
                     }
                     "tr" if in_table => {
                         cur_row.clear();
                         row_height = attr_i32(&e, "height").filter(|h| *h > 0);
+                        row_header = attr_on(&e, "header");
                     }
                     "tc" if in_table => {
                         cell_text_buf.clear();
                         cell_width = attr_i32(&e, "width").unwrap_or(10000);
                         cell_height = attr_i32(&e, "height").filter(|h| *h > 0 && *h < 20_000);
+                        if attr_on(&e, "header") {
+                            row_header = true;
+                        }
                     }
                     "lineseg" => {
                         in_lineseg = true;
@@ -714,19 +739,31 @@ fn parse_section_xml(
                         table_rows.push(TableRow {
                             cells: std::mem::take(&mut cur_row),
                             height: h,
-                            header: false,
+                            header: row_header,
                             cant_split: None,
                         });
                         row_height = None;
                         cell_height = None;
+                        row_header = false;
                     }
                     "tbl" => {
                         in_table = false;
+                        let mut rows = std::mem::take(&mut table_rows);
+                        if tbl_repeat_header
+                            && !rows.iter().any(|r| r.header)
+                            && let Some(row) = rows.first_mut()
+                        {
+                            row.header = true;
+                        }
+                        let header_row_count =
+                            rows.iter().take_while(|r| r.header).count() as u8;
                         body.push(Block::Table(Table {
-                            rows: std::mem::take(&mut table_rows),
+                            rows,
                             alignment: Alignment::Start,
+                            header_row_count,
                             ..Table::from_cells(Vec::new())
                         }));
+                        tbl_repeat_header = false;
                     }
                     "lineseg" => in_lineseg = false,
                     _ => {}
@@ -850,6 +887,16 @@ fn attr_string(e: &BytesStart<'_>, key: &str) -> Option<String> {
         .ok()
         .flatten()
         .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+}
+
+fn attr_on(e: &BytesStart<'_>, key: &str) -> bool {
+    match attr_string(e, key).as_deref() {
+        Some(v) => {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on")
+        }
+        None => false,
+    }
 }
 
 pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
@@ -990,6 +1037,30 @@ mod tests {
         let back = roundtrip(&doc).unwrap();
         assert!(back.plain_text().contains('x'));
         assert_eq!(back.table_count(), 1);
+    }
+
+    #[test]
+    fn roundtrip_keeps_table_header() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        let xml = table_xml(&table);
+        assert!(xml.contains(r#"repeatHeader="1""#), "{xml}");
+        assert!(xml.contains(r#"header="1""#), "{xml}");
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        assert!(t.rows[0].header);
+        assert!(!t.rows[1].header);
+        assert_eq!(t.header_row_count, 1);
     }
 
     #[test]

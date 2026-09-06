@@ -24,7 +24,7 @@
   <text x="64" y="92" fill="#5eead4" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="18" font-weight="700" letter-spacing="4">AGENT DOCUMENT RUNTIME</text>
   <text x="64" y="168" fill="#f8fafc" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="72" font-weight="800">DocAgent</text>
   <text x="64" y="222" fill="#cbd5e1" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="24">Deterministic convert. Capsule hashed. GPU-free.</text>
-  <text x="64" y="258" fill="#94a3b8" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="20">Integer 1/7200 in. PNG + JPEG on five codecs. No VLM.</text>
+  <text x="64" y="258" fill="#94a3b8" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="20">Integer 1/7200 in. PNG + JPEG · float · wrapSquare · cell. No VLM.</text>
 
   <g font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="16" font-weight="700">
     <rect x="64" y="312" width="92" height="36" rx="18" fill="#134e4a"/>

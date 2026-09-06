@@ -1401,4 +1401,27 @@ mod tests {
         let blank = char_shape_from_bytes(&[0u8; CHAR_SHAPE_LEN]);
         assert!(blank.highlight.is_none());
     }
+
+    #[test]
+    fn hwp3_table_header_unsupported() {
+        // HWP 3.0 table-info (84 bytes) has no repeating-header / nHeader field,
+        // and this codec does not write Table IR (cells are dropped on write).
+        // Do not fake a TableHeader style round-trip.
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = docagent_model::Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        assert_eq!(
+            back.table_count(),
+            0,
+            "HWP3 has no table-header primitive and does not store Table IR"
+        );
+    }
 }

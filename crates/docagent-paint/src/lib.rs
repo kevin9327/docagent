@@ -281,4 +281,39 @@ mod tests {
             "image op missing"
         );
     }
+
+    #[test]
+    fn paint_emits_table_cell_image_ops() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = docagent_model::Table::from_cells(vec![vec![String::new()]]);
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run {
+            style: docagent_model::CharStyle::default(),
+            content: docagent_model::RunContent::Inline(docagent_model::InlineObject::Image(
+                docagent_model::ImageData {
+                    bytes: MARK_PNG.to_vec(),
+                    mime: "image/png".into(),
+                    width: 1600,
+                    height: 1600,
+                    alt_text: Some("mark".into()),
+                    wrap: docagent_model::WrapMode::Inline,
+                },
+            )),
+        }];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Image { w, h, bytes, mime, .. }
+                        if *w == 1600 && *h == 1600 && bytes == MARK_PNG && mime == "image/png"
+                )
+            }),
+            "table-cell image op missing"
+        );
+    }
 }

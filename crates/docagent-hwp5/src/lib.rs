@@ -48,6 +48,10 @@ const CTRL_TABLE: u32 = u32::from_be_bytes(*b"tbl ");
 const CTRL_SECTION: u32 = u32::from_be_bytes(*b"secd");
 const CTRL_HYPERLINK: u32 = u32::from_be_bytes(*b"%hlk");
 const FILE_SIGNATURE: &[u8] = b"HWP Document File";
+/// Spec 표 76 bit 2: 제목 줄 자동 반복.
+const TABLE_ATTR_REPEAT_HEADER: u32 = 1 << 2;
+/// LIST_HEADER cell property bit 18 (HWP 5.0 표 82 undocumented): 제목 행 셀.
+const LIST_HEADER_CELL_HEADER: u32 = 1 << 18;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -893,12 +897,14 @@ fn read_table(
     let mut n_rows = 0u16;
     let mut n_cols = 0u16;
     let mut widths = Vec::new();
+    let mut repeat_header = false;
     for rec in recs {
         if rec.tag == HWPTAG_TABLE && rec.payload.len() >= 4 {
             let (rows, cols, cols_w) = table_geometry(&rec.payload);
             n_rows = rows;
             n_cols = cols;
             widths = cols_w;
+            repeat_header = table_attr_repeat_header(&rec.payload);
         }
     }
     if n_rows == 0 || n_cols == 0 {
@@ -908,6 +914,7 @@ fn read_table(
     }
     let mut cell_heights = Vec::new();
     let mut cell_widths = Vec::new();
+    let mut cell_headers = Vec::new();
     for rec in recs {
         if rec.tag == HWPTAG_LIST_HEADER && rec.payload.len() >= 14 {
             let w = i32_at(&rec.payload, 6);
@@ -918,6 +925,8 @@ fn read_table(
             if h > 0 && h < 20_000 {
                 cell_heights.push(h);
             }
+            let prop = u32::from_le_bytes(rec.payload[2..6].try_into().unwrap());
+            cell_headers.push(prop & LIST_HEADER_CELL_HEADER != 0);
         }
     }
     if widths.is_empty() {
@@ -948,6 +957,7 @@ fn read_table(
     for _ in 0..n_rows {
         let mut cells = Vec::new();
         let mut row_h = None;
+        let row_start = hi;
         for c in 0..n_cols as usize {
             let para = iter.next().unwrap_or_else(|| Paragraph::from_text(""));
             if let Some(h) = cell_heights.get(hi).copied() {
@@ -960,13 +970,23 @@ fn read_table(
                 ..TableCell::default()
             });
         }
+        let header = cell_headers
+            .get(row_start..hi)
+            .is_some_and(|flags| flags.iter().any(|h| *h));
         rows.push(TableRow {
             cells,
             height: row_h,
-            header: false,
+            header,
             cant_split: None,
         });
     }
+    if repeat_header
+        && !rows.iter().any(|r| r.header)
+        && let Some(row) = rows.first_mut()
+    {
+        row.header = true;
+    }
+    let header_row_count = rows.iter().take_while(|r| r.header).count() as u8;
     Table {
         rows,
         borders: TableBorders::default(),
@@ -975,7 +995,7 @@ fn read_table(
         alignment: Alignment::Start,
         cell_spacing: 0,
         indent: 0,
-        header_row_count: 0,
+        header_row_count,
         layout_hints: Vec::new(),
     }
 }
@@ -1046,13 +1066,18 @@ fn encode_lineseg(hints: &[LayoutHint]) -> Vec<u8> {
 }
 
 /// Hangul 5.0 TABLE: UINT32 attr, UINT16 rows, UINT16 cols, then optional
-/// cell-spacing / margins / row-size array. Self-authored files store
-/// rows, cols, then i32 column widths.
-fn table_geometry(p: &[u8]) -> (u16, u16, Vec<i32>) {
+/// cell-spacing / margins / row-size array. Self-authored files use that
+/// spec layout (attr bit 2 = 제목 줄 자동 반복). Older simplified payloads
+/// store rows, cols, then i32 column widths.
+fn is_spec_table_payload(p: &[u8]) -> bool {
     let spec_rows = u16_at(p, 4);
     let spec_cols = u16_at(p, 6);
-    if p.len() >= 18 && (1..128).contains(&spec_rows) && (1..64).contains(&spec_cols) {
-        return (spec_rows, spec_cols, Vec::new());
+    p.len() >= 18 && (1..128).contains(&spec_rows) && (1..64).contains(&spec_cols)
+}
+
+fn table_geometry(p: &[u8]) -> (u16, u16, Vec<i32>) {
+    if is_spec_table_payload(p) {
+        return (u16_at(p, 4), u16_at(p, 6), Vec::new());
     }
     let rows = u16_at(p, 0);
     let cols = u16_at(p, 2);
@@ -1063,6 +1088,20 @@ fn table_geometry(p: &[u8]) -> (u16, u16, Vec<i32>) {
         off += 4;
     }
     (rows, cols, widths)
+}
+
+fn table_attr_repeat_header(p: &[u8]) -> bool {
+    if !is_spec_table_payload(p) {
+        return false;
+    }
+    let attr = u32::from_le_bytes(p[0..4].try_into().unwrap());
+    attr & TABLE_ATTR_REPEAT_HEADER != 0
+}
+
+fn table_header_row_count(table: &Table) -> u8 {
+    table
+        .header_row_count
+        .max(table.rows.iter().take_while(|r| r.header).count() as u8)
 }
 
 fn ctrl_id(payload: &[u8]) -> u32 {
@@ -1538,6 +1577,7 @@ fn write_table(out: &mut Vec<u8>, table: &Table, level: u16, styles: &[CharStyle
         .first()
         .map(|r| r.cells.len() as u16)
         .unwrap_or(0);
+    let header_n = table_header_row_count(table);
     let mut header = vec![0u8; 22];
     header[0..4].copy_from_slice(&8u32.to_le_bytes());
     header[4..8].copy_from_slice(&0x8000_0000u32.to_le_bytes());
@@ -1556,20 +1596,33 @@ fn write_table(out: &mut Vec<u8>, table: &Table, level: u16, styles: &[CharStyle
     ctrl.copy_from_slice(&CTRL_TABLE.swap_bytes().to_le_bytes());
     write_record(out, HWPTAG_CTRL_HEADER, level + 1, &ctrl);
 
+    let mut attr = 0u32;
+    if header_n > 0 {
+        attr |= TABLE_ATTR_REPEAT_HEADER;
+    }
     let mut tbl = Vec::new();
+    tbl.extend_from_slice(&attr.to_le_bytes());
     tbl.extend_from_slice(&n_rows.to_le_bytes());
     tbl.extend_from_slice(&n_cols.to_le_bytes());
-    if let Some(row) = table.rows.first() {
-        for cell in &row.cells {
-            tbl.extend_from_slice(&cell.width.to_le_bytes());
-        }
+    tbl.extend_from_slice(&0u16.to_le_bytes());
+    tbl.extend_from_slice(&[0u8; 8]);
+    for _ in 0..n_rows {
+        tbl.extend_from_slice(&0u16.to_le_bytes());
     }
+    tbl.extend_from_slice(&0u16.to_le_bytes());
     write_record(out, HWPTAG_TABLE, level + 2, &tbl);
 
-    for row in &table.rows {
+    for (ri, row) in table.rows.iter().enumerate() {
+        let is_header = row.header || ri < header_n as usize;
         for cell in &row.cells {
             let mut list = vec![0u8; 14];
             list[0..2].copy_from_slice(&1u16.to_le_bytes());
+            let prop = if is_header {
+                LIST_HEADER_CELL_HEADER
+            } else {
+                0
+            };
+            list[2..6].copy_from_slice(&prop.to_le_bytes());
             put_i32(&mut list, 6, cell.width);
             put_i32(&mut list, 10, row.height.unwrap_or(0));
             write_record(out, HWPTAG_LIST_HEADER, level + 2, &list);
@@ -1890,6 +1943,29 @@ mod tests {
             panic!("expected table");
         };
         assert_eq!(t.rows[0].height, Some(4000));
+    }
+
+    #[test]
+    fn roundtrip_keeps_table_header() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        assert!(t.rows[0].header);
+        assert!(!t.rows[1].header);
+        assert_eq!(t.header_row_count, 1);
+        assert!(back.plain_text().contains("Hop"));
+        assert!(back.plain_text().contains("letter.md"));
     }
 
     #[test]

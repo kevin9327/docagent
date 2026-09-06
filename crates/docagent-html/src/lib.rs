@@ -1651,6 +1651,33 @@ mod tests {
         panic!("no paragraph");
     }
 
+    fn numbered_paras(doc: &Document) -> Vec<&Paragraph> {
+        doc.sections
+            .iter()
+            .flat_map(|s| &s.body)
+            .filter_map(|b| match b {
+                Block::Paragraph(p) if p.numbering.is_some() => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn list_item(text: &str, format: NumberFormat, level: u8, start: Option<u32>) -> Paragraph {
+        let mut p = Paragraph::from_text(text);
+        p.numbering = Some(NumberingRef {
+            definition_id: match format {
+                NumberFormat::Bullet => 0,
+                NumberFormat::Decimal => 1,
+                NumberFormat::Task => 2,
+                _ => 0,
+            },
+            level,
+            start,
+            format: Some(format),
+        });
+        p
+    }
+
     #[test]
     fn images_emit_img() {
         let img = fixture_image("mark");
@@ -1840,6 +1867,163 @@ mod tests {
             r.style.highlight == Some(docagent_model::Color::MARK)
                 && matches!(&r.content, RunContent::Text(t) if t == "hashes")
         }));
+    }
+
+    #[test]
+    fn read_roundtrips_ul() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(list_item("dock", NumberFormat::Bullet, 0, None)));
+        section
+            .body
+            .push(Block::Paragraph(list_item("bay 4", NumberFormat::Bullet, 1, None)));
+        section
+            .body
+            .push(Block::Paragraph(list_item("replay", NumberFormat::Bullet, 0, None)));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(
+            html.contains("<ul><li>dock<ul><li>bay 4</li></ul></li><li>replay</li></ul>"),
+            "{html}"
+        );
+        let back = read(html.as_bytes()).expect("html");
+        let items: Vec<_> = numbered_paras(&back)
+            .into_iter()
+            .map(|p| {
+                let n = p.numbering.as_ref().unwrap();
+                (p.plain_text(), n.format, n.level, n.start)
+            })
+            .collect();
+        assert_eq!(
+            items,
+            [
+                ("dock".into(), Some(NumberFormat::Bullet), 0, None),
+                ("bay 4".into(), Some(NumberFormat::Bullet), 1, None),
+                ("replay".into(), Some(NumberFormat::Bullet), 0, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_roundtrips_ol() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Paragraph(list_item(
+            "Hash the input",
+            NumberFormat::Decimal,
+            0,
+            Some(1),
+        )));
+        section.body.push(Block::Paragraph(list_item(
+            "Run Convert",
+            NumberFormat::Decimal,
+            0,
+            Some(2),
+        )));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("gap")));
+        section.body.push(Block::Paragraph(list_item(
+            "Seal the crate",
+            NumberFormat::Decimal,
+            0,
+            Some(3),
+        )));
+        section.body.push(Block::Paragraph(list_item(
+            "Ship the proof",
+            NumberFormat::Decimal,
+            0,
+            Some(4),
+        )));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<ol><li>Hash the input</li><li>Run Convert</li></ol>"), "{html}");
+        assert!(
+            html.contains(r#"<ol start="3"><li>Seal the crate</li><li>Ship the proof</li></ol>"#),
+            "{html}"
+        );
+        let back = read(html.as_bytes()).expect("html");
+        let items: Vec<_> = numbered_paras(&back)
+            .into_iter()
+            .map(|p| {
+                let n = p.numbering.as_ref().unwrap();
+                (p.plain_text(), n.format, n.level, n.start)
+            })
+            .collect();
+        assert_eq!(
+            items,
+            [
+                (
+                    "Hash the input".into(),
+                    Some(NumberFormat::Decimal),
+                    0,
+                    Some(1)
+                ),
+                (
+                    "Run Convert".into(),
+                    Some(NumberFormat::Decimal),
+                    0,
+                    Some(2)
+                ),
+                (
+                    "Seal the crate".into(),
+                    Some(NumberFormat::Decimal),
+                    0,
+                    Some(3)
+                ),
+                (
+                    "Ship the proof".into(),
+                    Some(NumberFormat::Decimal),
+                    0,
+                    Some(4)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_roundtrips_task_list() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Paragraph(list_item(
+            "Replay the convert",
+            NumberFormat::Task,
+            0,
+            Some(1),
+        )));
+        section.body.push(Block::Paragraph(list_item(
+            "Hope",
+            NumberFormat::Task,
+            0,
+            None,
+        )));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains(r#"<ul class="tasks">"#), "{html}");
+        assert!(html.contains(r#"checked=""/>Replay the convert"#), "{html}");
+        assert!(html.contains(r#"disabled=""/>Hope"#), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let items: Vec<_> = numbered_paras(&back)
+            .into_iter()
+            .map(|p| {
+                let n = p.numbering.as_ref().unwrap();
+                (p.plain_text(), n.format, n.level, n.start)
+            })
+            .collect();
+        assert_eq!(
+            items,
+            [
+                (
+                    "Replay the convert".into(),
+                    Some(NumberFormat::Task),
+                    0,
+                    Some(1)
+                ),
+                ("Hope".into(), Some(NumberFormat::Task), 0, None),
+            ]
+        );
     }
 
     #[test]

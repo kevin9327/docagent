@@ -270,13 +270,30 @@ fn p_xml(p: &Paragraph, styles: &[CharStyle]) -> String {
     s
 }
 
+fn table_header_row_count(table: &Table) -> u8 {
+    table
+        .header_row_count
+        .max(table.rows.iter().take_while(|r| r.header).count() as u8)
+}
+
 fn table_xml(table: &Table) -> String {
-    let mut s = String::from("<TABLE>");
-    for row in &table.rows {
-        s.push_str("<TR>");
+    let header_n = table_header_row_count(table);
+    let mut s = if header_n > 0 {
+        String::from(r#"<TABLE RepeatHeader="1">"#)
+    } else {
+        String::from("<TABLE>")
+    };
+    for (ri, row) in table.rows.iter().enumerate() {
+        let is_header = row.header || ri < header_n as usize;
+        s.push_str(if is_header {
+            r#"<TR Header="1">"#
+        } else {
+            "<TR>"
+        });
         for cell in &row.cells {
+            let header_attr = if is_header { r#" Header="1""# } else { "" };
             s.push_str(&format!(
-                r#"<TD Width="{}"><P><TEXT>{}</TEXT></P></TD>"#,
+                r#"<TD Width="{}"{header_attr}><P><TEXT>{}</TEXT></P></TD>"#,
                 cell.width,
                 xml_escape(&cell_text(cell))
             ));
@@ -327,6 +344,8 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_buf = String::new();
     let mut cell_width = 10000i32;
+    let mut tbl_repeat_header = false;
+    let mut row_header = false;
     let mut have_section = false;
     let mut pending_href: Option<String> = None;
     let mut in_string_param = false;
@@ -424,11 +443,18 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                         flush_p(&mut body, &mut para_runs, &mut para_kind);
                         pending_href = None;
                         in_table = true;
+                        tbl_repeat_header = attr_on(&e, "RepeatHeader") || attr_on(&e, "Header");
                     }
-                    "TR" if in_table => cur_row.clear(),
+                    "TR" if in_table => {
+                        cur_row.clear();
+                        row_header = attr_on(&e, "Header");
+                    }
                     "TD" if in_table => {
                         cell_buf.clear();
                         cell_width = attr_i32(&e, "Width").unwrap_or(10000);
+                        if attr_on(&e, "Header") {
+                            row_header = true;
+                        }
                     }
                     _ => {}
                 }
@@ -478,19 +504,33 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                         });
                         cell_buf.clear();
                     }
-                    "TR" if in_table => table_rows.push(TableRow {
-                        cells: std::mem::take(&mut cur_row),
-                        height: None,
-                        header: false,
-                        cant_split: None,
-                    }),
+                    "TR" if in_table => {
+                        table_rows.push(TableRow {
+                            cells: std::mem::take(&mut cur_row),
+                            height: None,
+                            header: row_header,
+                            cant_split: None,
+                        });
+                        row_header = false;
+                    }
                     "TABLE" => {
                         in_table = false;
+                        let mut rows = std::mem::take(&mut table_rows);
+                        if tbl_repeat_header
+                            && !rows.iter().any(|r| r.header)
+                            && let Some(row) = rows.first_mut()
+                        {
+                            row.header = true;
+                        }
+                        let header_row_count =
+                            rows.iter().take_while(|r| r.header).count() as u8;
                         body.push(Block::Table(Table {
-                            rows: std::mem::take(&mut table_rows),
+                            rows,
                             alignment: Alignment::Start,
+                            header_row_count,
                             ..Table::from_cells(Vec::new())
                         }));
+                        tbl_repeat_header = false;
                     }
                     "SECTION" | "Section" => {
                         section.body = std::mem::take(&mut body);
@@ -618,6 +658,16 @@ fn attr_string(e: &BytesStart<'_>, key: &str) -> Option<String> {
         .ok()
         .flatten()
         .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+}
+
+fn attr_on(e: &BytesStart<'_>, key: &str) -> bool {
+    match attr_string(e, key).as_deref() {
+        Some(v) => {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on")
+        }
+        None => false,
+    }
 }
 
 pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
@@ -828,5 +878,29 @@ mod tests {
             Some((Some(NumberFormat::Task), None))
         );
         assert_eq!(p.plain_text(), "Hope");
+    }
+
+    #[test]
+    fn roundtrip_keeps_table_header() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains(r#"RepeatHeader="1""#), "{xml}");
+        assert!(xml.contains(r#"Header="1""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        assert!(t.rows[0].header);
+        assert!(!t.rows[1].header);
+        assert_eq!(t.header_row_count, 1);
     }
 }

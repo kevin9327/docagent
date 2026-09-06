@@ -1894,4 +1894,72 @@ mod tests {
         );
         assert!(img.height > 0);
     }
+
+    fn table_with_image_cell(width: Hu, height: Hu) -> Table {
+        let mut table = Table::from_cells(vec![vec![String::new()]]);
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![mark_run(width, height)];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        table
+    }
+
+    #[test]
+    fn table_cell_image_yields_line_with_payload() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Table(table_with_image_cell(1600, 1600)));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let frag = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("cell image dropped");
+        assert_eq!(frag.width, 1600);
+        assert!(frag.height >= 1600, "line height {}", frag.height);
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.bytes, MARK_PNG);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 1600);
+        assert_eq!(img.height, 1600);
+        assert!(frag.text.is_empty());
+    }
+
+    #[test]
+    fn table_cell_image_clamps_to_cell_content_width() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec![String::new(), String::new()]]);
+        table.rows[0].cells[0].width = 8_000;
+        table.rows[0].cells[1].width = 8_000;
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![mark_run(50_000, 10_000)];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let cell_w = page.rects.first().map(|r| r.width).expect("cell fill");
+        let inner = (cell_w - 160).max(1);
+        let frag = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("cell image dropped");
+        assert!(
+            frag.width <= inner,
+            "frag.width {} exceeds cell content width {}",
+            frag.width,
+            inner
+        );
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.width, frag.width);
+        assert!(img.width <= inner);
+        assert_eq!(
+            img.height,
+            (i64::from(10_000) * i64::from(img.width) / 50_000) as i32
+        );
+        assert!(img.height > 0);
+        assert_eq!(img.bytes, MARK_PNG);
+    }
 }

@@ -14,12 +14,16 @@
       "CodeBlock style on HWP5+HWPX+HML+HWP3",
       "HorizontalLine thematic breaks on HWP5+HWPX+HML+HWP3",
       "Task style + [x]/[ ] marker on HWP5+HWPX+HML+HWP3",
-      "CHAR_SHAPE shade highlight on HWP5+HWPX+HML+HWP3"
+      "CHAR_SHAPE shade highlight on HWP5+HWPX+HML+HWP3",
+      "table header rows on HWP5+HWPX+HML (HWP3 has no header primitive)"
     ],
-    "hangul_not_yet": ["images", "first-class lists", "table headers"],
+    "hangul_not_yet": ["images", "first-class lists"],
     "images": [
       "PNG and JPEG on Markdown, HTML, PDF/A, DOCX, ODT",
-      "HTML read of <img src=\"data:…\"> (Pandoc-class import, not HTML5, no http src)",
+      "PDF Block::Float(Float::Image) as PDF/A XObject; oversized floats clamp to content width",
+      "DOCX WrapMode::Square round-trips as wp:wrapSquare",
+      "ODT draw:image inside table cells; svg:desc alt fallback",
+      "HTML read of <img src=\"data:…\">, <blockquote>, <pre>, <a href>, <mark> (Pandoc-class import, not HTML5, no http src)",
       "examples/letter.md fixture has no image — convert shots must not pretend otherwise"
     ]
   },

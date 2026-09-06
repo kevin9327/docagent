@@ -1567,6 +1567,94 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_nests_list_inside_list_item() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut a = Paragraph::from_text("dock");
+        a.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut b = Paragraph::from_text("bay 4");
+        b.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut c = Paragraph::from_text("hash");
+        c.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let mut d = Paragraph::from_text("convert");
+        d.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 1,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(a));
+        section.body.push(Block::Paragraph(b));
+        section.body.push(Block::Paragraph(c));
+        section.body.push(Block::Paragraph(d));
+        doc.sections.push(section);
+
+        let xml = content_xml(&doc);
+        let bullet_nested = concat!(
+            "<text:list-item><text:p>dock</text:p>",
+            r#"<text:list text:style-name="Lbullet">"#,
+            "<text:list-item><text:p>bay 4</text:p></text:list-item>",
+            "</text:list></text:list-item>",
+        );
+        let decimal_nested = concat!(
+            "<text:list-item><text:p>hash</text:p>",
+            r#"<text:list text:style-name="Lnumber">"#,
+            "<text:list-item><text:p>convert</text:p></text:list-item>",
+            "</text:list></text:list-item>",
+        );
+        assert!(xml.contains(bullet_nested), "bullet nest flattened: {xml}");
+        assert!(
+            xml.contains(decimal_nested),
+            "decimal nest flattened: {xml}"
+        );
+        assert!(
+            !xml.contains("</text:p></text:list-item><text:list-item><text:p>bay 4</text:p>"),
+            "bullet list flattened to one level: {xml}"
+        );
+        assert!(
+            !xml.contains("</text:p></text:list-item><text:list-item><text:p>convert</text:p>"),
+            "decimal list flattened to one level: {xml}"
+        );
+
+        let back = roundtrip(&doc).unwrap();
+        let nums: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p
+                    .numbering
+                    .as_ref()
+                    .map(|n| (p.plain_text(), n.level, n.format, n.start)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                ("dock".into(), 0, Some(NumberFormat::Bullet), None),
+                ("bay 4".into(), 1, Some(NumberFormat::Bullet), None),
+                ("hash".into(), 0, Some(NumberFormat::Decimal), Some(1)),
+                ("convert".into(), 1, Some(NumberFormat::Decimal), Some(1)),
+            ]
+        );
+    }
+
+    #[test]
     fn roundtrip_keeps_hyperlink() {
         let mut doc = Document::new();
         let mut section = Section::default();
