@@ -485,7 +485,8 @@ fn parse_md_link_parts(chars: &[char], start: usize) -> Option<(String, String, 
 }
 
 fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
-    let (display, target, next) = parse_md_link_parts(chars, start)?;
+    let (display, dest, next) = parse_md_link_parts(chars, start)?;
+    let (target, _) = split_md_src_title(&dest);
     if display.is_empty() || target.is_empty() {
         return None;
     }
@@ -496,12 +497,55 @@ fn parse_md_image(chars: &[char], start: usize) -> Option<(String, String, usize
     if start >= chars.len() || chars[start] != '!' {
         return None;
     }
-    let (alt, src, next) = parse_md_link_parts(chars, start + 1)?;
-    let src = src.trim();
+    let (alt, dest, next) = parse_md_link_parts(chars, start + 1)?;
+    let (src, title) = split_md_src_title(&dest);
     if src.is_empty() {
         return None;
     }
-    Some((alt, src.to_string(), next))
+    let alt = if alt.is_empty() {
+        title.unwrap_or_default()
+    } else {
+        alt
+    };
+    Some((alt, src, next))
+}
+
+fn split_md_src_title(dest: &str) -> (String, Option<String>) {
+    let dest = dest.trim();
+    if dest.is_empty() {
+        return (String::new(), None);
+    }
+    if let Some(rest) = dest.strip_prefix('<')
+        && let Some(end) = rest.find('>')
+    {
+        let src = rest[..end].trim().to_string();
+        let title = md_quoted_title(rest[end + 1..].trim());
+        return (src, title);
+    }
+    let src_end = dest
+        .char_indices()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(i, _)| i)
+        .unwrap_or(dest.len());
+    let src = dest[..src_end].to_string();
+    (src, md_quoted_title(dest[src_end..].trim()))
+}
+
+fn md_quoted_title(rest: &str) -> Option<String> {
+    let rest = rest.trim();
+    let mut chars = rest.chars();
+    let q = chars.next()?;
+    if q != '"' && q != '\'' {
+        return None;
+    }
+    let mut title = String::new();
+    for c in chars {
+        if c == q {
+            return Some(title);
+        }
+        title.push(c);
+    }
+    None
 }
 
 fn image_run(alt: String, src: &str) -> Run {
@@ -1106,6 +1150,15 @@ mod tests {
             back.contains("[DocAgent](https://github.com/kevin9327/docagent)"),
             "{back}"
         );
+        let titled = read(b"[DocAgent](https://github.com/kevin9327/docagent \"runtime\")\n").unwrap();
+        let Block::Paragraph(p) = &titled.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
     }
 
     fn fixture_png() -> Vec<u8> {
@@ -1183,6 +1236,25 @@ mod tests {
         assert_eq!(first_image(&again), &img);
         let twice = write(&again).unwrap();
         assert_eq!(first_image(&read(&twice).unwrap()), &img);
+    }
+
+    #[test]
+    fn images_parse_title_without_breaking_src() {
+        let img = fixture_image("mark");
+        let src = format!("![mark]({} \"Harbor mark\")\n", image_src(&img));
+        let doc = read(src.as_bytes()).unwrap();
+        let got = first_image(&doc);
+        assert_eq!(got.bytes, img.bytes);
+        assert_eq!(got.mime, "image/png");
+        assert_eq!(got.alt_text.as_deref(), Some("mark"));
+        assert_eq!(got.wrap, WrapMode::Inline);
+        let untitled = format!("![mark]({})\n", image_src(&img));
+        assert_eq!(first_image(&read(untitled.as_bytes()).unwrap()).bytes, img.bytes);
+        let titled = format!("![]({} 'caption')\n", image_src(&img));
+        assert_eq!(
+            first_image(&read(titled.as_bytes()).unwrap()).alt_text.as_deref(),
+            Some("caption")
+        );
     }
 
     #[test]

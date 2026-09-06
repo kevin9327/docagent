@@ -7,7 +7,7 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, BorderStyle, BreakKind, Document, Hu, InlineObject, LineSpacing,
+    Alignment, Block, BorderStyle, BreakKind, Document, Hu, Hu64, InlineObject, LineSpacing,
     NumberFormat, Paragraph, RunContent, Section, Table, DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
@@ -444,7 +444,7 @@ fn marker_advance(size: Hu, glyph_w: Hu, box_mark: bool) -> Hu {
 }
 
 fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>, Vec<RectFrag>) {
-    let (text, spans) = collect_runs(p);
+    let (text, mut spans) = collect_runs(p);
     let size = p
         .runs
         .first()
@@ -487,6 +487,11 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     let box_mark = bullet || task;
     let marker_w = marker_advance(size, glyph_w, box_mark);
     let usable = (width - p.indent_left - quote_pad - p.indent_right - marker_w).max(1);
+    for span in &mut spans {
+        if let Some(img) = span.image.as_mut() {
+            clamp_inline_image(img, usable);
+        }
+    }
     let mut shaped = shape(fonts, &text, size);
     for span in &spans {
         if let Some(img) = &span.image
@@ -555,6 +560,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     for (li, (a, b)) in ranges.into_iter().enumerate() {
         let extra_indent = if li == 0 { p.indent_first } else { 0 };
         let mut x = p.indent_left + quote_pad + extra_indent + if li == 0 { 0 } else { marker_w };
+        let row_right = p.indent_left + quote_pad + extra_indent + usable + marker_w;
         let mut row: Vec<LineFrag> = Vec::new();
         if li == 0 && bullet {
             fills.push(bullet_fill(x, baseline, size));
@@ -591,10 +597,13 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 continue;
             }
             if let Some(img) = &span.image {
+                let mut img = img.clone();
+                clamp_inline_image(&mut img, (row_right - x).max(1));
+                let w = img.width;
                 row.push(LineFrag {
                     x,
                     y: 0,
-                    width: img.width,
+                    width: w,
                     height: 0,
                     baseline,
                     text: String::new(),
@@ -606,9 +615,9 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                     code: span.code,
                     highlight: span.highlight,
                     href: span.href.clone(),
-                    image: Some(img.clone()),
+                    image: Some(img),
                 });
-                x += img.width;
+                x += w;
                 continue;
             }
             let slice: String = chars.get(s..e).unwrap_or(&[]).iter().collect();
@@ -781,6 +790,16 @@ struct RunSpan {
     subscript: bool,
     href: Option<String>,
     image: Option<InlineImage>,
+}
+
+fn clamp_inline_image(img: &mut InlineImage, max_w: Hu) {
+    if img.width <= max_w {
+        return;
+    }
+    let w = max_w.max(1);
+    let h = (Hu64::from(img.height) * Hu64::from(w) / Hu64::from(img.width.max(1))).max(1) as Hu;
+    img.width = w;
+    img.height = h;
 }
 
 fn collect_runs(p: &Paragraph) -> (String, Vec<RunSpan>) {
@@ -1731,5 +1750,39 @@ mod tests {
         assert!(after.x >= img.x + img.width, "after x {}", after.x);
         assert_eq!(img.width, 1600);
         assert_eq!(img.image.as_ref().map(|i| i.height), Some(800));
+    }
+
+    #[test]
+    fn oversized_image_clamps_to_content_width() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        // US Letter: 8.5in × 11in at 7200 HU/in.
+        section.page.width = 61_200;
+        section.page.height = 79_200;
+        let content_w = section.page.content_width();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![mark_run(50_000, 10_000)];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let frag = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("image run skipped");
+        assert!(
+            frag.width <= content_w,
+            "frag.width {} exceeds content width {}",
+            frag.width,
+            content_w
+        );
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.width, frag.width);
+        assert!(img.width <= content_w);
+        assert_eq!(
+            img.height,
+            (i64::from(10_000) * i64::from(img.width) / 50_000) as i32
+        );
+        assert!(img.height > 0);
     }
 }

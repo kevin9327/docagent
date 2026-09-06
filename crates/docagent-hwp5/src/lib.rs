@@ -11,8 +11,8 @@ use std::io::{Cursor, Read, Write};
 use cfb::CompoundFile;
 use docagent_model::{
     Alignment, Block, BreakKind, CharStyle, Diagnostic, Document, InlineObject, LayoutHint,
-    Paragraph, Run, RunContent, Section, SplitPolicy, Table, TableBorders, TableCell, TableRow,
-    Underline,
+    NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section, SplitPolicy, Table,
+    TableBorders, TableCell, TableRow, Underline,
 };
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
@@ -293,6 +293,7 @@ enum StyleKind {
     Quote,
     CodeBlock,
     Thematic,
+    Task,
 }
 
 fn style_kind(name: &str) -> Option<StyleKind> {
@@ -306,8 +307,47 @@ fn style_kind(name: &str) -> Option<StyleKind> {
         || n.contains("구분선")
     {
         Some(StyleKind::Thematic)
+    } else if n.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
+        Some(StyleKind::Task)
     } else {
         None
+    }
+}
+
+fn task_prefix(p: &Paragraph) -> Option<&'static str> {
+    let n = p.numbering.as_ref()?;
+    if n.format != Some(NumberFormat::Task) {
+        return None;
+    }
+    Some(if n.start == Some(1) {
+        "[x] "
+    } else {
+        "[ ] "
+    })
+}
+
+fn apply_task_paragraph(p: &mut Paragraph, from_style: bool) {
+    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+    let mut checked = false;
+    let mut found = from_style;
+    if let Some(run) = p.runs.first_mut()
+        && let RunContent::Text(text) = &mut run.content
+    {
+        let is_checked = text.starts_with("[x] ") || text.starts_with("[X] ");
+        let is_unchecked = text.starts_with("[ ] ");
+        if is_checked || is_unchecked {
+            *text = text[4..].to_string();
+            checked = is_checked;
+            found = true;
+        }
+    }
+    if found {
+        p.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level,
+            start: checked.then_some(1),
+            format: Some(NumberFormat::Task),
+        });
     }
 }
 
@@ -787,15 +827,12 @@ fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize, catalog: &StyleC
     }
     match catalog.kind_for(&recs[start].payload, para.plain_text().trim().is_empty()) {
         Some(StyleKind::Thematic) => Block::Break(BreakKind::Thematic),
-        Some(StyleKind::Quote) => {
-            para.quote = true;
+        kind => {
+            para.quote = kind == Some(StyleKind::Quote);
+            para.code_block = kind == Some(StyleKind::CodeBlock);
+            apply_task_paragraph(&mut para, kind == Some(StyleKind::Task));
             Block::Paragraph(para)
         }
-        Some(StyleKind::CodeBlock) => {
-            para.code_block = true;
-            Block::Paragraph(para)
-        }
-        None => Block::Paragraph(para),
     }
 }
 
@@ -1191,8 +1228,8 @@ fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
     map[12..16].copy_from_slice(&n.to_le_bytes());
     map[32..36].copy_from_slice(&4u32.to_le_bytes());
     map[36..40].copy_from_slice(&n.to_le_bytes());
-    map[52..56].copy_from_slice(&4u32.to_le_bytes());
-    map[56..60].copy_from_slice(&4u32.to_le_bytes());
+    map[52..56].copy_from_slice(&5u32.to_le_bytes());
+    map[56..60].copy_from_slice(&5u32.to_le_bytes());
     write_record(&mut out, HWPTAG_ID_MAPPINGS, 0, &map);
     write_record(
         &mut out,
@@ -1245,7 +1282,13 @@ fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
         0,
         &encode_para_shape(0, 3, 400, 400),
     );
-    for (i, name) in ["Normal", "Quote", "CodeBlock", "HorizontalLine"]
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(0, 0, 0, 0),
+    );
+    for (i, name) in ["Normal", "Quote", "CodeBlock", "HorizontalLine", "Task"]
         .iter()
         .enumerate()
     {
@@ -1364,6 +1407,8 @@ fn para_style_id(p: &Paragraph) -> u16 {
         2
     } else if p.quote {
         1
+    } else if task_prefix(p).is_some() {
+        4
     } else {
         0
     }
@@ -1384,6 +1429,7 @@ fn write_paragraph_role(
     let mut ranges = Vec::new();
     let mut pos = 0u32;
     let mut links = Vec::new();
+    let mut pending_marker = task_prefix(para);
     for run in &para.runs {
         match &run.content {
             RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
@@ -1400,7 +1446,11 @@ fn write_paragraph_role(
                 }
             }
             _ => {
-                let t = run.display_text();
+                let displayed = run.display_text();
+                let t = match pending_marker.take() {
+                    Some(m) => format!("{m}{displayed}"),
+                    None => displayed.to_string(),
+                };
                 let n = t.encode_utf16().count() as u32;
                 if n == 0 {
                     continue;
@@ -1410,6 +1460,10 @@ fn write_paragraph_role(
                 utf16.extend(t.encode_utf16());
             }
         }
+    }
+    if let Some(m) = pending_marker {
+        ranges.push((pos, 0));
+        utf16.extend(m.encode_utf16());
     }
     let nchars = utf16.len() as u32;
     if ranges.is_empty() && nchars > 0 {
@@ -1864,5 +1918,62 @@ mod tests {
         );
         assert!(back.plain_text().contains("before"));
         assert!(back.plain_text().contains("after"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_task_item() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut checked = Paragraph::from_text("Replay the convert");
+        checked.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Task),
+        });
+        let mut unchecked = Paragraph::from_text("Hope");
+        unchecked.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Task),
+        });
+        section.body.push(Block::Paragraph(checked));
+        section.body.push(Block::Paragraph(unchecked));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        let name: Vec<u8> = "Task"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(
+            bytes.windows(name.len()).any(|w| w == name),
+            "DocInfo STYLE Task"
+        );
+        let marker: Vec<u8> = "[x] "
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(
+            bytes.windows(marker.len()).any(|w| w == marker),
+            "checked task marker"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("checked task");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.start)),
+            Some((Some(NumberFormat::Task), Some(1)))
+        );
+        assert_eq!(p.plain_text(), "Replay the convert");
+        let Block::Paragraph(p) = &back.sections[0].body[1] else {
+            panic!("unchecked task");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.start)),
+            Some((Some(NumberFormat::Task), None))
+        );
+        assert_eq!(p.plain_text(), "Hope");
     }
 }

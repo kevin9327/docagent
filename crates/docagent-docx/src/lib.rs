@@ -82,6 +82,12 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             .map_err(|_| Error::NotDocx)?;
         f.read_to_string(&mut xml)?;
     }
+    let mut styles = HashMap::new();
+    if let Ok(mut f) = zip.by_name("word/styles.xml") {
+        let mut styles_xml = String::new();
+        f.read_to_string(&mut styles_xml)?;
+        styles = parse_styles_num(&styles_xml);
+    }
     let mut media = HashMap::new();
     for (id, rel) in &rels {
         if !rel_is_image(&rel.ty) {
@@ -95,7 +101,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             media.insert(id.clone(), MediaPart { bytes: buf, mime });
         }
     }
-    parse_document_xml(&xml, &rels, &media)
+    parse_document_xml(&xml, &rels, &media, &styles)
 }
 
 fn rel_is_image(ty: &str) -> bool {
@@ -149,6 +155,97 @@ fn mime_of(name: &str, bytes: &[u8]) -> String {
     "image/png".into()
 }
 
+struct StyleNum {
+    num_id: Option<u32>,
+    ilvl: Option<u8>,
+    based_on: Option<String>,
+}
+
+fn parse_styles_num(xml: &str) -> HashMap<String, StyleNum> {
+    let mut map = HashMap::new();
+    if xml.is_empty() {
+        return map;
+    }
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+    let mut in_style = false;
+    let mut in_ppr = false;
+    let mut style_id = String::new();
+    let mut based_on = None;
+    let mut num_id = None;
+    let mut ilvl = None;
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e) | Event::Empty(e)) => {
+                let name = local_name(&e);
+                match name.as_str() {
+                    "style" => {
+                        in_style = true;
+                        in_ppr = false;
+                        style_id = attr(&e, "styleId").unwrap_or_default();
+                        based_on = None;
+                        num_id = None;
+                        ilvl = None;
+                    }
+                    "basedOn" if in_style => based_on = attr(&e, "val"),
+                    "pPr" if in_style => in_ppr = true,
+                    "ilvl" if in_style && in_ppr => {
+                        ilvl = attr(&e, "val").and_then(|v| v.parse().ok());
+                    }
+                    "numId" if in_style && in_ppr => {
+                        num_id = attr(&e, "val").and_then(|v| v.parse().ok());
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "pPr" => in_ppr = false,
+                    "style" => {
+                        if in_style && !style_id.is_empty() {
+                            map.insert(
+                                style_id.clone(),
+                                StyleNum {
+                                    num_id,
+                                    ilvl,
+                                    based_on: based_on.take(),
+                                },
+                            );
+                        }
+                        in_style = false;
+                        in_ppr = false;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    map
+}
+
+fn style_numbering(styles: &HashMap<String, StyleNum>, style_id: &str) -> (Option<u32>, u8) {
+    let mut current = Some(style_id.to_string());
+    let mut seen = BTreeSet::new();
+    while let Some(id) = current {
+        if !seen.insert(id.clone()) {
+            break;
+        }
+        let Some(s) = styles.get(&id) else {
+            break;
+        };
+        if let Some(n) = s.num_id {
+            return (Some(n), s.ilvl.unwrap_or(0));
+        }
+        current = s.based_on.clone();
+    }
+    (None, 0)
+}
+
 fn parse_rels(xml: &str) -> HashMap<String, Rel> {
     let mut map = HashMap::new();
     let mut reader = Reader::from_str(xml);
@@ -195,7 +292,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         zip.start_file("word/document.xml", deflated)?;
         zip.write_all(document_xml(doc).as_bytes())?;
         for (idx, img) in images.iter().enumerate() {
-            let ext = ext_from_mime(&img.mime);
+            let ext = ext_from_image(img);
             zip.start_file(format!("word/media/image{}.{ext}", idx + 1), deflated)?;
             zip.write_all(&img.bytes)?;
         }
@@ -211,8 +308,8 @@ fn content_types_xml(images: &[&ImageData]) -> String {
     let mut extras = BTreeSet::new();
     for img in images {
         extras.insert((
-            ext_from_mime(&img.mime).to_string(),
-            content_type_for_mime(&img.mime).to_string(),
+            ext_from_image(img).to_string(),
+            content_type_for_image(img).to_string(),
         ));
     }
     for (ext, ct) in extras {
@@ -224,6 +321,32 @@ fn content_types_xml(images: &[&ImageData]) -> String {
         r#"<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#,
     );
     s
+}
+
+fn jpeg_magic(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+}
+
+fn is_jpeg(img: &ImageData) -> bool {
+    img.mime.eq_ignore_ascii_case("image/jpeg")
+        || img.mime.eq_ignore_ascii_case("image/jpg")
+        || jpeg_magic(&img.bytes)
+}
+
+fn ext_from_image(img: &ImageData) -> &'static str {
+    if is_jpeg(img) {
+        "jpeg"
+    } else {
+        ext_from_mime(&img.mime)
+    }
+}
+
+fn content_type_for_image(img: &ImageData) -> &str {
+    if is_jpeg(img) {
+        "image/jpeg"
+    } else {
+        content_type_for_mime(&img.mime)
+    }
 }
 
 fn ext_from_mime(mime: &str) -> &'static str {
@@ -256,7 +379,7 @@ fn document_rels(doc: &Document) -> String {
     );
     let mut i = 3u32;
     for img in collect_images(doc) {
-        let ext = ext_from_mime(&img.mime);
+        let ext = ext_from_image(img);
         let n = i - 2;
         s.push_str(&format!(
             r#"<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image{n}.{ext}"/>"#
@@ -677,6 +800,7 @@ fn parse_document_xml(
     xml: &str,
     rels: &HashMap<String, Rel>,
     media: &HashMap<String, MediaPart>,
+    styles: &HashMap<String, StyleNum>,
 ) -> Result<Document, Error> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
@@ -707,6 +831,8 @@ fn parse_document_xml(
     let mut para_hr = false;
     let mut para_num_id: Option<u32> = None;
     let mut para_ilvl: u8 = 0;
+    let mut para_ilvl_seen = false;
+    let mut para_style: Option<String> = None;
     let mut decimal_seq: u32 = 1;
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
@@ -724,6 +850,7 @@ fn parse_document_xml(
                     "pPr" => in_ppr = true,
                     "pStyle" if in_ppr => {
                         if let Some(v) = attr(&e, "val") {
+                            para_style = Some(v.clone());
                             if let Some(level) = heading_level_from_style(&v) {
                                 para_outline = Some(level);
                             } else if v.eq_ignore_ascii_case("Quote") {
@@ -743,6 +870,7 @@ fn parse_document_xml(
                     "ilvl" if in_ppr => {
                         if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<u8>().ok()) {
                             para_ilvl = v;
+                            para_ilvl_seen = true;
                         }
                     }
                     "numId" if in_ppr => {
@@ -923,6 +1051,8 @@ fn parse_document_xml(
                         para_hr = false;
                         para_num_id = None;
                         para_ilvl = 0;
+                        para_ilvl_seen = false;
+                        para_style = None;
                         run_bold = false;
                         run_italic = false;
                         run_strike = false;
@@ -994,7 +1124,20 @@ fn parse_document_xml(
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 match name.as_str() {
                     "t" => in_t = false,
-                    "pPr" => in_ppr = false,
+                    "pPr" => {
+                        in_ppr = false;
+                        if para_num_id.is_none()
+                            && let Some(sid) = para_style.as_deref()
+                        {
+                            let (nid, lvl) = style_numbering(styles, sid);
+                            if let Some(id) = nid {
+                                para_num_id = Some(id);
+                                if !para_ilvl_seen {
+                                    para_ilvl = lvl;
+                                }
+                            }
+                        }
+                    }
                     "rPr" => in_rpr = false,
                     "drawing" => {
                         flush_pic(&mut para_runs, &mut pending_pic, media);
@@ -1441,6 +1584,24 @@ mod tests {
         std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
     }
 
+    /// Valid 1×1 grayscale JPEG (SOI … EOI). Not `mark.png`.
+    fn tiny_jpeg() -> Vec<u8> {
+        vec![
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00,
+            0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x14, 0x00, 0x01, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0xFF, 0xC4, 0x00, 0x14, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xDA, 0x00, 0x08, 0x01,
+            0x01, 0x00, 0x00, 0x3F, 0x00, 0x3F, 0xFF, 0xD9,
+        ]
+    }
+
     fn image_run(bytes: Vec<u8>, width: Hu, height: Hu, alt: &str) -> Run {
         Run {
             style: CharStyle::default(),
@@ -1454,6 +1615,37 @@ mod tests {
             })),
         }
     }
+
+    fn jpeg_run(bytes: Vec<u8>, width: Hu, height: Hu, alt: &str) -> Run {
+        Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes,
+                mime: "image/jpeg".into(),
+                width,
+                height,
+                alt_text: Some(alt.into()),
+                wrap: WrapMode::Inline,
+            })),
+        }
+    }
+
+    fn pack_docx(parts: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut cursor);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            for (name, data) in parts {
+                zip.start_file(*name, opt).unwrap();
+                zip.write_all(data).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    const MINIMAL_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const MINIMAL_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 
     #[test]
     fn roundtrip_keeps_bold_and_italic() {
@@ -1765,6 +1957,119 @@ mod tests {
         );
     }
 
+    fn numbered(text: &str, level: u8, format: NumberFormat) -> Paragraph {
+        let mut p = Paragraph::from_text(text);
+        p.numbering = Some(NumberingRef {
+            definition_id: u32::from(level),
+            level,
+            start: None,
+            format: Some(format),
+        });
+        p
+    }
+
+    #[test]
+    fn roundtrip_keeps_nested_list_ilvl() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Paragraph(numbered(
+            "dock",
+            0,
+            NumberFormat::Bullet,
+        )));
+        section.body.push(Block::Paragraph(numbered(
+            "bay 4",
+            1,
+            NumberFormat::Bullet,
+        )));
+        section.body.push(Block::Paragraph(numbered(
+            "pallet",
+            2,
+            NumberFormat::Bullet,
+        )));
+        section.body.push(Block::Paragraph(numbered(
+            "hash",
+            0,
+            NumberFormat::Decimal,
+        )));
+        section.body.push(Block::Paragraph(numbered(
+            "convert",
+            1,
+            NumberFormat::Decimal,
+        )));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains(r#"<w:ilvl w:val="0"/>"#), "{xml}");
+        assert!(xml.contains(r#"<w:ilvl w:val="1"/>"#), "{xml}");
+        assert!(xml.contains(r#"<w:ilvl w:val="2"/>"#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let levels: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (p.plain_text(), n.level)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            levels,
+            [
+                ("dock".into(), 0),
+                ("bay 4".into(), 1),
+                ("pallet".into(), 2),
+                ("hash".into(), 0),
+                ("convert".into(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_python_docx_nested_list_ilvl() {
+        let document_xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>dock</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>bay 4</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="2"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>pallet</w:t></w:r></w:p></w:body></w:document>"#;
+        let pkg = pack_docx(&[
+            ("[Content_Types].xml", MINIMAL_CONTENT_TYPES),
+            ("_rels/.rels", MINIMAL_RELS),
+            ("word/document.xml", document_xml),
+        ]);
+        let back = read(&pkg).unwrap();
+        let levels: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (p.plain_text(), n.level)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            levels,
+            [
+                ("dock".into(), 0),
+                ("bay 4".into(), 1),
+                ("pallet".into(), 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_python_docx_list_number_2_style_ilvl() {
+        let styles_xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/></w:style><w:style w:type="paragraph" w:styleId="ListNumber2"><w:name w:val="List Number 2"/><w:basedOn w:val="ListParagraph"/><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="2"/></w:numPr></w:pPr></w:style></w:styles>"#;
+        let document_xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="ListNumber2"/></w:pPr><w:r><w:t>nested via style</w:t></w:r></w:p></w:body></w:document>"#;
+        let pkg = pack_docx(&[
+            ("[Content_Types].xml", MINIMAL_CONTENT_TYPES),
+            ("_rels/.rels", MINIMAL_RELS),
+            ("word/styles.xml", styles_xml),
+            ("word/document.xml", document_xml),
+        ]);
+        let back = read(&pkg).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        assert_eq!(p.plain_text(), "nested via style");
+        let n = p.numbering.as_ref().expect("numbering from ListNumber2");
+        assert_eq!(n.level, 1);
+        assert_eq!(n.format, Some(NumberFormat::Decimal));
+    }
+
     #[test]
     fn roundtrip_keeps_hyperlink() {
         let mut doc = Document::new();
@@ -1963,6 +2268,142 @@ mod tests {
         assert_eq!(img.height, 3600);
         assert_eq!(img.alt_text.as_deref(), Some("DocAgent mark"));
         assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    #[test]
+    fn roundtrip_keeps_jpeg_image_bytes() {
+        let jpeg = tiny_jpeg();
+        assert!(
+            jpeg.starts_with(&[0xFF, 0xD8, 0xFF]),
+            "fixture must be JPEG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![jpeg_run(jpeg.clone(), 7200, 3600, "JPEG mark")];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:drawing>"), "{xml}");
+        assert!(xml.contains("<a:blip r:embed="), "{xml}");
+        assert!(xml.contains(r#"cx="914400""#), "{xml}");
+        assert!(xml.contains(r#"cy="457200""#), "{xml}");
+        assert!(xml.contains(r#"descr="JPEG mark""#), "{xml}");
+
+        let rels = document_rels(&doc);
+        assert!(rels.contains("/relationships/image"), "{rels}");
+        assert!(rels.contains("media/image1.jpeg"), "{rels}");
+
+        let types = content_types_xml(&collect_images(&doc));
+        assert!(types.contains(r#"Extension="jpeg""#), "{types}");
+        assert!(types.contains("image/jpeg"), "{types}");
+
+        let bytes = write(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let mut media = Vec::new();
+        zip.by_name("word/media/image1.jpeg")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert_eq!(media, jpeg);
+
+        let types = {
+            let mut f = zip.by_name("[Content_Types].xml").unwrap();
+            let mut s = String::new();
+            f.read_to_string(&mut s).unwrap();
+            s
+        };
+        assert!(types.contains(r#"Extension="jpeg""#), "{types}");
+        assert!(types.contains("image/jpeg"), "{types}");
+
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image run: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, jpeg);
+        assert_eq!(img.mime, "image/jpeg");
+        assert_eq!(img.width, 7200);
+        assert_eq!(img.height, 3600);
+        assert_eq!(img.alt_text.as_deref(), Some("JPEG mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    #[test]
+    fn write_sniffs_jpeg_magic_without_mime() {
+        let jpeg = tiny_jpeg();
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: jpeg.clone(),
+                mime: String::new(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH,
+                alt_text: Some("sniffed".into()),
+                wrap: WrapMode::Inline,
+            })),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let rels = document_rels(&doc);
+        assert!(rels.contains("media/image1.jpeg"), "{rels}");
+        let types = content_types_xml(&collect_images(&doc));
+        assert!(types.contains("image/jpeg"), "{types}");
+        let bytes = write(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        assert!(zip.by_name("word/media/image1.jpeg").is_ok());
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, jpeg);
+        assert_eq!(img.mime, "image/jpeg");
+    }
+
+    #[test]
+    fn reads_python_docx_style_jpeg() {
+        let jpeg = tiny_jpeg();
+        let types = br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpeg" ContentType="image/jpeg"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let rels = br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.jpeg"/></Relationships>"#;
+        let document_xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Picture 1" descr="JPEG mark"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="image1.jpeg" descr="JPEG mark"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId4"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let pkg = pack_docx(&[
+            ("[Content_Types].xml", types.as_slice()),
+            ("_rels/.rels", MINIMAL_RELS),
+            ("word/_rels/document.xml.rels", rels.as_slice()),
+            ("word/document.xml", document_xml.as_slice()),
+            ("word/media/image1.jpeg", jpeg.as_slice()),
+        ]);
+        assert!(sniff(&pkg));
+        let back = read(&pkg).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, jpeg);
+        assert_eq!(img.mime, "image/jpeg");
+        assert_eq!(img.width, 7200);
+        assert_eq!(img.height, 3600);
+        assert_eq!(img.alt_text.as_deref(), Some("JPEG mark"));
     }
 
     #[test]

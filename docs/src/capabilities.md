@@ -11,7 +11,7 @@ OmniDocBench scores, no VLM accuracy claims, and no invented GPU numbers.
 ## Runtime axes
 
 These are the axes DocAgent wins on. Blank cells mean the other project does
-not ship that axis as a product feature.
+not ship that axis as a product feature. Tools are rows.
 
 | Tool | Job | C/Q/E | Capsule | Same bytes | i32 layout | GPU-free | Hangul |
 | --- | --- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -33,7 +33,7 @@ bytes, identical input / plan / output SHA-256.
 ## Flow marks on the IR
 
 These marks round-trip through the named codec. A dash is a real gap, not a
-teaser. Hangul quotes, fenced code, tasks, highlight, and first-class lists
+teaser. Hangul images, highlight, first-class lists, and table headers
 are not claimed.
 
 | Mark | Markdown | HTML | PDF/A | DOCX | ODT | Hangul |
@@ -41,28 +41,31 @@ are not claimed.
 | Lists (ul/ol, nested) | **yes** | **yes** | painted markers | `w:numPr` | `text:list` | — |
 | Links | `[text](url)` | `<a href>` | URI `/Link` | `w:hyperlink` | `text:a` | **yes** |
 | Strike | `~~text~~` | `<s>` | fill | `w:strike` | line-through | CHAR_SHAPE (not HWP 3) |
-| Quotes | `>` | `<blockquote>` | quote bar | Quote | Quote | — |
-| Code spans / fences | `` ` `` / ` ``` ` | `<code>` / `<pre>` | fills | Code / CodeBlock | Tcode / CodeBlock | — |
-| Tasks | `- [x]` | checkbox | task box | `[x]` | `[x]` | — |
+| Quotes | `>` | `<blockquote>` | quote bar | Quote | Quote | **yes** · Quote style |
+| Code spans / fences | `` ` `` / ` ``` ` | `<code>` / `<pre>` | fills | Code / CodeBlock | Tcode / CodeBlock | **yes** · CodeBlock style |
+| Thematic break | `---` | `<hr/>` | rule fill | HorizontalLine | HorizontalLine | **yes** · HorizontalLine |
+| Tasks | `- [x]` | checkbox | task box | `[x]` | `[x]` | **yes** · Task style |
 | Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | — |
 | Superscript / subscript | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline shift | `w:vertAlign` | Tsuper / Tsub | CHAR_SHAPE |
 | Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | CHAR_SHAPE |
 | Table header row | GFM `\| --- \|` | `<th>` | header fill | `w:tblHeader` | `THcell` | — |
-| Thematic break | `---` | `<hr/>` | rule fill | HorizontalLine | HorizontalLine | — |
+| Images | `![alt](…)` | `<img>` | PDF/A XObject | `a:blip` | `draw:image` | — |
+
+Images are **yes** on Markdown, HTML, PDF/A, DOCX, and ODT. They stay **—** on
+Hangul.
 
 ## Hangul codecs
 
 Hangul files are regional codecs on the same IR, not a second product.
 
-| Codec | CHAR_SHAPE / charPr | Hyperlink |
-| --- | --- | --- |
-| HWP 5 | `HWPTAG_CHAR_SHAPE` attr: bold, italic, underline, strike, super, sub | `%hlk` field begin/end |
-| HWPX | `hh:charPr`: bold, italic, underline, strikeout, supscript, subscript | `hp:fieldBegin type="HYPERLINK"` |
-| HML | `CHARSHAPE`: BOLD, ITALIC, UNDERLINE, STRIKEOUT, SUPERSCRIPT, SUBSCRIPT | `FIELDBEGIN Type="Hyperlink"` |
-| HWP 3 | char-shape attr bits: bold, italic, underline, super, sub (no strike bit) | control char 10 (`other_options & 0x10`) + additional-info TagID 3 (617-byte kchar URL) |
+| Codec | CHAR_SHAPE / charPr | Hyperlink | Para styles |
+| --- | --- | --- | --- |
+| HWP 5 | `HWPTAG_CHAR_SHAPE` attr: bold, italic, underline, strike, super, sub | `%hlk` field begin/end | DocInfo STYLE `Quote` / `CodeBlock` / `HorizontalLine` / `Task` |
+| HWPX | `hh:charPr`: bold, italic, underline, strikeout, supscript, subscript | `hp:fieldBegin type="HYPERLINK"` | `hh:style` `Quote` / `CodeBlock` / `HorizontalLine` / `Task` |
+| HML | `CHARSHAPE`: BOLD, ITALIC, UNDERLINE, STRIKEOUT, SUPERSCRIPT, SUBSCRIPT | `FIELDBEGIN Type="Hyperlink"` | `STYLE` `Quote` / `CodeBlock` / `HorizontalLine` / `Task` |
+| HWP 3 | char-shape attr bits: bold, italic, underline, super, sub (no strike bit) | control char 10 (`other_options & 0x10`) + additional-info TagID 3 (617-byte kchar URL) | style list `Quote` / `CodeBlock` / `HorizontalLine` / `Task` |
 
-Not yet on Hangul: quotes, `code_block`, task lists, highlight, thematic breaks,
-first-class numbering.
+Not yet on Hangul: images, highlight, first-class numbering, table header rows.
 
 ## Not this product
 

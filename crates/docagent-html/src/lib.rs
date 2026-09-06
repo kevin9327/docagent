@@ -1,8 +1,12 @@
-//! Semantic HTML from IR (not from the paint tree). Search/RAG/a11y.
+//! Semantic HTML ↔ IR (not from the paint tree). Search/RAG/a11y.
 
 #![forbid(unsafe_code)]
 
-use docagent_model::{Block, Document, ImageData, Paragraph, RunContent, Table};
+use docagent_model::{
+    Block, BreakKind, Document, Float, HeaderFooter, ImageData, InlineObject, NumberFormat,
+    NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, WrapMode,
+    HU_PER_INCH,
+};
 
 pub fn to_html(doc: &Document) -> String {
     let mut s = String::from(
@@ -27,6 +31,927 @@ pub fn to_html(doc: &Document) -> String {
     }
     s.push_str("</body></html>");
     s
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("not html text")]
+    NotHtml,
+}
+
+pub fn read(bytes: &[u8]) -> Result<Document, Error> {
+    let html = std::str::from_utf8(bytes).map_err(|_| Error::NotHtml)?;
+    Ok(parse_document(html))
+}
+
+struct Cursor<'a> {
+    s: &'a str,
+    i: usize,
+}
+
+enum Token<'a> {
+    Text(&'a str),
+    Open {
+        name: String,
+        attrs: Vec<(String, String)>,
+        self_closing: bool,
+    },
+    Close {
+        name: String,
+    },
+}
+
+impl<'a> Cursor<'a> {
+    fn new(s: &'a str) -> Self {
+        Self { s, i: 0 }
+    }
+
+    fn next(&mut self) -> Option<Token<'a>> {
+        loop {
+            if self.i >= self.s.len() {
+                return None;
+            }
+            if self.s.as_bytes()[self.i] != b'<' {
+                let start = self.i;
+                while self.i < self.s.len() && self.s.as_bytes()[self.i] != b'<' {
+                    self.i += 1;
+                }
+                return Some(Token::Text(&self.s[start..self.i]));
+            }
+            if self.skip_special() {
+                continue;
+            }
+            return Some(self.parse_tag());
+        }
+    }
+
+    fn skip_special(&mut self) -> bool {
+        let rest = &self.s[self.i..];
+        if rest.len() >= 4 && rest.starts_with("<!--") {
+            self.i += 4;
+            if let Some(p) = self.s[self.i..].find("-->") {
+                self.i += p + 3;
+            } else {
+                self.i = self.s.len();
+            }
+            return true;
+        }
+        if rest.len() >= 2 && rest.as_bytes()[1] == b'!' {
+            self.i += 2;
+            if let Some(p) = self.s[self.i..].find('>') {
+                self.i += p + 1;
+            } else {
+                self.i = self.s.len();
+            }
+            return true;
+        }
+        false
+    }
+
+    fn parse_tag(&mut self) -> Token<'a> {
+        self.i += 1;
+        let close = self.i < self.s.len() && self.s.as_bytes()[self.i] == b'/';
+        if close {
+            self.i += 1;
+        }
+        let name_start = self.i;
+        while self.i < self.s.len() {
+            let b = self.s.as_bytes()[self.i];
+            if b.is_ascii_alphanumeric() || b == b'-' {
+                self.i += 1;
+            } else {
+                break;
+            }
+        }
+        let name = self.s[name_start..self.i].to_ascii_lowercase();
+        if close {
+            self.skip_gt();
+            return Token::Close { name };
+        }
+        let mut attrs = Vec::new();
+        let mut self_closing = false;
+        loop {
+            self.skip_ws();
+            if self.i >= self.s.len() {
+                break;
+            }
+            let b = self.s.as_bytes()[self.i];
+            if b == b'>' {
+                self.i += 1;
+                break;
+            }
+            if b == b'/' {
+                self_closing = true;
+                self.i += 1;
+                continue;
+            }
+            if let Some(attr) = self.parse_attr() {
+                attrs.push(attr);
+            } else {
+                self.i += 1;
+            }
+        }
+        if is_void(&name) {
+            self_closing = true;
+        }
+        Token::Open {
+            name,
+            attrs,
+            self_closing,
+        }
+    }
+
+    fn parse_attr(&mut self) -> Option<(String, String)> {
+        let start = self.i;
+        while self.i < self.s.len() {
+            let b = self.s.as_bytes()[self.i];
+            if b.is_ascii_alphanumeric() || b == b'-' || b == b':' {
+                self.i += 1;
+            } else {
+                break;
+            }
+        }
+        if start == self.i {
+            return None;
+        }
+        let name = self.s[start..self.i].to_ascii_lowercase();
+        self.skip_ws();
+        if self.i < self.s.len() && self.s.as_bytes()[self.i] == b'=' {
+            self.i += 1;
+            self.skip_ws();
+            let val = self.parse_attr_value();
+            Some((name, unescape(&val)))
+        } else {
+            Some((name, String::new()))
+        }
+    }
+
+    fn parse_attr_value(&mut self) -> String {
+        if self.i >= self.s.len() {
+            return String::new();
+        }
+        let q = self.s.as_bytes()[self.i];
+        if q == b'"' || q == b'\'' {
+            self.i += 1;
+            let start = self.i;
+            while self.i < self.s.len() && self.s.as_bytes()[self.i] != q {
+                self.i += 1;
+            }
+            let v = self.s[start..self.i].to_string();
+            if self.i < self.s.len() {
+                self.i += 1;
+            }
+            v
+        } else {
+            let start = self.i;
+            while self.i < self.s.len() {
+                let b = self.s.as_bytes()[self.i];
+                if b.is_ascii_whitespace() || b == b'>' || b == b'/' {
+                    break;
+                }
+                self.i += 1;
+            }
+            self.s[start..self.i].to_string()
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while self.i < self.s.len() && self.s.as_bytes()[self.i].is_ascii_whitespace() {
+            self.i += 1;
+        }
+    }
+
+    fn skip_gt(&mut self) {
+        if let Some(p) = self.s[self.i..].find('>') {
+            self.i += p + 1;
+        } else {
+            self.i = self.s.len();
+        }
+    }
+
+    fn skip_to_close_raw(&mut self, name: &str) {
+        let rest = &self.s[self.i..];
+        let bytes = rest.as_bytes();
+        let tag = name.as_bytes();
+        let mut i = 0;
+        while i + 2 + tag.len() <= bytes.len() {
+            if bytes[i] == b'<'
+                && bytes[i + 1] == b'/'
+                && bytes[i + 2..i + 2 + tag.len()].eq_ignore_ascii_case(tag)
+            {
+                let after = i + 2 + tag.len();
+                if after == bytes.len()
+                    || bytes[after] == b'>'
+                    || bytes[after].is_ascii_whitespace()
+                {
+                    self.i += after;
+                    self.skip_gt();
+                    return;
+                }
+            }
+            i += 1;
+        }
+        self.i = self.s.len();
+    }
+}
+
+fn is_void(name: &str) -> bool {
+    matches!(
+        name,
+        "img"
+            | "br"
+            | "hr"
+            | "input"
+            | "meta"
+            | "link"
+            | "area"
+            | "base"
+            | "col"
+            | "embed"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    attrs
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+}
+
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(end) = rest.find(';') else {
+            out.push_str(rest);
+            return out;
+        };
+        let ent = &rest[..=end];
+        match ent {
+            "&amp;" => out.push('&'),
+            "&lt;" => out.push('<'),
+            "&gt;" => out.push('>'),
+            "&quot;" | "&#34;" => out.push('"'),
+            "&apos;" | "&#39;" => out.push('\''),
+            _ => out.push_str(ent),
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn parse_document(html: &str) -> Document {
+    let mut cur = Cursor::new(html);
+    let mut doc = Document::new();
+    let mut loose = Section::default();
+    while let Some(tok) = cur.next() {
+        match tok {
+            Token::Open {
+                name,
+                attrs,
+                self_closing,
+            } => match name.as_str() {
+                "head" | "style" | "script" => {
+                    if !self_closing {
+                        cur.skip_to_close_raw(&name);
+                    }
+                }
+                "article" => doc.sections.push(parse_article(&mut cur)),
+                "html" | "body" => {}
+                "header" => {
+                    loose.header = Some(header_footer(parse_blocks(&mut cur, "header")));
+                }
+                "footer" => {
+                    loose.footer = Some(header_footer(parse_blocks(&mut cur, "footer")));
+                }
+                _ => {
+                    if let Some(more) = open_to_blocks(&mut cur, &name, &attrs, self_closing) {
+                        loose.body.extend(more);
+                    }
+                }
+            },
+            Token::Text(t) => {
+                if let Some(p) = text_para(t) {
+                    loose.body.push(Block::Paragraph(p));
+                }
+            }
+            Token::Close { .. } => {}
+        }
+    }
+    if doc.sections.is_empty() {
+        doc.sections.push(loose);
+    } else if !loose.body.is_empty() || loose.header.is_some() || loose.footer.is_some() {
+        doc.sections.insert(0, loose);
+    }
+    doc
+}
+
+fn header_footer(blocks: Vec<Block>) -> HeaderFooter {
+    HeaderFooter {
+        blocks,
+        different_first: None,
+        different_odd_even: None,
+    }
+}
+
+fn parse_article(cur: &mut Cursor<'_>) -> Section {
+    let mut section = Section::default();
+    loop {
+        match cur.next() {
+            None => break,
+            Some(Token::Close { name }) if name == "article" => break,
+            Some(Token::Open {
+                name,
+                attrs,
+                self_closing,
+            }) => match name.as_str() {
+                "head" | "style" | "script" => {
+                    if !self_closing {
+                        cur.skip_to_close_raw(&name);
+                    }
+                }
+                "header" => {
+                    section.header = Some(header_footer(parse_blocks(cur, "header")));
+                }
+                "footer" => {
+                    section.footer = Some(header_footer(parse_blocks(cur, "footer")));
+                }
+                _ => {
+                    if let Some(more) = open_to_blocks(cur, &name, &attrs, self_closing) {
+                        section.body.extend(more);
+                    }
+                }
+            },
+            Some(Token::Text(t)) => {
+                if let Some(p) = text_para(t) {
+                    section.body.push(Block::Paragraph(p));
+                }
+            }
+            Some(Token::Close { .. }) => {}
+        }
+    }
+    section
+}
+
+fn parse_blocks(cur: &mut Cursor<'_>, until: &str) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    loop {
+        match cur.next() {
+            None => break,
+            Some(Token::Close { name }) if name == until => break,
+            Some(Token::Open {
+                name,
+                attrs,
+                self_closing,
+            }) => match name.as_str() {
+                "head" | "style" | "script" => {
+                    if !self_closing {
+                        cur.skip_to_close_raw(&name);
+                    }
+                }
+                _ => {
+                    if let Some(more) = open_to_blocks(cur, &name, &attrs, self_closing) {
+                        blocks.extend(more);
+                    }
+                }
+            },
+            Some(Token::Text(t)) => {
+                if let Some(p) = text_para(t) {
+                    blocks.push(Block::Paragraph(p));
+                }
+            }
+            Some(Token::Close { .. }) => {}
+        }
+    }
+    blocks
+}
+
+fn open_to_blocks(
+    cur: &mut Cursor<'_>,
+    name: &str,
+    attrs: &[(String, String)],
+    self_closing: bool,
+) -> Option<Vec<Block>> {
+    match name {
+        "p" => Some(vec![Block::Paragraph(para_until(
+            cur,
+            "p",
+            None,
+            false,
+            false,
+            self_closing,
+        ))]),
+        "h1" => Some(vec![Block::Paragraph(para_until(
+            cur,
+            "h1",
+            Some(1),
+            false,
+            false,
+            self_closing,
+        ))]),
+        "h2" => Some(vec![Block::Paragraph(para_until(
+            cur,
+            "h2",
+            Some(2),
+            false,
+            false,
+            self_closing,
+        ))]),
+        "h3" => Some(vec![Block::Paragraph(para_until(
+            cur,
+            "h3",
+            Some(3),
+            false,
+            false,
+            self_closing,
+        ))]),
+        "blockquote" => Some(vec![Block::Paragraph(para_until(
+            cur,
+            "blockquote",
+            None,
+            true,
+            false,
+            self_closing,
+        ))]),
+        "pre" => Some(vec![Block::Paragraph(para_until(
+            cur,
+            "pre",
+            None,
+            false,
+            true,
+            self_closing,
+        ))]),
+        "hr" => Some(vec![Block::Break(BreakKind::Thematic)]),
+        "br" => None,
+        "img" => image_from_attrs(attrs).map(|img| vec![Block::Paragraph(image_para(img))]),
+        "aside" => Some(aside_blocks(parse_blocks(cur, "aside"))),
+        "ul" => Some(parse_list(cur, list_fmt(attrs), 1, 0)),
+        "ol" => {
+            let start = attr(attrs, "start").and_then(|s| s.parse().ok()).unwrap_or(1);
+            Some(parse_list(cur, NumberFormat::Decimal, start, 0))
+        }
+        "table" => Some(vec![Block::Table(parse_table(cur))]),
+        "section" | "div" | "main" | "nav" => Some(parse_blocks(cur, name)),
+        _ if self_closing => None,
+        _ => Some(parse_blocks(cur, name)),
+    }
+}
+
+fn para_until(
+    cur: &mut Cursor<'_>,
+    until: &str,
+    outline: Option<u8>,
+    quote: bool,
+    code: bool,
+    self_closing: bool,
+) -> Paragraph {
+    let runs = if self_closing {
+        Vec::new()
+    } else {
+        parse_inlines(cur, until).runs
+    };
+    paragraph_from_runs(runs, outline, quote, code)
+}
+
+fn paragraph_from_runs(
+    runs: Vec<Run>,
+    outline: Option<u8>,
+    quote: bool,
+    code: bool,
+) -> Paragraph {
+    let mut p = Paragraph::from_text("");
+    p.runs = if runs.is_empty() {
+        vec![Run::text("")]
+    } else {
+        runs
+    };
+    p.outline_level = outline;
+    p.quote = quote;
+    p.code_block = code;
+    p
+}
+
+fn image_para(img: ImageData) -> Paragraph {
+    let mut p = Paragraph::from_text("");
+    p.runs = vec![image_run(img)];
+    p
+}
+
+fn image_run(img: ImageData) -> Run {
+    Run {
+        style: docagent_model::CharStyle::default(),
+        content: RunContent::Inline(InlineObject::Image(img)),
+    }
+}
+
+fn text_para(t: &str) -> Option<Paragraph> {
+    let text = unescape(t);
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(Paragraph::from_text(text))
+    }
+}
+
+fn aside_blocks(inner: Vec<Block>) -> Vec<Block> {
+    if let [Block::Paragraph(p)] = inner.as_slice()
+        && let [Run {
+            content: RunContent::Inline(InlineObject::Image(img)),
+            ..
+        }] = p.runs.as_slice()
+    {
+        return vec![Block::Float(Float::Image(img.clone()))];
+    }
+    inner
+}
+
+fn list_fmt(attrs: &[(String, String)]) -> NumberFormat {
+    if attr(attrs, "class").is_some_and(|c| c.split_whitespace().any(|p| p == "tasks")) {
+        NumberFormat::Task
+    } else {
+        NumberFormat::Bullet
+    }
+}
+
+struct InlineOut {
+    runs: Vec<Run>,
+    nested: Vec<Block>,
+    checked: bool,
+}
+
+struct InlineState {
+    runs: Vec<Run>,
+    buf: String,
+    style: docagent_model::CharStyle,
+}
+
+impl InlineState {
+    fn new() -> Self {
+        Self {
+            runs: Vec::new(),
+            buf: String::new(),
+            style: docagent_model::CharStyle::default(),
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.buf.is_empty() {
+            return;
+        }
+        let mut run = Run::text(std::mem::take(&mut self.buf));
+        run.style = self.style.clone();
+        self.runs.push(run);
+    }
+
+    fn apply_open(&mut self, name: &str) {
+        self.flush();
+        match name {
+            "strong" | "b" => self.style.bold = true,
+            "em" | "i" => self.style.italic = true,
+            "u" => self.style.underline = docagent_model::Underline::Single,
+            "s" | "del" | "strike" => self.style.strike = true,
+            "code" | "kbd" => self.style.code = true,
+            "mark" => self.style.highlight = Some(docagent_model::Color::MARK),
+            "sup" => self.style.superscript = true,
+            "sub" => self.style.subscript = true,
+            _ => {}
+        }
+    }
+
+    fn apply_close(&mut self, name: &str) {
+        self.flush();
+        match name {
+            "strong" | "b" => self.style.bold = false,
+            "em" | "i" => self.style.italic = false,
+            "u" => self.style.underline = docagent_model::Underline::None,
+            "s" | "del" | "strike" => self.style.strike = false,
+            "code" | "kbd" => self.style.code = false,
+            "mark" => self.style.highlight = None,
+            "sup" => self.style.superscript = false,
+            "sub" => self.style.subscript = false,
+            _ => {}
+        }
+    }
+}
+
+fn parse_inlines(cur: &mut Cursor<'_>, until: &str) -> InlineOut {
+    parse_inlines_at(cur, until, 0)
+}
+
+fn parse_inlines_at(cur: &mut Cursor<'_>, until: &str, list_level: u8) -> InlineOut {
+    let mut st = InlineState::new();
+    let mut nested = Vec::new();
+    let mut checked = false;
+    loop {
+        match cur.next() {
+            None => break,
+            Some(Token::Close { name }) if name == until => break,
+            Some(Token::Open {
+                name,
+                attrs,
+                self_closing,
+            }) => match name.as_str() {
+                "img" => {
+                    st.flush();
+                    if let Some(img) = image_from_attrs(&attrs) {
+                        st.runs.push(image_run(img));
+                    }
+                }
+                "br" => st.buf.push('\n'),
+                "a" => {
+                    st.flush();
+                    let href = attr(&attrs, "href").unwrap_or("");
+                    let inner = if self_closing {
+                        InlineOut {
+                            runs: Vec::new(),
+                            nested: Vec::new(),
+                            checked: false,
+                        }
+                    } else {
+                        parse_inlines_at(cur, "a", list_level)
+                    };
+                    let display: String = inner
+                        .runs
+                        .iter()
+                        .map(Run::display_text)
+                        .collect();
+                    if !display.is_empty() && !href.is_empty() {
+                        st.runs.push(Run::hyperlink(display, href));
+                    } else {
+                        st.runs.extend(inner.runs);
+                    }
+                    nested.extend(inner.nested);
+                }
+                "input" => {
+                    if attr(&attrs, "type").is_some_and(|t| t.eq_ignore_ascii_case("checkbox")) {
+                        checked = attrs.iter().any(|(k, _)| k == "checked");
+                    }
+                }
+                "ul" | "ol" => {
+                    st.flush();
+                    let fmt = if name == "ol" {
+                        NumberFormat::Decimal
+                    } else {
+                        list_fmt(&attrs)
+                    };
+                    let start = attr(&attrs, "start").and_then(|s| s.parse().ok()).unwrap_or(1);
+                    nested.extend(parse_list(
+                        cur,
+                        fmt,
+                        start,
+                        list_level.saturating_add(1),
+                    ));
+                }
+                "li" if until != "li" => {
+                    st.flush();
+                    nested.extend(parse_li_blocks(cur, list_fmt(&[]), 1, list_level));
+                }
+                _ => {
+                    if !self_closing && !is_void(&name) {
+                        st.apply_open(&name);
+                    }
+                }
+            },
+            Some(Token::Close { name }) => st.apply_close(&name),
+            Some(Token::Text(t)) => st.buf.push_str(&unescape(t)),
+        }
+    }
+    st.flush();
+    InlineOut {
+        runs: st.runs,
+        nested,
+        checked,
+    }
+}
+
+fn parse_list(
+    cur: &mut Cursor<'_>,
+    fmt: NumberFormat,
+    mut start: u32,
+    level: u8,
+) -> Vec<Block> {
+    let until = if fmt == NumberFormat::Decimal {
+        "ol"
+    } else {
+        "ul"
+    };
+    let mut blocks = Vec::new();
+    loop {
+        match cur.next() {
+            None => break,
+            Some(Token::Close { name }) if name == until => break,
+            Some(Token::Open { name, .. }) if name == "li" => {
+                blocks.extend(parse_li_blocks(cur, fmt, start, level));
+                start = start.saturating_add(1);
+            }
+            Some(Token::Open {
+                name,
+                attrs,
+                self_closing: _,
+            }) if name == "ul" || name == "ol" => {
+                let nfmt = if name == "ol" {
+                    NumberFormat::Decimal
+                } else {
+                    list_fmt(&attrs)
+                };
+                let st = attr(&attrs, "start").and_then(|s| s.parse().ok()).unwrap_or(1);
+                blocks.extend(parse_list(cur, nfmt, st, level.saturating_add(1)));
+            }
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) => {
+                if !self_closing && !is_void(&name) && name != until {
+                    let _ = parse_blocks(cur, &name);
+                }
+            }
+            Some(Token::Close { .. } | Token::Text(_)) => {}
+        }
+    }
+    blocks
+}
+
+fn parse_li_blocks(
+    cur: &mut Cursor<'_>,
+    fmt: NumberFormat,
+    start: u32,
+    level: u8,
+) -> Vec<Block> {
+    let inner = parse_inlines_at(cur, "li", level);
+    let mut p = paragraph_from_runs(inner.runs, None, false, false);
+    p.numbering = Some(NumberingRef {
+        definition_id: match fmt {
+            NumberFormat::Bullet => 0,
+            NumberFormat::Decimal => 1,
+            NumberFormat::Task => 2,
+            _ => 0,
+        },
+        level,
+        start: match fmt {
+            NumberFormat::Decimal => Some(start),
+            NumberFormat::Task => inner.checked.then_some(1),
+            _ => None,
+        },
+        format: Some(fmt),
+    });
+    let mut blocks = vec![Block::Paragraph(p)];
+    blocks.extend(inner.nested);
+    blocks
+}
+
+fn parse_table(cur: &mut Cursor<'_>) -> Table {
+    let mut rows = Vec::new();
+    loop {
+        match cur.next() {
+            None => break,
+            Some(Token::Close { name }) if name == "table" => break,
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) if name == "tr" => {
+                if !self_closing {
+                    rows.push(parse_tr(cur));
+                }
+            }
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) if matches!(name.as_str(), "thead" | "tbody" | "tfoot") => {
+                if self_closing {
+                    continue;
+                }
+            }
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) => {
+                if !self_closing && !is_void(&name) && name != "tr" {
+                    let _ = parse_blocks(cur, &name);
+                }
+            }
+            Some(Token::Close { .. } | Token::Text(_)) => {}
+        }
+    }
+    let header_row_count = u8::from(rows.first().is_some_and(|r| r.header));
+    Table {
+        rows,
+        borders: docagent_model::TableBorders::default(),
+        split_policy: docagent_model::SplitPolicy::Allow,
+        width: None,
+        alignment: docagent_model::Alignment::Start,
+        cell_spacing: 0,
+        indent: 0,
+        header_row_count,
+        layout_hints: Vec::new(),
+    }
+}
+
+fn parse_tr(cur: &mut Cursor<'_>) -> TableRow {
+    let mut cells = Vec::new();
+    let mut header = false;
+    loop {
+        match cur.next() {
+            None => break,
+            Some(Token::Close { name }) if name == "tr" => break,
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) if name == "th" || name == "td" => {
+                if name == "th" {
+                    header = true;
+                }
+                let p = para_until(cur, &name, None, false, false, self_closing);
+                cells.push(TableCell {
+                    blocks: vec![Block::Paragraph(p)],
+                    ..TableCell::default()
+                });
+            }
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) => {
+                if !self_closing && !is_void(&name) {
+                    let _ = parse_blocks(cur, &name);
+                }
+            }
+            Some(Token::Close { .. } | Token::Text(_)) => {}
+        }
+    }
+    TableRow {
+        cells,
+        height: None,
+        header,
+        cant_split: None,
+    }
+}
+
+fn image_from_attrs(attrs: &[(String, String)]) -> Option<ImageData> {
+    let src = attr(attrs, "src")?;
+    if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("//") {
+        return None;
+    }
+    let (mime, bytes) = decode_data_uri(src)?;
+    let (width, height) = raster_hu(&bytes);
+    let alt = attr(attrs, "alt").filter(|s| !s.is_empty()).map(str::to_string);
+    Some(ImageData {
+        bytes,
+        mime,
+        width,
+        height,
+        alt_text: alt,
+        wrap: WrapMode::Inline,
+    })
+}
+
+fn decode_data_uri(src: &str) -> Option<(String, Vec<u8>)> {
+    let rest = src.strip_prefix("data:")?;
+    let (meta, payload) = rest.split_once(',')?;
+    let mut mime = "application/octet-stream";
+    let mut is_b64 = false;
+    for (i, part) in meta.split(';').enumerate() {
+        if i == 0 && !part.is_empty() && !part.eq_ignore_ascii_case("base64") {
+            mime = part;
+        } else if part.eq_ignore_ascii_case("base64") {
+            is_b64 = true;
+        }
+    }
+    if !is_b64 {
+        return None;
+    }
+    Some((mime.to_string(), b64_decode(payload)?))
+}
+
+fn png_ihdr_px(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 24 || !bytes.starts_with(SIG) || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    (w > 0 && h > 0).then_some((w, h))
+}
+
+fn px_to_hu(px: u32) -> i32 {
+    i32::try_from(i64::from(px).saturating_mul(i64::from(HU_PER_INCH)) / 96).unwrap_or(i32::MAX)
+}
+
+fn raster_hu(bytes: &[u8]) -> (i32, i32) {
+    match png_ihdr_px(bytes) {
+        Some((w, h)) => (px_to_hu(w), px_to_hu(h)),
+        None => (HU_PER_INCH, HU_PER_INCH),
+    }
 }
 
 fn list_format(block: &Block) -> Option<docagent_model::NumberFormat> {
@@ -307,7 +1232,6 @@ fn b64_encode(data: &[u8]) -> String {
     out
 }
 
-#[cfg(test)]
 fn b64_val(c: u8) -> Option<u8> {
     match c {
         b'A'..=b'Z' => Some(c - b'A'),
@@ -319,7 +1243,6 @@ fn b64_val(c: u8) -> Option<u8> {
     }
 }
 
-#[cfg(test)]
 fn b64_decode(s: &str) -> Option<Vec<u8>> {
     let mut raw = Vec::with_capacity(s.len());
     for b in s.bytes() {
@@ -367,7 +1290,6 @@ fn escape_attr(t: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docagent_model::{BreakKind, Paragraph, Section};
 
     #[test]
     fn html_has_semantic_structure() {
@@ -685,10 +1607,7 @@ mod tests {
     }
 
     fn fixture_png() -> Vec<u8> {
-        std::fs::read(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/assets/mark.png"),
-        )
-        .expect("docs/assets/mark.png")
+        include_bytes!("../../../docs/assets/mark.png").to_vec()
     }
 
     fn fixture_image(alt: &str) -> ImageData {
@@ -698,8 +1617,27 @@ mod tests {
             width: 0,
             height: 0,
             alt_text: Some(alt.into()),
-            wrap: docagent_model::WrapMode::Inline,
+            wrap: WrapMode::Inline,
         }
+    }
+
+    fn first_image(doc: &Document) -> &ImageData {
+        for section in &doc.sections {
+            for block in &section.body {
+                match block {
+                    Block::Paragraph(p) => {
+                        for run in &p.runs {
+                            if let RunContent::Inline(InlineObject::Image(img)) = &run.content {
+                                return img;
+                            }
+                        }
+                    }
+                    Block::Float(Float::Image(img)) => return img,
+                    _ => {}
+                }
+            }
+        }
+        panic!("no image");
     }
 
     #[test]
@@ -743,5 +1681,75 @@ mod tests {
         doc.sections.push(section);
         let html = to_html(&doc);
         assert!(html.contains("<td><strong>GPU-free</strong><em> byte-for-byte</em></td>"), "{html}");
+    }
+
+    #[test]
+    fn read_roundtrips_img_data_uri() {
+        let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: docagent_model::CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.to_vec(),
+                mime: "image/png".into(),
+                width: 0,
+                height: 0,
+                alt_text: Some("mark".into()),
+                wrap: WrapMode::Inline,
+            })),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains(r#"<img alt="mark" src="data:image/png;base64,"#), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let img = first_image(&back);
+        assert_eq!(img.bytes.as_slice(), png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.alt_text.as_deref(), Some("mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+        let (w, h) = raster_hu(png);
+        assert_eq!((img.width, img.height), (w, h));
+        assert_ne!((img.width, img.height), (0, 0));
+    }
+
+    #[test]
+    fn read_non_png_data_uri_is_one_inch() {
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xD9];
+        let html = format!(
+            r#"<p><img alt="j" src="data:image/jpeg;base64,{}"/></p>"#,
+            b64_encode(&jpeg)
+        );
+        let doc = read(html.as_bytes()).expect("html");
+        let img = first_image(&doc);
+        assert_eq!(img.bytes.as_slice(), jpeg.as_slice());
+        assert_eq!(img.mime, "image/jpeg");
+        assert_eq!(img.alt_text.as_deref(), Some("j"));
+        assert_eq!(img.width, HU_PER_INCH);
+        assert_eq!(img.height, HU_PER_INCH);
+        assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    #[test]
+    fn read_skips_http_img_src() {
+        let html = br#"<p><img alt="x" src="https://example.com/a.png"/></p>"#;
+        let doc = read(html).expect("html");
+        let has_img = doc.sections.iter().any(|s| {
+            s.body.iter().any(|b| match b {
+                Block::Paragraph(p) => p.runs.iter().any(|r| {
+                    matches!(r.content, RunContent::Inline(InlineObject::Image(_)))
+                }),
+                Block::Float(Float::Image(_)) => true,
+                _ => false,
+            })
+        });
+        assert!(!has_img);
+    }
+
+    #[test]
+    fn read_rejects_non_utf8() {
+        assert!(matches!(read(&[0xFF, 0xFE, 0x00]), Err(Error::NotHtml)));
     }
 }

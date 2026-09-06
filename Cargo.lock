@@ -614,6 +614,7 @@ name = "docagent-html"
 version = "0.1.0"
 dependencies = [
  "docagent-model",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

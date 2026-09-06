@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, BreakKind, CharStyle, Document, InlineObject, LayoutHint, Paragraph, Run,
-    RunContent, Section, Table, TableCell, TableRow, Underline,
+    Alignment, Block, BreakKind, CharStyle, Document, InlineObject, LayoutHint, NumberFormat,
+    NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, Underline,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -172,10 +172,10 @@ fn header_xml(styles: &[CharStyle]) -> String {
     }
     s.push_str("</hh:charProperties>");
     s.push_str(
-        r#"<hh:paraProperties itemCnt="4"><hh:paraPr id="0"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="1"><hh:margin left="1400"/><hh:border borderFillIDRef="1" offsetLeft="400"/></hh:paraPr><hh:paraPr id="2"><hh:border borderFillIDRef="2"/></hh:paraPr><hh:paraPr id="3"><hh:border borderFillIDRef="3" offsetBottom="200"/></hh:paraPr></hh:paraProperties>"#,
+        r#"<hh:paraProperties itemCnt="5"><hh:paraPr id="0"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="1"><hh:margin left="1400"/><hh:border borderFillIDRef="1" offsetLeft="400"/></hh:paraPr><hh:paraPr id="2"><hh:border borderFillIDRef="2"/></hh:paraPr><hh:paraPr id="3"><hh:border borderFillIDRef="3" offsetBottom="200"/></hh:paraPr><hh:paraPr id="4"><hh:border borderFillIDRef="0"/></hh:paraPr></hh:paraProperties>"#,
     );
     s.push_str(
-        r#"<hh:styles itemCnt="4"><hh:style id="0" type="PARA" name="Normal" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="1" type="PARA" name="Quote" engName="Quote" paraPrIDRef="1" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="2" type="PARA" name="CodeBlock" engName="CodeBlock" paraPrIDRef="2" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="3" type="PARA" name="HorizontalLine" engName="HorizontalLine" paraPrIDRef="3" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles></hh:head>"#,
+        r#"<hh:styles itemCnt="5"><hh:style id="0" type="PARA" name="Normal" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="1" type="PARA" name="Quote" engName="Quote" paraPrIDRef="1" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="2" type="PARA" name="CodeBlock" engName="CodeBlock" paraPrIDRef="2" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="3" type="PARA" name="HorizontalLine" engName="HorizontalLine" paraPrIDRef="3" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="4" type="PARA" name="Task" engName="Task" paraPrIDRef="4" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles></hh:head>"#,
     );
     s
 }
@@ -264,16 +264,60 @@ fn para_style_id(p: &Paragraph) -> u32 {
         2
     } else if p.quote {
         1
+    } else if task_prefix(p).is_some() {
+        4
     } else {
         0
+    }
+}
+
+fn task_prefix(p: &Paragraph) -> Option<&'static str> {
+    let n = p.numbering.as_ref()?;
+    if n.format != Some(NumberFormat::Task) {
+        return None;
+    }
+    Some(if n.start == Some(1) {
+        "[x] "
+    } else {
+        "[ ] "
+    })
+}
+
+fn apply_task_paragraph(p: &mut Paragraph, from_style: bool) {
+    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+    let mut checked = false;
+    let mut found = from_style;
+    if let Some(run) = p.runs.first_mut()
+        && let RunContent::Text(text) = &mut run.content
+    {
+        let is_checked = text.starts_with("[x] ") || text.starts_with("[X] ");
+        let is_unchecked = text.starts_with("[ ] ");
+        if is_checked || is_unchecked {
+            *text = text[4..].to_string();
+            checked = is_checked;
+            found = true;
+        }
+    }
+    if found {
+        p.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level,
+            start: checked.then_some(1),
+            format: Some(NumberFormat::Task),
+        });
     }
 }
 
 fn para_xml(id: usize, p: &Paragraph, styles: &[CharStyle]) -> String {
     let sid = para_style_id(p);
     let mut s = format!(r#"<hp:p id="{id}" paraPrIDRef="{sid}" styleIDRef="{sid}">"#);
+    let mut pending_marker = task_prefix(p);
     if p.runs.is_empty() {
-        s.push_str(r#"<hp:run charPrIDRef="0"><hp:t></hp:t></hp:run>"#);
+        let inner = pending_marker.take().unwrap_or("");
+        s.push_str(&format!(
+            r#"<hp:run charPrIDRef="0"><hp:t>{}</hp:t></hp:run>"#,
+            xml_escape(inner)
+        ));
     } else {
         for (i, run) in p.runs.iter().enumerate() {
             let sid = style_id(styles, &run.style);
@@ -286,13 +330,23 @@ fn para_xml(id: usize, p: &Paragraph, styles: &[CharStyle]) -> String {
                     ));
                 }
                 RunContent::Text(t) => {
+                    let body = match pending_marker.take() {
+                        Some(m) => format!("{m}{t}"),
+                        None => t.clone(),
+                    };
                     s.push_str(&format!(
                         r#"<hp:run charPrIDRef="{sid}"><hp:t>{}</hp:t></hp:run>"#,
-                        xml_escape(t)
+                        xml_escape(&body)
                     ));
                 }
                 RunContent::Inline(_) => {}
             }
+        }
+        if let Some(m) = pending_marker {
+            s.push_str(&format!(
+                r#"<hp:run charPrIDRef="0"><hp:t>{}</hp:t></hp:run>"#,
+                xml_escape(m)
+            ));
         }
     }
     for h in &p.layout_hints {
@@ -683,6 +737,7 @@ enum StyleKind {
     Quote,
     CodeBlock,
     Thematic,
+    Task,
 }
 
 fn style_kind(name: &str) -> Option<StyleKind> {
@@ -696,6 +751,8 @@ fn style_kind(name: &str) -> Option<StyleKind> {
         || n.contains("구분선")
     {
         Some(StyleKind::Thematic)
+    } else if n.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
+        Some(StyleKind::Task)
     } else {
         None
     }
@@ -722,6 +779,7 @@ fn flush_para(
     p.layout_hints = std::mem::take(hints);
     p.quote = kind == Some(StyleKind::Quote);
     p.code_block = kind == Some(StyleKind::CodeBlock);
+    apply_task_paragraph(&mut p, kind == Some(StyleKind::Task));
     body.push(Block::Paragraph(p));
 }
 
@@ -948,5 +1006,50 @@ mod tests {
         );
         assert!(back.plain_text().contains("before"));
         assert!(back.plain_text().contains("after"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_task_item() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut checked = Paragraph::from_text("Replay the convert");
+        checked.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Task),
+        });
+        let mut unchecked = Paragraph::from_text("Hope");
+        unchecked.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Task),
+        });
+        let xml = para_xml(0, &checked, &[CharStyle::default()]);
+        assert!(xml.contains(r#"styleIDRef="4""#), "{xml}");
+        assert!(xml.contains("[x] "), "{xml}");
+        section.body.push(Block::Paragraph(checked));
+        section.body.push(Block::Paragraph(unchecked));
+        doc.sections.push(section);
+        let header = header_xml(&collect_char_styles(&doc));
+        assert!(header.contains(r#"engName="Task""#), "{header}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("checked task");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.start)),
+            Some((Some(NumberFormat::Task), Some(1)))
+        );
+        assert_eq!(p.plain_text(), "Replay the convert");
+        let Block::Paragraph(p) = &back.sections[0].body[1] else {
+            panic!("unchecked task");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.start)),
+            Some((Some(NumberFormat::Task), None))
+        );
+        assert_eq!(p.plain_text(), "Hope");
     }
 }

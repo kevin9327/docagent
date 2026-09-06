@@ -11,9 +11,10 @@
   <g font-family="ui-sans-serif, Segoe UI, Helvetica, Arial">
     <rect x="40" y="70" width="250" height="160" rx="16" fill="#111827" stroke="#1f2937"/>
     <text x="165" y="104" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="700">INPUT</text>
-    <text x="165" y="140" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">DOCX ODT MD</text>
-    <text x="165" y="168" text-anchor="middle" fill="#cbd5e1" font-size="16">HTML · HWP · HWPX</text>
-    <text x="165" y="200" text-anchor="middle" fill="#64748b" font-size="13">one Command::Convert</text>
+    <text x="165" y="136" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">DOCX ODT MD</text>
+    <text x="165" y="162" text-anchor="middle" fill="#cbd5e1" font-size="15">HTML · HWP · HWPX</text>
+    <text x="165" y="186" text-anchor="middle" fill="#cbd5e1" font-size="15">HML · HWP 3</text>
+    <text x="165" y="212" text-anchor="middle" fill="#64748b" font-size="13">one Command::Convert</text>
 
     <polygon points="304,150 332,138 332,162" fill="#2dd4bf"/>
 

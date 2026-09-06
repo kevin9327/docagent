@@ -37,8 +37,8 @@
     <text x="433" y="336" fill="#99f6e4" text-anchor="middle">HTML</text>
     <rect x="488" y="312" width="96" height="36" rx="18" fill="#115e59"/>
     <text x="536" y="336" fill="#ccfbf1" text-anchor="middle">PDF/A</text>
-    <rect x="596" y="312" width="148" height="36" rx="18" fill="#1e293b"/>
-    <text x="670" y="336" fill="#94a3b8" text-anchor="middle">HWP · HWPX</text>
+    <rect x="596" y="312" width="268" height="36" rx="18" fill="#1e293b"/>
+    <text x="730" y="336" fill="#94a3b8" text-anchor="middle">HWP · HWPX · HML · HWP 3</text>
   </g>
 
   <text x="64" y="392" fill="#64748b" font-family="ui-monospace, Consolas, monospace" font-size="15">docagent convert letter.docx --pdf out.pdf --html out.html --capsule cap.json</text>
