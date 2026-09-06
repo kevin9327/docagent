@@ -88,3 +88,11 @@ Master `2455a82` already locksteps README / `docs/src` / `competitors.json` with
 ## Cycle 64 (2026-09-06)
 
 No engine diffs. Landing/pdf/demo verified lockstep after `2455a82`. WeasyPrint tightness still the open gap. prove vs capsule `plan_hash` split remains after a real prove run — do not fake hashes. docx/odt/mdhtml: do not invent work. Hangul still **stop deepening**.
+
+## Cycle 65 landing (2026-09-06)
+
+Master `0c4b43e` / `2455a82` already locksteps README / `docs/src` / `competitors.json` with `letter-capsule.json` (`input` `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf`, `plan` `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a`, `output` `b4b3843b18793d3fa50e43706583fc7bd388f83fef04ecabaccb2cb6cf084fc1`). First screen is harbor-mark convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) plus `mark.png`; captions already say teal under H2. No hash or caption churn. Capsule / determinism / GPU-free kept. Demo-image gap **closed**. Do **not** claim the WeasyPrint table/paragraph tightness gap is closed. No OCR. No OmniDocBench numbers. Hangul still **stop deepening**.
+
+## Cycle 66 (2026-09-06)
+
+No engine diffs. Landing/pdf/demo verified again. WeasyPrint tightness still open. prove vs capsule `plan_hash` split remains — do not fake hashes. Next hour should rewrite SCORE. docx/odt/mdhtml: do not invent work. Hangul still **stop deepening**.
