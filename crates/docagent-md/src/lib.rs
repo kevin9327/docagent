@@ -5,8 +5,8 @@
 #![forbid(unsafe_code)]
 
 use docagent_model::{
-    Block, Document, InlineObject, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section,
-    Table,
+    Block, BreakKind, Document, InlineObject, NumberFormat, NumberingRef, Paragraph, Run,
+    RunContent, Section, Table,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -57,7 +57,9 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
         }
         let nest = list_nest(trimmed);
         let content = trimmed.trim_start();
-        if let Some(rest) = content.strip_prefix("# ") {
+        if is_thematic_break(content) {
+            section.body.push(Block::Break(BreakKind::Thematic));
+        } else if let Some(rest) = content.strip_prefix("# ") {
             section.body.push(Block::Paragraph(heading(rest, 1, 1800, 200, 400)));
         } else if let Some(rest) = content.strip_prefix("## ") {
             section.body.push(Block::Paragraph(heading(rest, 2, 1400, 360, 240)));
@@ -92,6 +94,18 @@ fn ordered_item(line: &str) -> Option<(u32, &str)> {
     }
     let n: u32 = num.parse().ok()?;
     (n > 0).then_some((n, rest))
+}
+
+fn is_thematic_break(line: &str) -> bool {
+    let t = line.trim();
+    if t.len() < 3 {
+        return false;
+    }
+    let first = t.as_bytes()[0];
+    if first != b'-' && first != b'*' && first != b'_' {
+        return false;
+    }
+    t.bytes().all(|b| b == first || b == b' ') && t.bytes().filter(|b| *b == first).count() >= 3
 }
 
 fn list_nest(line: &str) -> u8 {
@@ -310,6 +324,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                     }
                     out.push('\n');
                 }
+                Block::Break(BreakKind::Thematic) => out.push_str("---\n\n"),
                 Block::Float(_) | Block::Break(_) => {}
             }
         }
@@ -543,6 +558,22 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn thematic_breaks_roundtrip() {
+        let src = b"before\n\n---\n\nafter\n";
+        let doc = read(src).unwrap();
+        assert!(
+            doc.sections[0]
+                .body
+                .iter()
+                .any(|b| matches!(b, Block::Break(BreakKind::Thematic)))
+        );
+        assert!(doc.plain_text().contains("before"));
+        assert!(doc.plain_text().contains("after"));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("---\n"), "{back}");
     }
 
     #[test]

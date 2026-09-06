@@ -371,6 +371,35 @@ mod tests {
     }
 
     #[test]
+    fn thematic_rule_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Break(docagent_model::BreakKind::Thematic));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *h == 80 && *w > 10000
+                )
+            }),
+            "thematic rule must paint a wide fill"
+        );
+        let ruled = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        plain.sections.push(Section::default());
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(ruled, plain_pdf, "thematic rule must change PDF bytes");
+        assert!(claims_pdfa(&ruled));
+    }
+
+    #[test]
     fn code_span_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();

@@ -358,6 +358,7 @@ pub enum BreakKind {
     Page,
     Column,
     Section,
+    Thematic,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

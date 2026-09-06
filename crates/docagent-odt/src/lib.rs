@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, Document, InlineObject, NumberFormat, NumberingRef, Paragraph, Run,
-    RunContent, Section, Table, TableCell, TableRow, HU_PER_POINT,
+    Alignment, Block, BreakKind, Document, InlineObject, NumberFormat, NumberingRef, Paragraph,
+    Run, RunContent, Section, Table, TableCell, TableRow, HU_PER_POINT,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -71,6 +71,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
 fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
+    reader.config_mut().expand_empty_elements = true;
     let mut buf = Vec::new();
     let mut doc = Document::new();
     let mut section = Section::default();
@@ -94,6 +95,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut para_runs: Vec<Run> = Vec::new();
     let mut para_outline: Option<u8> = None;
     let mut para_quote = false;
+    let mut para_hr = false;
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_blocks: Vec<Block> = Vec::new();
@@ -142,6 +144,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         };
                         let style_name = attr(&e, "style-name");
                         para_quote = style_name.as_deref() == Some("Quote");
+                        para_hr = style_name.as_deref() == Some("HorizontalLine");
                         let st = style_name
                             .as_ref()
                             .and_then(|k| styles.get(k).copied())
@@ -278,7 +281,11 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             },
                             a_href.take().as_deref(),
                         );
-                        if !para_runs.is_empty() {
+                        if para_hr && para_runs.is_empty() {
+                            if !in_table {
+                                section.body.push(Block::Break(BreakKind::Thematic));
+                            }
+                        } else if !para_runs.is_empty() {
                             let mut p = Paragraph::from_text("");
                             p.runs = std::mem::take(&mut para_runs);
                             p.outline_level = para_outline.take();
@@ -314,6 +321,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         run_text.clear();
                         para_outline = None;
                         para_quote = false;
+                        para_hr = false;
                     }
                     "list" if !in_table => {
                         list_stack.pop();
@@ -561,6 +569,9 @@ fn content_xml(doc: &Document) -> String {
                 match &section.body[i] {
                     Block::Paragraph(p) => body.push_str(&odt_para(p)),
                     Block::Table(table) => push_table(&mut body, table),
+                    Block::Break(BreakKind::Thematic) => {
+                        body.push_str(r#"<text:p text:style-name="HorizontalLine"/>"#);
+                    }
                     Block::Float(_) | Block::Break(_) => {}
                 }
                 i += 1;
@@ -568,7 +579,7 @@ fn content_xml(doc: &Document) -> String {
         }
     }
     format!(
-        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
+        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="HorizontalLine" style:family="paragraph"><style:paragraph-properties fo:border-bottom="0.02in solid #134e4a" fo:margin-top="0.15in" fo:margin-bottom="0.15in"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
     )
 }
 
@@ -629,6 +640,34 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_thematic_break() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("before")));
+        section.body.push(Block::Break(BreakKind::Thematic));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("after")));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains(r#"text:style-name="HorizontalLine""#), "{xml}");
+        assert!(xml.contains("fo:border-bottom"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        assert!(
+            back.sections[0]
+                .body
+                .iter()
+                .any(|b| matches!(b, Block::Break(BreakKind::Thematic))),
+            "{:?}",
+            back.sections[0].body
+        );
+        assert!(back.plain_text().contains("before"));
+        assert!(back.plain_text().contains("after"));
     }
 
     #[test]

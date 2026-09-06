@@ -16,6 +16,8 @@ The shipment left Busan on 4 September and is booked on the 11 September rail wi
 | Plan | layout i32 @ 1/7200 in | plan SHA-256 |
 | Output | PDF/A · HTML · ODT | output SHA-256 |
 
+---
+
 Please confirm before 09:00 local:
 
 - Receiving dock is clear

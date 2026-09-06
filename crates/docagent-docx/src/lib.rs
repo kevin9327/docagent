@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, Diagnostic, DiagnosticCode, Document, InlineObject, NumberFormat,
+    Alignment, Block, BreakKind, Diagnostic, DiagnosticCode, Document, InlineObject, NumberFormat,
     NumberingRef, Paragraph, Run, RunContent, Section, Severity, Table, TableCell, TableRow,
     DEFAULT_FONT_SIZE_HU, hu_to_twips, twips_to_hu,
 };
@@ -179,6 +179,9 @@ fn document_xml(doc: &Document) -> String {
                 match block {
                     Block::Paragraph(p) => s.push_str(&p_xml(p, &mut link_i)),
                     Block::Table(t) => s.push_str(&tbl_xml(t, &mut link_i)),
+                    Block::Break(BreakKind::Thematic) => s.push_str(
+                        r#"<w:p><w:pPr><w:pStyle w:val="HorizontalLine"/><w:pBdr><w:bottom w:val="single" w:sz="12" w:space="1" w:color="134E4A"/></w:pBdr></w:pPr></w:p>"#,
+                    ),
                     Block::Float(_) | Block::Break(_) => s.push_str("<w:p/>"),
                 }
             }
@@ -211,7 +214,7 @@ fn document_xml(doc: &Document) -> String {
     s
 }
 
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="24" w:space="4" w:color="134E4A"/></w:pBdr><w:ind w:left="144"/></w:pPr></w:style><w:style w:type="character" w:styleId="Code"><w:name w:val="Code"/><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/><w:shd w:val="clear" w:fill="CCFBF1"/></w:rPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="24" w:space="4" w:color="134E4A"/></w:pBdr><w:ind w:left="144"/></w:pPr></w:style><w:style w:type="character" w:styleId="Code"><w:name w:val="Code"/><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/><w:shd w:val="clear" w:fill="CCFBF1"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="HorizontalLine"><w:name w:val="Horizontal Line"/><w:basedOn w:val="Normal"/><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="12" w:space="1" w:color="134E4A"/></w:pBdr></w:pPr></w:style></w:styles>"#;
 
 fn hu_to_half_points(hu: i32) -> i32 {
     (hu / 50).max(1)
@@ -377,6 +380,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut para_runs: Vec<Run> = Vec::new();
     let mut para_outline: Option<u8> = None;
     let mut para_quote = false;
+    let mut para_hr = false;
     let mut para_num_id: Option<u32> = None;
     let mut para_ilvl: u8 = 0;
     let mut decimal_seq: u32 = 1;
@@ -399,6 +403,8 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                                 para_outline = Some(level);
                             } else if v.eq_ignore_ascii_case("Quote") {
                                 para_quote = true;
+                            } else if v.eq_ignore_ascii_case("HorizontalLine") {
+                                para_hr = true;
                             }
                         }
                     }
@@ -418,6 +424,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     "rPr" if in_run => in_rpr = true,
                     "b" if in_rpr => run_bold = ooxml_on(&e),
                     "i" if in_rpr => run_italic = ooxml_on(&e),
+                    "bottom" if in_ppr => para_hr = true,
                     "strike" if in_rpr => run_strike = ooxml_on(&e),
                     "rStyle" if in_rpr => {
                         if attr(&e, "val").as_deref() == Some("Code") {
@@ -451,6 +458,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         para_runs.clear();
                         para_outline = None;
                         para_quote = false;
+                        para_hr = false;
                         para_num_id = None;
                         para_ilvl = 0;
                         run_bold = false;
@@ -552,7 +560,12 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                             },
                             hyperlink_target.as_deref(),
                         );
-                        if let Some(p) = take_para(
+                        if para_hr && para_runs.is_empty() {
+                            para_hr = false;
+                            if !in_tbl {
+                                body.push(Block::Break(BreakKind::Thematic));
+                            }
+                        } else if let Some(p) = take_para(
                             &mut para_runs,
                             &mut para_outline,
                             &mut para_quote,
@@ -886,6 +899,34 @@ mod tests {
         };
         assert!(p.quote);
         assert!(p.plain_text().contains("Replay is evidence"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_thematic_break() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("before")));
+        section.body.push(Block::Break(BreakKind::Thematic));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("after")));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains(r#"w:val="HorizontalLine""#), "{xml}");
+        assert!(xml.contains("w:pBdr"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        assert!(
+            back.sections[0]
+                .body
+                .iter()
+                .any(|b| matches!(b, Block::Break(BreakKind::Thematic))),
+            "{:?}",
+            back.sections[0].body
+        );
+        assert!(back.plain_text().contains("before"));
+        assert!(back.plain_text().contains("after"));
     }
 
     #[test]

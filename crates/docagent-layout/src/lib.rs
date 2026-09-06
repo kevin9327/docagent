@@ -7,8 +7,8 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, BorderStyle, Document, Hu, LineSpacing, NumberFormat, Paragraph, RunContent,
-    Section, Table, DEFAULT_FONT_SIZE_HU,
+    Alignment, Block, BorderStyle, BreakKind, Document, Hu, LineSpacing, NumberFormat, Paragraph,
+    RunContent, Section, Table, DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
 
@@ -363,6 +363,19 @@ fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
             }
         }
         Block::Table(t) => prepare_table(t, fonts, width),
+        Block::Break(BreakKind::Thematic) => Prepared::Lines {
+            lines: Vec::new(),
+            space_before: 240,
+            space_after: 240,
+            rule: None,
+            fills: vec![RectFrag {
+                x: 0,
+                y: 0,
+                width,
+                height: 80,
+                fill: [19, 78, 74, 255],
+            }],
+        },
         Block::Float(_) | Block::Break(_) => Prepared::Lines {
             lines: Vec::new(),
             space_before: 0,
@@ -1008,6 +1021,31 @@ mod tests {
                 s.fill == [204, 251, 241, 255] && s.width > 80 && s.height > 80
             }),
             "code background missing: {:?}",
+            page.strokes
+        );
+    }
+
+    #[test]
+    fn thematic_breaks_emit_rule_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("before")));
+        section.body.push(Block::Break(BreakKind::Thematic));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("after")));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        assert!(page.lines.iter().any(|l| l.text.contains("before")));
+        assert!(page.lines.iter().any(|l| l.text.contains("after")));
+        assert!(
+            page.strokes.iter().any(|s| {
+                s.fill == [19, 78, 74, 255] && s.height == 80 && s.width > 10000
+            }),
+            "thematic rule missing: {:?}",
             page.strokes
         );
     }
