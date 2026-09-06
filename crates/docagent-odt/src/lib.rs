@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, Document, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow,
-    HU_PER_POINT,
+    Alignment, Block, Document, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section,
+    Table, TableCell, TableRow, HU_PER_POINT,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -92,6 +92,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_blocks: Vec<Block> = Vec::new();
+    let mut list_stack: Vec<ListCtx> = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
@@ -151,6 +152,18 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             span_size = para_size;
                         }
                     }
+                    "list" if !in_table => {
+                        let name = attr(&e, "style-name").unwrap_or_default();
+                        let format = if name.contains("number") || name.contains("Number") {
+                            NumberFormat::Decimal
+                        } else {
+                            NumberFormat::Bullet
+                        };
+                        list_stack.push(ListCtx {
+                            format,
+                            decimal_seq: 1,
+                        });
+                    }
                     "table" => {
                         in_table = true;
                         table_rows.clear();
@@ -194,6 +207,28 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             let mut p = Paragraph::from_text("");
                             p.runs = std::mem::take(&mut para_runs);
                             p.outline_level = para_outline.take();
+                            let level = list_stack.len().saturating_sub(1) as u8;
+                            if !in_table
+                                && let Some(ctx) = list_stack.last_mut()
+                            {
+                                let start = if ctx.format == NumberFormat::Decimal {
+                                    let n = ctx.decimal_seq;
+                                    ctx.decimal_seq = ctx.decimal_seq.saturating_add(1);
+                                    Some(n)
+                                } else {
+                                    None
+                                };
+                                p.numbering = Some(NumberingRef {
+                                    definition_id: if ctx.format == NumberFormat::Decimal {
+                                        1
+                                    } else {
+                                        0
+                                    },
+                                    level,
+                                    start,
+                                    format: Some(ctx.format),
+                                });
+                            }
                             if in_table {
                                 cell_blocks.push(Block::Paragraph(p));
                             } else {
@@ -202,6 +237,9 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         }
                         run_text.clear();
                         para_outline = None;
+                    }
+                    "list" if !in_table => {
+                        list_stack.pop();
                     }
                     "table-cell" if in_table => {
                         cur_row.push(TableCell {
@@ -243,6 +281,11 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     }
     doc.sections.push(section);
     Ok(doc)
+}
+
+struct ListCtx {
+    format: NumberFormat,
+    decimal_seq: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -342,40 +385,103 @@ fn odt_runs(p: &Paragraph) -> String {
     s
 }
 
+fn list_format(block: &Block) -> Option<NumberFormat> {
+    match block {
+        Block::Paragraph(p) => p.numbering.as_ref().and_then(|n| n.format),
+        _ => None,
+    }
+}
+
+fn list_level(block: &Block) -> Option<u8> {
+    match block {
+        Block::Paragraph(p) => p.numbering.as_ref().map(|n| n.level),
+        _ => None,
+    }
+}
+
+fn emit_list(body: &mut String, blocks: &[Block], i: &mut usize) {
+    let Some(fmt) = list_format(&blocks[*i]) else {
+        return;
+    };
+    let base = list_level(&blocks[*i]).unwrap_or(0);
+    let style = match fmt {
+        NumberFormat::Decimal => "Lnumber",
+        _ => "Lbullet",
+    };
+    body.push_str(r#"<text:list text:style-name=""#);
+    body.push_str(style);
+    body.push_str(r#"">"#);
+    while *i < blocks.len() {
+        let Some(f) = list_format(&blocks[*i]) else {
+            break;
+        };
+        let lvl = list_level(&blocks[*i]).unwrap_or(0);
+        if lvl < base {
+            break;
+        }
+        if lvl > base {
+            emit_list(body, blocks, i);
+            continue;
+        }
+        if f != fmt {
+            break;
+        }
+        let Block::Paragraph(p) = &blocks[*i] else {
+            break;
+        };
+        body.push_str("<text:list-item>");
+        body.push_str(&odt_para(p));
+        *i += 1;
+        if *i < blocks.len() && list_level(&blocks[*i]).is_some_and(|nl| nl > base) {
+            emit_list(body, blocks, i);
+        }
+        body.push_str("</text:list-item>");
+    }
+    body.push_str("</text:list>");
+}
+
+fn push_table(body: &mut String, table: &Table) {
+    body.push_str("<table:table>");
+    for row in &table.rows {
+        body.push_str("<table:table-row>");
+        for cell in &row.cells {
+            body.push_str("<table:table-cell>");
+            let mut wrote = false;
+            for b in &cell.blocks {
+                if let Block::Paragraph(p) = b {
+                    body.push_str(&odt_para(p));
+                    wrote = true;
+                }
+            }
+            if !wrote {
+                body.push_str("<text:p/>");
+            }
+            body.push_str("</table:table-cell>");
+        }
+        body.push_str("</table:table-row>");
+    }
+    body.push_str("</table:table>");
+}
+
 fn content_xml(doc: &Document) -> String {
     let mut body = String::new();
     for section in &doc.sections {
-        for block in &section.body {
-            match block {
-                Block::Paragraph(p) => body.push_str(&odt_para(p)),
-                Block::Table(table) => {
-                    body.push_str("<table:table>");
-                    for row in &table.rows {
-                        body.push_str("<table:table-row>");
-                        for cell in &row.cells {
-                            body.push_str("<table:table-cell>");
-                            let mut wrote = false;
-                            for b in &cell.blocks {
-                                if let Block::Paragraph(p) = b {
-                                    body.push_str(&odt_para(p));
-                                    wrote = true;
-                                }
-                            }
-                            if !wrote {
-                                body.push_str("<text:p/>");
-                            }
-                            body.push_str("</table:table-cell>");
-                        }
-                        body.push_str("</table:table-row>");
-                    }
-                    body.push_str("</table:table>");
+        let mut i = 0;
+        while i < section.body.len() {
+            if list_format(&section.body[i]).is_some() {
+                emit_list(&mut body, &section.body, &mut i);
+            } else {
+                match &section.body[i] {
+                    Block::Paragraph(p) => body.push_str(&odt_para(p)),
+                    Block::Table(table) => push_table(&mut body, table),
+                    Block::Float(_) | Block::Break(_) => {}
                 }
-                Block::Float(_) | Block::Break(_) => {}
+                i += 1;
             }
         }
     }
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
     )
 }
 
@@ -456,6 +562,68 @@ mod tests {
         };
         assert_eq!(p2.outline_level, Some(2));
         assert_eq!(p2.runs[0].style.size, 1400);
+    }
+
+    #[test]
+    fn roundtrip_keeps_list_numbering() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut a = Paragraph::from_text("Receiving dock is clear");
+        a.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut b = Paragraph::from_text("Bay 4, not bay 2");
+        b.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut c = Paragraph::from_text("Hash the input");
+        c.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let mut d = Paragraph::from_text("Run Convert");
+        d.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(2),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(a));
+        section.body.push(Block::Paragraph(b));
+        section.body.push(Block::Paragraph(c));
+        section.body.push(Block::Paragraph(d));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("<text:list"), "{xml}");
+        assert!(xml.contains("Lbullet"), "{xml}");
+        assert!(xml.contains("Lnumber"), "{xml}");
+        assert!(xml.contains("<text:list-item>"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let nums: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                (Some(NumberFormat::Bullet), 0, None),
+                (Some(NumberFormat::Bullet), 1, None),
+                (Some(NumberFormat::Decimal), 0, Some(1)),
+                (Some(NumberFormat::Decimal), 0, Some(2)),
+            ]
+        );
     }
 
     #[test]

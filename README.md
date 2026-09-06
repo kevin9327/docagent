@@ -97,7 +97,7 @@ These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json)
 
 ## What you get
 
-These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [DOCX](docs/assets/letter.docx) (`Heading1` / `Heading2` / `w:numPr`) · [ODT](docs/assets/letter.odt) (`text:h` 18pt/14pt) · [Markdown](docs/assets/letter.md) (GFM `| --- |`) · [capsule JSON](docs/assets/letter-capsule.json).
+These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [DOCX](docs/assets/letter.docx) (`Heading1` / `Heading2` / `w:numPr`) · [ODT](docs/assets/letter.odt) (`text:h` / `text:list`) · [Markdown](docs/assets/letter.md) (GFM `| --- |`) · [capsule JSON](docs/assets/letter-capsule.json).
 
 ```markdown
 | **Hop** | **File** | **Proof** |
@@ -137,7 +137,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
 | **PDF/A** | Archival print. Heading rules, list markers, and table fills are `FillRect`s. Two runs, same fonts, same bytes. |
-| **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Lists as `w:numPr`. Runs keep `w:b`/`w:i` in body and table cells. |
+| **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Lists as `w:numPr` and `text:list`. Runs keep `w:b`/`w:i` in body and table cells. |
 | **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. |
 | **HTML** | Semantic HTML an agent can read back. Table cells keep `<strong>`/`<em>`. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
