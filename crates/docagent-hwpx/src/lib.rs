@@ -407,7 +407,9 @@ mod tests {
     fn shipped_read_parses_hangul_hwpx_when_present() {
         let dir = std::env::var("RHWP_DIR").unwrap_or_else(|_| r"C:\Users\swsz9\rhwp".into());
         let path = std::path::PathBuf::from(dir).join("samples").join("hwp3-sample-hwpx.hwpx");
-        let bytes = std::fs::read(&path).expect("sibling HWPX sample");
+        let Ok(bytes) = std::fs::read(&path) else {
+            return;
+        };
         let doc = read(&bytes).expect("parse HWPX");
         assert!(
             !doc.plain_text().trim().is_empty(),
