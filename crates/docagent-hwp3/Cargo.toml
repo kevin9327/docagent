@@ -3,7 +3,7 @@ name = "docagent-hwp3"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "HWP 3.x reader → IR"
+description = "HWP 3.x codec → IR"
 publish = false
 
 [dependencies]

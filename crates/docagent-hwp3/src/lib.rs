@@ -1,16 +1,18 @@
-//! HWP 3.x reader.
+//! HWP 3.x codec.
 //!
 //! Layout follows 한글문서파일구조 3.0: 30-byte signature, 128-byte document
 //! info, 1008-byte summary, optional info block, then a (possibly deflated)
-//! body of font lists, styles, and JOHAB paragraphs.
+//! body of font lists, styles, and JOHAB paragraphs. Hyperlinks are control
+//! char 10 with other-options `0x10` plus additional-info TagID 3 (617-byte
+//! entries, kchar URL).
 
 #![forbid(unsafe_code)]
 
 use std::io::{Cursor, Read};
 
 use docagent_model::{
-    Block, CharStyle, Diagnostic, Document, LayoutHint, Paragraph, Run, Section, Underline,
-    A4_HEIGHT_HU, A4_WIDTH_HU,
+    Block, CharStyle, Diagnostic, Document, InlineObject, LayoutHint, Paragraph, Run, RunContent,
+    Section, Underline, A4_HEIGHT_HU, A4_WIDTH_HU,
 };
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
@@ -23,6 +25,13 @@ const CHAR_SHAPE_LEN: usize = 31;
 const PARA_SHAPE_LEN: usize = 187;
 const STYLE_LEN: usize = 20 + CHAR_SHAPE_LEN + PARA_SHAPE_LEN;
 const LINE_INFO_LEN: usize = 14;
+const CTRL_TABLE: u16 = 10;
+/// Spec §8 table-info other-options bit: hypertext object, not a grid.
+const HYPERTEXT_OPTION: u16 = 0x10;
+/// Additional-info TagID 3 = HyperLink (스펙 §8.3).
+const HYPERLINK_INFO_ID: u32 = 3;
+const HYPERLINK_ENTRY_LEN: usize = 617;
+const HYPERLINK_URL_LEN: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -84,7 +93,9 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     let mut cur = Cursor::new(body);
     skip_font_lists(&mut cur)?;
     skip_styles(&mut cur)?;
-    let paragraphs = read_paragraphs(&mut cur, &mut diagnostics);
+    let mut paragraphs = read_paragraphs(&mut cur, &mut diagnostics);
+    let urls = read_additional_hyperlinks(&mut cur);
+    apply_hwp3_hyperlinks(&mut paragraphs, &urls);
 
     let mut section = Section::default();
     if paper_width > 0 {
@@ -230,11 +241,11 @@ fn read_paragraphs(cur: &mut Cursor<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -
                 }
             }
         }
-        let (text, nested, char_styles) =
+        let (text, nested, char_styles, hrefs) =
             read_para_chars(cur, char_count, diagnostics, &default_style, &per_char);
         if !text.trim().is_empty() {
             let mut para = Paragraph::from_text("");
-            para.runs = coalesce_styled_runs(&text, &char_styles);
+            para.runs = coalesce_styled_runs(&text, &char_styles, &hrefs);
             para.layout_hints = hints;
             out.push(Block::Paragraph(para));
         } else if !hints.is_empty() {
@@ -253,10 +264,12 @@ fn read_para_chars(
     diagnostics: &mut Vec<Diagnostic>,
     default_style: &CharStyle,
     per_char: &[CharStyle],
-) -> (String, Vec<Block>, Vec<CharStyle>) {
+) -> (String, Vec<Block>, Vec<CharStyle>, Vec<Option<usize>>) {
     let mut text = String::new();
     let mut nested = Vec::new();
     let mut styles = Vec::new();
+    let mut hrefs = Vec::new();
+    let mut link_seq = 0usize;
     let mut i = 0u32;
     while i < u32::from(char_count) {
         let ch = match read_u16(cur) {
@@ -270,9 +283,20 @@ fn read_para_chars(
         }
         if (1..32).contains(&ch) {
             match skip_control(cur, ch, diagnostics) {
-                Ok((extra_hchars, blocks)) => {
+                Ok((extra_hchars, blocks, link_display)) => {
                     i = i.saturating_add(extra_hchars);
                     nested.extend(blocks);
+                    if let Some(display) = link_display {
+                        let href = link_seq;
+                        link_seq += 1;
+                        let mut st = default_style.clone();
+                        st.underline = Underline::Single;
+                        for c in display.chars() {
+                            text.push(c);
+                            styles.push(st.clone());
+                            hrefs.push(Some(href));
+                        }
+                    }
                 }
                 Err(_) => break,
             }
@@ -286,9 +310,10 @@ fn read_para_chars(
                     .cloned()
                     .unwrap_or_else(|| default_style.clone()),
             );
+            hrefs.push(None);
         }
     }
-    (text, nested, styles)
+    (text, nested, styles, hrefs)
 }
 
 /// HWP 3.0 char shape is 31 bytes. Size is pt×25; HWPUNIT is pt×100.
@@ -313,7 +338,7 @@ fn char_shape_from_bytes(p: &[u8]) -> CharStyle {
     style
 }
 
-fn coalesce_styled_runs(text: &str, styles: &[CharStyle]) -> Vec<Run> {
+fn coalesce_styled_runs(text: &str, styles: &[CharStyle], hrefs: &[Option<usize>]) -> Vec<Run> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {
         return Vec::new();
@@ -321,68 +346,81 @@ fn coalesce_styled_runs(text: &str, styles: &[CharStyle]) -> Vec<Run> {
     let mut runs = Vec::new();
     let mut buf = String::new();
     let mut cur = styles.first().cloned().unwrap_or_default();
+    let mut cur_href = hrefs.first().copied().flatten();
     for (i, ch) in chars.iter().enumerate() {
         let st = styles.get(i).cloned().unwrap_or_else(|| cur.clone());
-        if st != cur && !buf.is_empty() {
-            let mut run = Run::text(std::mem::take(&mut buf));
-            run.style = cur;
-            runs.push(run);
+        let href = hrefs.get(i).copied().flatten();
+        if (st != cur || href != cur_href) && !buf.is_empty() {
+            runs.push(run_from_span(std::mem::take(&mut buf), cur, cur_href));
         }
         cur = st;
+        cur_href = href;
         buf.push(*ch);
     }
     if !buf.is_empty() {
-        let mut run = Run::text(buf);
-        run.style = cur;
-        runs.push(run);
+        runs.push(run_from_span(buf, cur, cur_href));
     }
     runs
 }
 
+fn run_from_span(text: String, mut style: CharStyle, href: Option<usize>) -> Run {
+    if href.is_some() {
+        let mut run = Run::hyperlink(text, "");
+        style.underline = Underline::Single;
+        run.style = style;
+        run
+    } else {
+        let mut run = Run::text(text);
+        run.style = style;
+        run
+    }
+}
+
 /// Consume bytes that follow a control hchar. Returns extra hchars already
-/// counted in `char_count` (not including the control code itself).
+/// counted in `char_count` (not including the control code itself), nested
+/// blocks, and hypertext display text when the object is a hyperlink.
 fn skip_control(
     cur: &mut Cursor<&[u8]>,
     ch: u16,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(u32, Vec<Block>), Error> {
+) -> Result<(u32, Vec<Block>, Option<String>), Error> {
     match ch {
         9 | 18..=21 => {
             skip_bytes(cur, 6)?;
-            Ok((3, Vec::new()))
+            Ok((3, Vec::new(), None))
         }
         1 | 2 | 3 | 4 | 12 | 27 => {
             skip_bytes(cur, 6)?;
-            Ok((3, Vec::new()))
+            Ok((3, Vec::new(), None))
         }
         22 => {
             skip_bytes(cur, 22)?;
-            Ok((11, Vec::new()))
+            Ok((11, Vec::new(), None))
         }
         23 => {
             skip_bytes(cur, 8)?;
-            Ok((4, Vec::new()))
+            Ok((4, Vec::new(), None))
         }
         24 | 25 => {
             skip_bytes(cur, 4)?;
-            Ok((2, Vec::new()))
+            Ok((2, Vec::new(), None))
         }
         26 => {
             skip_bytes(cur, 244)?;
-            Ok((122, Vec::new()))
+            Ok((122, Vec::new(), None))
         }
         28 => {
             skip_bytes(cur, 62)?;
-            Ok((31, Vec::new()))
+            Ok((31, Vec::new(), None))
         }
         30 | 31 => {
             skip_bytes(cur, 2)?;
-            Ok((1, Vec::new()))
+            Ok((1, Vec::new(), None))
         }
         5 | 6 | 7 | 8 | 10 | 11 | 14 | 15 | 16 | 17 | 29 => skip_object(cur, ch, diagnostics),
         _ => {
             skip_bytes(cur, 6)?;
-            Ok((3, Vec::new()))
+            Ok((3, Vec::new(), None))
         }
     }
 }
@@ -391,11 +429,12 @@ fn skip_object(
     cur: &mut Cursor<&[u8]>,
     ch: u16,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(u32, Vec<Block>), Error> {
+) -> Result<(u32, Vec<Block>, Option<String>), Error> {
     let header_val1 = read_u32(cur)?;
     let _close = read_u16(cur)?;
     let extra_hchars = 3u32;
     let mut nested = Vec::new();
+    let mut link_display = None;
     match ch {
         5 => {
             if header_val1 > 0 && header_val1 < 1_000_000 {
@@ -408,12 +447,32 @@ fn skip_object(
         10 => {
             let mut info = [0u8; 84];
             cur.read_exact(&mut info)?;
+            let other_options = u16::from_le_bytes(info[14..16].try_into().unwrap());
             let cell_count = u16::from_le_bytes(info[80..82].try_into().unwrap()).min(1024);
             skip_bytes(cur, usize::from(cell_count).saturating_mul(27))?;
-            for _ in 0..cell_count {
+            if other_options & HYPERTEXT_OPTION != 0 {
+                let mut display = String::new();
+                for n in 0..cell_count {
+                    let cells = read_paragraphs(cur, diagnostics);
+                    if n != 0 {
+                        continue;
+                    }
+                    for b in cells {
+                        if let Block::Paragraph(p) = b {
+                            display.push_str(&p.plain_text());
+                        }
+                    }
+                }
+                let _caption = read_paragraphs(cur, diagnostics);
+                if !display.is_empty() {
+                    link_display = Some(display);
+                }
+            } else {
+                for _ in 0..cell_count {
+                    nested.extend(read_paragraphs(cur, diagnostics));
+                }
                 nested.extend(read_paragraphs(cur, diagnostics));
             }
-            nested.extend(read_paragraphs(cur, diagnostics));
         }
         11 => {
             let mut info = [0u8; 348];
@@ -444,7 +503,7 @@ fn skip_object(
         }
         _ => {}
     }
-    Ok((extra_hchars, nested))
+    Ok((extra_hchars, nested, link_display))
 }
 
 fn read_line_hint(cur: &mut Cursor<&[u8]>) -> Result<LayoutHint, Error> {
@@ -578,6 +637,263 @@ pub fn write_classic(text: &str) -> Vec<u8> {
     out
 }
 
+pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
+    Ok(write_bytes(doc))
+}
+
+pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
+    read(&write(doc)?)
+}
+
+fn write_bytes(doc: &Document) -> Vec<u8> {
+    let mut out = SIGNATURE.to_vec();
+    let mut info = vec![0u8; DOC_INFO_LEN];
+    let page = doc.sections.first().map(|s| &s.page);
+    let (width, height, top, bottom, left, right) = match page {
+        Some(p) => (
+            p.width,
+            p.height,
+            p.margin_top,
+            p.margin_bottom,
+            p.margin_left,
+            p.margin_right,
+        ),
+        None => (A4_WIDTH_HU, A4_HEIGHT_HU, 0, 0, 0, 0),
+    };
+    info[6..8].copy_from_slice(&hu_to_hwp3_unit(height).to_le_bytes());
+    info[8..10].copy_from_slice(&hu_to_hwp3_unit(width).to_le_bytes());
+    info[10..12].copy_from_slice(&hu_to_hwp3_unit(top).to_le_bytes());
+    info[12..14].copy_from_slice(&hu_to_hwp3_unit(bottom).to_le_bytes());
+    info[14..16].copy_from_slice(&hu_to_hwp3_unit(left).to_le_bytes());
+    info[16..18].copy_from_slice(&hu_to_hwp3_unit(right).to_le_bytes());
+    out.extend_from_slice(&info);
+    out.extend_from_slice(&vec![0u8; SUMMARY_LEN]);
+    for _ in 0..7 {
+        out.extend_from_slice(&0u16.to_le_bytes());
+    }
+    out.extend_from_slice(&0u16.to_le_bytes());
+    let mut urls = Vec::new();
+    if let Some(section) = doc.sections.first() {
+        for block in &section.body {
+            if let Block::Paragraph(p) = block
+                && !p.plain_text().trim().is_empty()
+            {
+                write_paragraph(&mut out, p, &mut urls);
+            }
+        }
+    }
+    write_para_list_end(&mut out);
+    write_hyperlink_info_block(&mut out, &urls);
+    out
+}
+
+fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, urls: &mut Vec<String>) {
+    let mut payload = Vec::new();
+    let mut char_count = 0u16;
+    for run in &para.runs {
+        match &run.content {
+            RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
+                let shown = if display.is_empty() {
+                    target.as_str()
+                } else {
+                    display.as_str()
+                };
+                if shown.is_empty() {
+                    continue;
+                }
+                char_count = char_count.saturating_add(4);
+                write_hypertext_object(&mut payload, shown);
+                if !target.is_empty() {
+                    urls.push(target.clone());
+                }
+            }
+            _ => {
+                for c in run.display_text().chars() {
+                    char_count = char_count.saturating_add(1);
+                    payload.extend_from_slice(&encode_johab(c).to_le_bytes());
+                }
+            }
+        }
+    }
+    out.push(1);
+    out.extend_from_slice(&char_count.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.push(0);
+    out.push(0);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0);
+    out.extend_from_slice(&[0u8; CHAR_SHAPE_LEN]);
+    let mut line = [0u8; LINE_INFO_LEN];
+    line[4..6].copy_from_slice(&275u16.to_le_bytes());
+    line[10..12].copy_from_slice(&1000u16.to_le_bytes());
+    out.extend_from_slice(&line);
+    out.extend_from_slice(&payload);
+}
+
+fn write_hypertext_object(out: &mut Vec<u8>, display: &str) {
+    out.extend_from_slice(&CTRL_TABLE.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&CTRL_TABLE.to_le_bytes());
+    let mut info = [0u8; 84];
+    info[14..16].copy_from_slice(&HYPERTEXT_OPTION.to_le_bytes());
+    info[80..82].copy_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&info);
+    out.extend_from_slice(&[0u8; 27]);
+    write_simple_paragraph(out, display);
+    write_para_list_end(out);
+}
+
+fn write_simple_paragraph(out: &mut Vec<u8>, text: &str) {
+    let units: Vec<u16> = text.chars().map(encode_johab).collect();
+    out.push(1);
+    out.extend_from_slice(&(units.len() as u16).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.push(0);
+    out.push(0);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0);
+    out.extend_from_slice(&[0u8; CHAR_SHAPE_LEN]);
+    let mut line = [0u8; LINE_INFO_LEN];
+    line[4..6].copy_from_slice(&275u16.to_le_bytes());
+    line[10..12].copy_from_slice(&1000u16.to_le_bytes());
+    out.extend_from_slice(&line);
+    for u in units {
+        out.extend_from_slice(&u.to_le_bytes());
+    }
+    write_para_list_end(out);
+}
+
+fn write_para_list_end(out: &mut Vec<u8>) {
+    out.push(0);
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&[0u8; 40]);
+}
+
+fn write_hyperlink_info_block(out: &mut Vec<u8>, urls: &[String]) {
+    if urls.is_empty() {
+        return;
+    }
+    let data_len = urls.len().saturating_mul(HYPERLINK_ENTRY_LEN);
+    out.extend_from_slice(&HYPERLINK_INFO_ID.to_le_bytes());
+    out.extend_from_slice(&(data_len as u32).to_le_bytes());
+    for url in urls {
+        let mut entry = vec![0u8; HYPERLINK_ENTRY_LEN];
+        let encoded = encode_hwp3_kchar(url, HYPERLINK_URL_LEN);
+        entry[..HYPERLINK_URL_LEN].copy_from_slice(&encoded);
+        entry[613] = 2;
+        out.extend_from_slice(&entry);
+    }
+    out.extend_from_slice(&0u32.to_le_bytes());
+}
+
+fn encode_hwp3_kchar(s: &str, max_len: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for c in s.chars() {
+        if (c as u32) < 0x80 {
+            if out.len() + 1 >= max_len {
+                break;
+            }
+            out.push(c as u8);
+        } else if out.len() + 2 >= max_len {
+            break;
+        } else {
+            let j = encode_johab(c);
+            out.push((j >> 8) as u8);
+            out.push(j as u8);
+        }
+    }
+    out.resize(max_len, 0);
+    out
+}
+
+fn decode_hwp3_kchar(bytes: &[u8]) -> String {
+    let mut result = String::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b1 = bytes[i];
+        if b1 == 0 {
+            break;
+        }
+        if b1 < 0x80 {
+            result.push(b1 as char);
+            i += 1;
+        } else if i + 1 < bytes.len() {
+            let ch = u16::from_be_bytes([b1, bytes[i + 1]]);
+            if let Some(c) = decode_hchar(ch) {
+                result.push(c);
+            }
+            i += 2;
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+fn read_additional_hyperlinks(cur: &mut Cursor<&[u8]>) -> Vec<String> {
+    let mut urls = Vec::new();
+    loop {
+        let start = cur.position() as usize;
+        let remaining = cur.get_ref().len().saturating_sub(start);
+        if remaining < 4 {
+            break;
+        }
+        let id = match read_u32(cur) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        if id == 0 {
+            break;
+        }
+        let length = match read_u32(cur) {
+            Ok(v) => v as usize,
+            Err(_) => break,
+        };
+        if length == 0 || length > 16 * 1024 * 1024 {
+            break;
+        }
+        let pos = cur.position() as usize;
+        if pos.saturating_add(length) > cur.get_ref().len() {
+            break;
+        }
+        let data = cur.get_ref()[pos..pos + length].to_vec();
+        cur.set_position((pos + length) as u64);
+        if id == HYPERLINK_INFO_ID {
+            let n = data.len() / HYPERLINK_ENTRY_LEN;
+            for i in 0..n {
+                let off = i * HYPERLINK_ENTRY_LEN;
+                let end = off + HYPERLINK_URL_LEN;
+                if end <= data.len() {
+                    let url = decode_hwp3_kchar(&data[off..end]);
+                    if !url.is_empty() {
+                        urls.push(url);
+                    }
+                }
+            }
+        }
+    }
+    urls
+}
+
+fn apply_hwp3_hyperlinks(blocks: &mut [Block], urls: &[String]) {
+    let mut idx = 0usize;
+    for block in blocks {
+        let Block::Paragraph(p) = block else {
+            continue;
+        };
+        for run in &mut p.runs {
+            let RunContent::Inline(InlineObject::Hyperlink { target, .. }) = &mut run.content
+            else {
+                continue;
+            };
+            if idx < urls.len() {
+                *target = urls[idx].clone();
+                idx += 1;
+            }
+        }
+    }
+}
+
 fn read_u8(cur: &mut Cursor<&[u8]>) -> Result<u8, Error> {
     let mut b = [0u8; 1];
     cur.read_exact(&mut b)?;
@@ -669,6 +985,60 @@ mod tests {
             r.style.bold && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("GPU-free"))
         }));
         assert_eq!(p.runs[0].style.size, 1000);
+    }
+
+    #[test]
+    fn roundtrip_keeps_hyperlink() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        assert!(bytes.windows(4).any(|w| w == 3u32.to_le_bytes()), "TagID 3");
+        assert!(
+            bytes
+                .windows(b"https://github.com/kevin9327/docagent".len())
+                .any(|w| w == b"https://github.com/kevin9327/docagent"),
+            "kchar URL"
+        );
+        let back = read(&bytes).expect("read");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
+    }
+
+    #[test]
+    fn hyperlink_sits_between_plain_runs() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![
+            Run::text("see "),
+            Run::hyperlink("here", "https://example.com/hwp3"),
+            Run::text(" now"),
+        ];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        assert!(back.plain_text().contains("see here now"));
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://example.com/hwp3" && display == "here"
+        )));
     }
 
     #[test]
