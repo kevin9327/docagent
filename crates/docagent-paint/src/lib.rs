@@ -481,6 +481,87 @@ mod tests {
     }
 
     #[test]
+    fn paint_letter_table_cell_padding_is_weasyprint_px() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = docagent_model::Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let cell = list.ops.iter().find_map(|op| match op {
+            Op::FillRect { x, y, w, h, color }
+                if *color == [204, 251, 241, 255] && *w > 80 && *h > 80 =>
+            {
+                Some((*x, *y, *w, *h))
+            }
+            _ => None,
+        });
+        let (cx, cy, _, _) = cell.expect("header fill");
+        let hop = list.ops.iter().find_map(|op| match op {
+            Op::Text { x, y, text, .. } if text.contains("Hop") => Some((*x, *y)),
+            _ => None,
+        });
+        let (tx, ty) = hop.expect("header text");
+        assert_eq!(
+            tx,
+            cx.saturating_add(docagent_layout::CELL_PAD_X_HU),
+            "painted cell pad x {} must be WeasyPrint 1px",
+            tx.saturating_sub(cx)
+        );
+        assert!(
+            ty > cy.saturating_add(docagent_layout::CELL_PAD_Y_HU),
+            "header baseline {ty} must sit below cell pad y {}",
+            cy.saturating_add(docagent_layout::CELL_PAD_Y_HU)
+        );
+    }
+
+    #[test]
+    fn paint_letter_gap_after_mark_ignores_body_after_space() {
+        let (w, h) = mark_png_hu();
+        let (ew, eh) = docagent_layout::min_on_page_size(w, h);
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(w, h)];
+        img_p.space_after = 200;
+        section.body.push(Block::Paragraph(img_p));
+        let mut body = Paragraph::from_text("6 September 2026");
+        body.space_after = 200;
+        section.body.push(Block::Paragraph(body));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let image = list.ops.iter().find_map(|op| match op {
+            Op::Image { x, y, w, h, bytes, mime }
+                if bytes.as_slice() == MARK_PNG && mime == "image/png" =>
+            {
+                Some((*x, *y, *w, *h))
+            }
+            _ => None,
+        });
+        let (_ix, iy, iw, ih) = image.expect("mark");
+        assert_eq!((iw, ih), (ew, eh));
+        let date = list.ops.iter().find_map(|op| match op {
+            Op::Text { y, size, text, .. } if text.contains("September") => Some((*y, *size)),
+            _ => None,
+        });
+        let (by, bsize) = date.expect("date");
+        let glyph_top = by.saturating_sub(bsize);
+        assert!(
+            glyph_top >= iy.saturating_add(ih),
+            "date overlaps mark"
+        );
+        let gap = glyph_top.saturating_sub(iy.saturating_add(ih));
+        assert!(
+            gap < 200,
+            "gap after mark {gap} must not keep body space_after 200"
+        );
+    }
+
+    #[test]
     fn paint_emits_table_cell_image_ops() {
         let mut doc = Document::new();
         let mut section = Section::default();

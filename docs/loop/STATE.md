@@ -64,3 +64,11 @@ Master `5d51779` already locksteps README / `docs/src` / `competitors.json` with
 ## Cycle 58 score (2026-09-06)
 
 Hourly score rewritten. Demo-image gap **closed**. Remaining gap: WeasyPrint table/paragraph tightness (heading density already locked). prove JSON still looks stale vs capsule. docx/odt/mdhtml: do not invent work. Hangul still **stop deepening**.
+
+## Cycle 59 landing (2026-09-06)
+
+Hashes already lockstep with `letter-capsule.json` after demo re-ran `prove` (`input` `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf`, `plan` `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a`, `output` `e38bb197cbc8a9379834e71c2a4827d5d8a5cc70af67ef2a68501fceccce916a`). README / `docs/src` / `competitors.json` already match; no hash churn. First screen is harbor-mark convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) plus `mark.png`; captions already say teal under H2. Demo-image gap **closed**. Do not claim the WeasyPrint table/paragraph tightness gap is closed. Capsule / determinism / GPU-free kept. No OCR. No OmniDocBench numbers. Hangul still **stop deepening**.
+
+## Cycle 60 (2026-09-06)
+
+Committed WeasyPrint table cell padding and paragraph gap after the mark (layout/paint tests). Demo must refresh `letter.pdf` / `output-*.png` / capsule after this layout change. Do not claim the WeasyPrint gap is closed. docx/odt/mdhtml: do not invent work. Hangul still **stop deepening**.

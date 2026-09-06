@@ -30,9 +30,10 @@ pub const HEADING_LEADING_PCT: u16 = 120;
 pub const H1_SIZE_MAX_HU: Hu = 16 * HU_PER_POINT;
 /// Painted H2 cap (12pt).
 pub const H2_SIZE_MAX_HU: Hu = 12 * HU_PER_POINT;
-/// Default cell inset X when IR padding is 0 (2.4pt).
-pub const CELL_PAD_X_HU: Hu = 240;
-/// Default cell inset Y when IR padding is 0 (0.8pt).
+/// Default cell inset X when IR padding is 0. WeasyPrint UA `td,th{padding:1px}`
+/// is 1px at 96dpi = 75 HU; 80 HU is 0.8pt.
+pub const CELL_PAD_X_HU: Hu = 80;
+/// Default cell inset Y when IR padding is 0 (same 1px UA pad).
 pub const CELL_PAD_Y_HU: Hu = 80;
 /// Gap from the heading line box to its rule.
 const HEADING_RULE_GAP_HU: Hu = 40;
@@ -664,6 +665,23 @@ fn cell_pads(cell: &docagent_model::TableCell) -> (Hu, Hu, Hu, Hu) {
     )
 }
 
+fn paragraph_is_image_only(p: &Paragraph) -> bool {
+    let mut saw_image = false;
+    for run in &p.runs {
+        match &run.content {
+            RunContent::Inline(InlineObject::Image(img)) if img.width > 0 && img.height > 0 => {
+                saw_image = true;
+            }
+            _ => {
+                if run.display_text().chars().any(|c| !c.is_whitespace()) {
+                    return false;
+                }
+            }
+        }
+    }
+    saw_image
+}
+
 fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
     match block {
         Block::Paragraph(p) => {
@@ -671,7 +689,13 @@ fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
             Prepared::Lines {
                 lines,
                 space_before: p.space_before.max(0),
-                space_after: p.space_after.max(0),
+                // Image-only blocks match WeasyPrint `img{margin:0}`; IR
+                // `space_after` is the body-copy gap and must not sit under the mark.
+                space_after: if paragraph_is_image_only(p) {
+                    0
+                } else {
+                    p.space_after.max(0)
+                },
                 rule: heading_rule(p.outline_level),
                 fills,
             }
@@ -979,11 +1003,14 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
         for f in &mut row {
             f.x += shift;
         }
-        let mut row_h = lh;
+        let mut row_h = if paragraph_is_image_only(p) { 0 } else { lh };
         for f in &row {
             if let Some(img) = &f.image {
                 row_h = row_h.max(img.height);
             }
+        }
+        if row_h <= 0 {
+            row_h = lh;
         }
         if let Some(last) = row.last_mut() {
             last.height = row_h;
@@ -2401,6 +2428,96 @@ mod tests {
             page.rects[0].x
         );
         assert!(input.y > hop.y, "body row must follow header");
+    }
+
+    #[test]
+    fn letter_table_cell_padding_is_weasyprint_px() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let cell = page.rects.first().expect("header cell");
+        let hop = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("Hop"))
+            .expect("header text");
+        assert_eq!(
+            hop.x,
+            cell.x.saturating_add(CELL_PAD_X_HU),
+            "cell pad x {} must be WeasyPrint 1px, not extra inset",
+            hop.x.saturating_sub(cell.x)
+        );
+        assert_eq!(
+            hop.y,
+            cell.y.saturating_add(CELL_PAD_Y_HU),
+            "cell pad y {} must be WeasyPrint 1px, not extra inset",
+            hop.y.saturating_sub(cell.y)
+        );
+        let input = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("Input"))
+            .expect("body cell");
+        let body_cell = page
+            .rects
+            .iter()
+            .find(|r| r.y > cell.y && r.fill == [255, 255, 255, 255])
+            .expect("body fill");
+        assert_eq!(input.x, body_cell.x.saturating_add(CELL_PAD_X_HU));
+        assert_eq!(input.y, body_cell.y.saturating_add(CELL_PAD_Y_HU));
+    }
+
+    #[test]
+    fn letter_paragraph_gap_after_mark_ignores_body_after_space() {
+        let (w, h) = mark_png_hu();
+        let (ew, eh) = min_on_page_size(w, h);
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(w, h)];
+        img_p.space_after = 200;
+        section.body.push(Block::Paragraph(img_p));
+        let mut body = Paragraph::from_text("6 September 2026");
+        body.space_after = 200;
+        section.body.push(Block::Paragraph(body));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let img_line = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("mark");
+        let date = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("September"))
+            .expect("date");
+        let img_box = img_line.image_box().expect("image box");
+        assert_eq!(img_box, (img_line.x, img_line.y, ew, eh));
+        assert_eq!(
+            img_line.height, eh,
+            "image-only line must not keep a body leading strut"
+        );
+        assert_eq!(
+            date.y,
+            img_line.y.saturating_add(eh),
+            "gap after mark {} must not keep body space_after 200",
+            date.y.saturating_sub(img_line.y.saturating_add(eh))
+        );
+        let date_box = (date.x, date.y, date.width.max(1), date.height.max(1));
+        assert!(
+            !boxes_overlap(img_box, date_box),
+            "mark {img_box:?} overlaps date {date_box:?}"
+        );
     }
 
     #[test]
