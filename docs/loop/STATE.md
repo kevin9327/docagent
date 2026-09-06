@@ -56,3 +56,11 @@ First screen uses the harbor-mark convert shots (`output-trio.png`, `output-pdf.
 ## Cycle 56 (2026-09-06)
 
 Committed denser-page `letter.pdf` / `output-*.png` plus README hash lockstep (`output_hash` `e38bb197…`). Next gap still PDF page density vs WeasyPrint/MinerU — no invented numbers. docx/odt/mdhtml: do not invent work. Hangul still **stop deepening**.
+
+## Cycle 57 landing (2026-09-06)
+
+Master `5d51779` already locksteps README / `docs/src` / `competitors.json` with `letter-capsule.json` (`output_hash` `e38bb197cbc8a9379834e71c2a4827d5d8a5cc70af67ef2a68501fceccce916a`). First screen is harbor-mark convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) plus `mark.png`; captions already say teal under H2; concept-art JPGs stay unused. No README churn. Capsule / determinism / GPU-free kept. Demo-image gap **closed**. No OCR. No OmniDocBench numbers. Hangul still **stop deepening**.
+
+## Cycle 58 score (2026-09-06)
+
+Hourly score rewritten. Demo-image gap **closed**. Remaining gap: WeasyPrint table/paragraph tightness (heading density already locked). prove JSON still looks stale vs capsule. docx/odt/mdhtml: do not invent work. Hangul still **stop deepening**.
