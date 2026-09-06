@@ -9,7 +9,7 @@ use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
     Alignment, Block, Diagnostic, DiagnosticCode, Document, Paragraph, Run, RunContent, Section,
-    Severity, Table, TableCell, TableRow, hu_to_twips, twips_to_hu,
+    Severity, Table, TableCell, TableRow, DEFAULT_FONT_SIZE_HU, hu_to_twips, twips_to_hu,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -61,7 +61,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         zip.start_file("[Content_Types].xml", deflated)?;
         zip.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#,
         )?;
         zip.start_file("_rels/.rels", deflated)?;
         zip.write_all(
@@ -69,8 +69,10 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         )?;
         zip.start_file("word/_rels/document.xml.rels", deflated)?;
         zip.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#,
+            br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#,
         )?;
+        zip.start_file("word/styles.xml", deflated)?;
+        zip.write_all(STYLES_XML.as_bytes())?;
         zip.start_file("word/document.xml", deflated)?;
         zip.write_all(document_xml(doc).as_bytes())?;
         zip.finish()?;
@@ -127,8 +129,26 @@ fn document_xml(doc: &Document) -> String {
     s
 }
 
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style></w:styles>"#;
+
+fn hu_to_half_points(hu: i32) -> i32 {
+    (hu / 50).max(1)
+}
+
+fn half_points_to_hu(hp: i32) -> i32 {
+    hp.saturating_mul(50)
+}
+
 fn p_xml(p: &Paragraph) -> String {
     let mut s = String::from("<w:p>");
+    if let Some(level) = p.outline_level.filter(|l| *l > 0) {
+        let outline = level.saturating_sub(1);
+        s.push_str("<w:pPr>");
+        s.push_str(&format!(
+            r#"<w:pStyle w:val="Heading{level}"/><w:outlineLvl w:val="{outline}"/>"#
+        ));
+        s.push_str("</w:pPr>");
+    }
     let mut wrote = false;
     for run in &p.runs {
         let RunContent::Text(t) = &run.content else {
@@ -138,13 +158,18 @@ fn p_xml(p: &Paragraph) -> String {
             continue;
         }
         s.push_str("<w:r>");
-        if run.style.bold || run.style.italic {
+        let sz = hu_to_half_points(run.style.size);
+        let default_sz = hu_to_half_points(DEFAULT_FONT_SIZE_HU);
+        if run.style.bold || run.style.italic || sz != default_sz {
             s.push_str("<w:rPr>");
             if run.style.bold {
                 s.push_str("<w:b/>");
             }
             if run.style.italic {
                 s.push_str("<w:i/>");
+            }
+            if sz != default_sz {
+                s.push_str(&format!(r#"<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>"#));
             }
             s.push_str("</w:rPr>");
         }
@@ -175,27 +200,24 @@ fn tbl_xml(table: &Table) -> String {
         s.push_str("<w:tr>");
         for cell in &row.cells {
             s.push_str(&format!(
-                r#"<w:tc><w:tcPr><w:tcW w:w="{}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p></w:tc>"#,
-                hu_to_twips(cell.width),
-                xml_escape(&cell_text(cell))
+                r#"<w:tc><w:tcPr><w:tcW w:w="{}" w:type="dxa"/></w:tcPr>"#,
+                hu_to_twips(cell.width)
             ));
+            let mut wrote_p = false;
+            for b in &cell.blocks {
+                if let Block::Paragraph(p) = b {
+                    s.push_str(&p_xml(p));
+                    wrote_p = true;
+                }
+            }
+            if !wrote_p {
+                s.push_str("<w:p><w:r><w:t/></w:r></w:p>");
+            }
+            s.push_str("</w:tc>");
         }
         s.push_str("</w:tr>");
     }
     s.push_str("</w:tbl>");
-    s
-}
-
-fn cell_text(cell: &TableCell) -> String {
-    let mut s = String::new();
-    for b in &cell.blocks {
-        if let Block::Paragraph(p) = b {
-            if !s.is_empty() {
-                s.push('\n');
-            }
-            s.push_str(&p.plain_text());
-        }
-    }
     s
 }
 
@@ -212,15 +234,19 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
     let mut section = Section::default();
     let mut body = Vec::new();
     let mut in_t = false;
+    let mut in_run = false;
     let mut in_rpr = false;
+    let mut in_ppr = false;
     let mut in_tbl = false;
     let mut run_bold = false;
     let mut run_italic = false;
+    let mut run_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
+    let mut para_outline: Option<u8> = None;
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
-    let mut cell_buf = String::new();
+    let mut cell_blocks: Vec<Block> = Vec::new();
     let mut cell_width = 10000i32;
 
     loop {
@@ -229,21 +255,51 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                 let name = local_name(&e);
                 match name.as_str() {
                     "t" => in_t = true,
-                    "rPr" if !in_tbl => in_rpr = true,
+                    "pPr" => in_ppr = true,
+                    "pStyle" if in_ppr => {
+                        if let Some(v) = attr(&e, "val")
+                            && let Some(level) = heading_level_from_style(&v)
+                        {
+                            para_outline = Some(level);
+                        }
+                    }
+                    "outlineLvl" if in_ppr => {
+                        if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<u8>().ok()) {
+                            para_outline = Some(v.saturating_add(1));
+                        }
+                    }
+                    "rPr" if in_run => in_rpr = true,
                     "b" if in_rpr => run_bold = ooxml_on(&e),
                     "i" if in_rpr => run_italic = ooxml_on(&e),
-                    "r" if !in_tbl => {
+                    "sz" if in_rpr => {
+                        if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<i32>().ok()) {
+                            run_size = Some(half_points_to_hu(v));
+                        }
+                    }
+                    "r" => {
+                        in_run = true;
                         run_bold = false;
                         run_italic = false;
+                        run_size = None;
+                        run_text.clear();
+                    }
+                    "p" => {
+                        para_runs.clear();
+                        para_outline = None;
+                        run_bold = false;
+                        run_italic = false;
+                        run_size = None;
                         run_text.clear();
                     }
                     "tbl" => {
-                        flush_para(&mut body, &mut para_runs);
+                        if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+                            body.push(Block::Paragraph(p));
+                        }
                         in_tbl = true;
                     }
                     "tr" if in_tbl => cur_row.clear(),
                     "tc" if in_tbl => {
-                        cell_buf.clear();
+                        cell_blocks.clear();
                         cell_width = 10000;
                     }
                     "tcW" => {
@@ -282,23 +338,46 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 match name.as_str() {
                     "t" => in_t = false,
+                    "pPr" => in_ppr = false,
                     "rPr" => in_rpr = false,
-                    "r" if !in_tbl => {
-                        flush_run(&mut para_runs, &mut run_text, run_bold, run_italic);
+                    "r" => {
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            run_bold,
+                            run_italic,
+                            run_size,
+                        );
+                        in_run = false;
                         run_bold = false;
                         run_italic = false;
+                        run_size = None;
                     }
-                    "p" if !in_tbl => {
-                        flush_run(&mut para_runs, &mut run_text, run_bold, run_italic);
-                        flush_para(&mut body, &mut para_runs);
+                    "p" => {
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            run_bold,
+                            run_italic,
+                            run_size,
+                        );
+                        if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+                            if in_tbl {
+                                cell_blocks.push(Block::Paragraph(p));
+                            } else {
+                                body.push(Block::Paragraph(p));
+                            }
+                        }
                     }
                     "tc" if in_tbl => {
+                        if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+                            cell_blocks.push(Block::Paragraph(p));
+                        }
                         cur_row.push(TableCell {
                             width: cell_width,
-                            blocks: vec![Block::Paragraph(Paragraph::from_text(cell_buf.clone()))],
+                            blocks: std::mem::take(&mut cell_blocks),
                             ..TableCell::default()
                         });
-                        cell_buf.clear();
                     }
                     "tr" if in_tbl => table_rows.push(TableRow {
                         cells: std::mem::take(&mut cur_row),
@@ -318,10 +397,8 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                 }
             }
             Ok(Event::Text(t)) => {
-                let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
-                if in_tbl {
-                    cell_buf.push_str(&decoded);
-                } else if in_t {
+                if in_t {
+                    let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
                     run_text.push_str(&decoded);
                 }
             }
@@ -331,8 +408,16 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
         }
         buf.clear();
     }
-    flush_run(&mut para_runs, &mut run_text, run_bold, run_italic);
-    flush_para(&mut body, &mut para_runs);
+    flush_run(
+        &mut para_runs,
+        &mut run_text,
+        run_bold,
+        run_italic,
+        run_size,
+    );
+    if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+        body.push(Block::Paragraph(p));
+    }
     section.body = body;
     Ok(Document {
         sections: vec![section],
@@ -340,23 +425,42 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
     })
 }
 
-fn flush_run(runs: &mut Vec<Run>, text: &mut String, bold: bool, italic: bool) {
+fn heading_level_from_style(name: &str) -> Option<u8> {
+    let compact: String = name.chars().filter(|c| !c.is_whitespace()).collect();
+    let rest = compact
+        .strip_prefix("Heading")
+        .or_else(|| compact.strip_prefix("heading"))?;
+    rest.parse::<u8>().ok().filter(|v| (1..=9).contains(v))
+}
+
+fn flush_run(
+    runs: &mut Vec<Run>,
+    text: &mut String,
+    bold: bool,
+    italic: bool,
+    size: Option<i32>,
+) {
     if text.is_empty() {
         return;
     }
     let mut run = Run::text(std::mem::take(text));
     run.style.bold = bold;
     run.style.italic = italic;
+    if let Some(sz) = size {
+        run.style.size = sz;
+    }
     runs.push(run);
 }
 
-fn flush_para(body: &mut Vec<Block>, runs: &mut Vec<Run>) {
+fn take_para(runs: &mut Vec<Run>, outline: &mut Option<u8>) -> Option<Paragraph> {
     if runs.is_empty() {
-        return;
+        *outline = None;
+        return None;
     }
     let mut p = Paragraph::from_text("");
     p.runs = std::mem::take(runs);
-    body.push(Block::Paragraph(p));
+    p.outline_level = outline.take();
+    Some(p)
 }
 
 fn ooxml_on(e: &BytesStart<'_>) -> bool {
@@ -484,6 +588,75 @@ mod tests {
             r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("GPU-free"))
         }));
         assert!(p.runs.iter().any(|r| {
+            r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_heading_outline() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h1 = Paragraph::from_text("Northwind Freight");
+        h1.outline_level = Some(1);
+        h1.runs[0].style.bold = true;
+        h1.runs[0].style.size = 1800;
+        section.body.push(Block::Paragraph(h1));
+        let mut h2 = Paragraph::from_text("Delivery confirmation");
+        h2.outline_level = Some(2);
+        h2.runs[0].style.bold = true;
+        h2.runs[0].style.size = 1400;
+        section.body.push(Block::Paragraph(h2));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains(r#"w:val="Heading1""#), "{xml}");
+        assert!(xml.contains(r#"w:val="Heading2""#), "{xml}");
+        assert!(xml.contains(r#"w:outlineLvl w:val="0""#), "{xml}");
+        assert!(xml.contains(r#"w:sz w:val="36""#), "{xml}");
+        let bytes = write(&doc).unwrap();
+        assert!(sniff(&bytes));
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("h1");
+        };
+        assert_eq!(p.outline_level, Some(1));
+        assert!(p.runs[0].style.bold);
+        assert_eq!(p.runs[0].style.size, 1800);
+        let Block::Paragraph(p2) = &back.sections[0].body[1] else {
+            panic!("h2");
+        };
+        assert_eq!(p2.outline_level, Some(2));
+        assert_eq!(p2.runs[0].style.size, 1400);
+    }
+
+    #[test]
+    fn roundtrip_keeps_cell_emphasis() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["plain".into()]]);
+        let mut p = Paragraph::from_text("");
+        let mut bold = Run::text("GPU-free");
+        bold.style.bold = true;
+        p.runs = vec![bold];
+        let mut italic = Run::text(" byte-for-byte");
+        italic.style.italic = true;
+        p.runs.push(italic);
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:b/>"), "{xml}");
+        assert!(xml.contains("<w:i/>"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        let Block::Paragraph(cell) = &t.rows[0].cells[0].blocks[0] else {
+            panic!("cell para");
+        };
+        assert!(cell.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        assert!(cell.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
     }

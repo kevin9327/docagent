@@ -84,9 +84,10 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut span_italic = false;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
+    let mut para_outline: Option<u8> = None;
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
-    let mut cell_text = String::new();
+    let mut cell_blocks: Vec<Block> = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
@@ -112,8 +113,13 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         para_runs.clear();
                         span_bold = false;
                         span_italic = false;
+                        para_outline = if name == "h" {
+                            attr(&e, "outline-level").and_then(|v| v.parse().ok())
+                        } else {
+                            None
+                        };
                     }
-                    "span" if in_p && !in_table => {
+                    "span" if in_p => {
                         flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
                         let key = attr(&e, "style-name").unwrap_or_default();
                         let (b, i) = styles.get(&key).copied().unwrap_or((false, false));
@@ -125,7 +131,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         table_rows.clear();
                     }
                     "table-row" if in_table => cur_row.clear(),
-                    "table-cell" if in_table => cell_text.clear(),
+                    "table-cell" if in_table => cell_blocks.clear(),
                     _ => {}
                 }
             }
@@ -138,27 +144,31 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             styles.insert(style_name.clone(), (style_bold, style_italic));
                         }
                     }
-                    "span" if in_p && !in_table => {
+                    "span" if in_p => {
                         flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
                         span_bold = false;
                         span_italic = false;
                     }
                     "p" | "h" => {
                         in_p = false;
-                        if !in_table {
-                            flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
-                            if !para_runs.is_empty() {
-                                let mut p = Paragraph::from_text("");
-                                p.runs = std::mem::take(&mut para_runs);
+                        flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
+                        if !para_runs.is_empty() {
+                            let mut p = Paragraph::from_text("");
+                            p.runs = std::mem::take(&mut para_runs);
+                            p.outline_level = para_outline.take();
+                            if in_table {
+                                cell_blocks.push(Block::Paragraph(p));
+                            } else {
                                 section.body.push(Block::Paragraph(p));
                             }
                         }
                         run_text.clear();
+                        para_outline = None;
                     }
                     "table-cell" if in_table => {
                         cur_row.push(TableCell {
                             width: 10000,
-                            blocks: vec![Block::Paragraph(Paragraph::from_text(cell_text.clone()))],
+                            blocks: std::mem::take(&mut cell_blocks),
                             ..TableCell::default()
                         });
                     }
@@ -182,10 +192,8 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                 }
             }
             Ok(Event::Text(t)) => {
-                let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
-                if in_table {
-                    cell_text.push_str(&decoded);
-                } else if in_p {
+                if in_p {
+                    let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
                     run_text.push_str(&decoded);
                 }
             }
@@ -214,6 +222,16 @@ fn attr(e: &BytesStart<'_>, key: &str) -> Option<String> {
         .filter_map(|a| a.ok())
         .find(|a| a.key.local_name().as_ref() == key.as_bytes())
         .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+}
+
+fn odt_para(p: &Paragraph) -> String {
+    let inner = odt_runs(p);
+    match p.outline_level {
+        Some(level) if level > 0 => {
+            format!(r#"<text:h text:outline-level="{level}">{inner}</text:h>"#)
+        }
+        _ => format!("<text:p>{inner}</text:p>"),
+    }
 }
 
 fn odt_runs(p: &Paragraph) -> String {
@@ -253,29 +271,24 @@ fn content_xml(doc: &Document) -> String {
     for section in &doc.sections {
         for block in &section.body {
             match block {
-                Block::Paragraph(p) => {
-                    body.push_str("<text:p>");
-                    body.push_str(&odt_runs(p));
-                    body.push_str("</text:p>");
-                }
+                Block::Paragraph(p) => body.push_str(&odt_para(p)),
                 Block::Table(table) => {
                     body.push_str("<table:table>");
                     for row in &table.rows {
                         body.push_str("<table:table-row>");
                         for cell in &row.cells {
-                            let t: String = cell
-                                .blocks
-                                .iter()
-                                .filter_map(|b| match b {
-                                    Block::Paragraph(p) => Some(p.plain_text()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            body.push_str(&format!(
-                                "<table:table-cell><text:p>{}</text:p></table:table-cell>",
-                                xml_escape(&t)
-                            ));
+                            body.push_str("<table:table-cell>");
+                            let mut wrote = false;
+                            for b in &cell.blocks {
+                                if let Block::Paragraph(p) = b {
+                                    body.push_str(&odt_para(p));
+                                    wrote = true;
+                                }
+                            }
+                            if !wrote {
+                                body.push_str("<text:p/>");
+                            }
+                            body.push_str("</table:table-cell>");
                         }
                         body.push_str("</table:table-row>");
                     }
@@ -329,6 +342,66 @@ mod tests {
             r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("GPU-free"))
         }));
         assert!(p.runs.iter().any(|r| {
+            r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_heading_outline() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h1 = Paragraph::from_text("Northwind Freight");
+        h1.outline_level = Some(1);
+        h1.runs[0].style.bold = true;
+        section.body.push(Block::Paragraph(h1));
+        let mut h2 = Paragraph::from_text("Delivery confirmation");
+        h2.outline_level = Some(2);
+        section.body.push(Block::Paragraph(h2));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains(r#"text:outline-level="1""#), "{xml}");
+        assert!(xml.contains(r#"text:outline-level="2""#), "{xml}");
+        assert!(xml.contains("<text:h"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("h1");
+        };
+        assert_eq!(p.outline_level, Some(1));
+        assert_eq!(p.plain_text(), "Northwind Freight");
+        let Block::Paragraph(p2) = &back.sections[0].body[1] else {
+            panic!("h2");
+        };
+        assert_eq!(p2.outline_level, Some(2));
+    }
+
+    #[test]
+    fn roundtrip_keeps_cell_emphasis() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["plain".into()]]);
+        let mut p = Paragraph::from_text("");
+        let mut bold = Run::text("GPU-free");
+        bold.style.bold = true;
+        let mut italic = Run::text(" byte-for-byte");
+        italic.style.italic = true;
+        p.runs = vec![bold, italic];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("Tbold"), "{xml}");
+        assert!(xml.contains("Titalic"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        let Block::Paragraph(cell) = &t.rows[0].cells[0].blocks[0] else {
+            panic!("cell para");
+        };
+        assert!(cell.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        assert!(cell.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
     }

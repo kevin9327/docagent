@@ -1,16 +1,16 @@
 # DocAgent #1 loop state
 
-Last cycle: 11 (2026-09-06) — DOCX/ODT CharStyle
+Last cycle: 12 (2026-09-06) — DOCX/ODT headings + cell emphasis
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- DOCX write emits per-run `w:rPr` (`w:b` / `w:i`); read restores `CharStyle`.
-- ODT write emits `text:span` + automatic styles (`fo:font-weight` / `fo:font-style`); read restores them.
-- `examples/letter.md` convert keeps **GPU-free** and _byte-for-byte_ in [letter.docx](../assets/letter.docx) and [letter.odt](../assets/letter.odt).
-- README links those files next to PDF/A and HTML. Prove hashes unchanged (PDF/A + HTML only).
+- DOCX write emits `w:pStyle Heading1/2` + `w:outlineLvl` and `word/styles.xml`; read restores `outline_level` and run size.
+- Table cells keep `w:b` / `w:i` instead of flattening to plain text.
+- ODT write emits `text:h text:outline-level`; table cells keep `text:span` Tbold/Titalic; read restores both.
+- [`letter.docx`](../assets/letter.docx) and [`letter.odt`](../assets/letter.odt) from `examples/letter.md` carry Heading 1/2. PDF/A + HTML hashes unchanged.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 - input  `5f33b7f2389a3c4a4f53b638808a8e958305cc8f8a77b976d03f3d41f3d4a85f`
@@ -19,7 +19,7 @@ Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 
 ## Next
 
-1. PDF fills beyond table grids, or DOCX/ODT heading styles / table-cell emphasis.
+1. PDF fills beyond table grids (header fill already ships; next is non-table fills), or heading size in ODT text-properties.
 2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule
