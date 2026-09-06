@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use docagent_model::{
-    Alignment, Block, CharStyle, Document, Paragraph, Run, Section, Table, TableCell, TableRow,
-    Underline,
+    Alignment, Block, CharStyle, Document, InlineObject, Paragraph, Run, RunContent, Section,
+    Table, TableCell, TableRow, Underline,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -146,9 +146,22 @@ fn p_xml(p: &Paragraph, styles: &[CharStyle]) -> String {
         s.push_str(r#"<TEXT CharShape="0"></TEXT>"#);
     } else {
         for run in &p.runs {
-            let t = xml_escape(run.display_text());
             let sid = style_id(styles, &run.style);
-            s.push_str(&format!(r#"<TEXT CharShape="{sid}">{t}</TEXT>"#));
+            match &run.content {
+                RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
+                    s.push_str(&format!(
+                        r#"<FIELDBEGIN Type="Hyperlink"><PARAMETERS><STRINGPARAM Name="Command">{}</STRINGPARAM></PARAMETERS></FIELDBEGIN><TEXT CharShape="{sid}">{}</TEXT><FIELDEND/>"#,
+                        xml_escape(target),
+                        xml_escape(display)
+                    ));
+                }
+                _ => {
+                    s.push_str(&format!(
+                        r#"<TEXT CharShape="{sid}">{}</TEXT>"#,
+                        xml_escape(run.display_text())
+                    ));
+                }
+            }
         }
     }
     s.push_str("</P>");
@@ -213,6 +226,10 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
     let mut cell_buf = String::new();
     let mut cell_width = 10000i32;
     let mut have_section = false;
+    let mut pending_href: Option<String> = None;
+    let mut in_string_param = false;
+    let mut string_param_name = String::new();
+    let mut param_text = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -248,7 +265,12 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                     "SUPERSCRIPT" if in_charshape => char_style.superscript = true,
                     "SUBSCRIPT" if in_charshape => char_style.subscript = true,
                     "TEXT" | "CHAR" => {
-                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            &run_style,
+                            pending_href.as_deref(),
+                        );
                         in_text = true;
                         run_style = CharStyle::default();
                         if let Some(id) = attr_u32(&e, "CharShape")
@@ -257,9 +279,27 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                             run_style = st.clone();
                         }
                     }
+                    "FIELDBEGIN" => {
+                        let ty = attr_string(&e, "Type").unwrap_or_default();
+                        if ty.eq_ignore_ascii_case("Hyperlink") {
+                            pending_href = Some(String::new());
+                        }
+                    }
+                    "STRINGPARAM" => {
+                        in_string_param = true;
+                        string_param_name = attr_string(&e, "Name").unwrap_or_default();
+                        param_text.clear();
+                    }
+                    "FIELDEND" => pending_href = None,
                     "TABLE" => {
-                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            &run_style,
+                            pending_href.as_deref(),
+                        );
                         flush_p(&mut body, &mut para_runs);
+                        pending_href = None;
                         in_table = true;
                     }
                     "TR" if in_table => cur_row.clear(),
@@ -279,10 +319,33 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                         }
                         in_charshape = false;
                     }
-                    "TEXT" | "CHAR" => in_text = false,
+                    "TEXT" | "CHAR" => {
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            &run_style,
+                            pending_href.as_deref(),
+                        );
+                        in_text = false;
+                    }
+                    "STRINGPARAM" => {
+                        if in_string_param
+                            && string_param_name.eq_ignore_ascii_case("Command")
+                            && pending_href.is_some()
+                        {
+                            pending_href = Some(std::mem::take(&mut param_text));
+                        }
+                        in_string_param = false;
+                    }
                     "P" if !in_table => {
-                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            &run_style,
+                            pending_href.as_deref(),
+                        );
                         flush_p(&mut body, &mut para_runs);
+                        pending_href = None;
                     }
                     "TD" if in_table => {
                         cur_row.push(TableCell {
@@ -319,6 +382,8 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                 let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
                 if in_table {
                     cell_buf.push_str(&decoded);
+                } else if in_string_param {
+                    param_text.push_str(&decoded);
                 } else if in_text {
                     run_text.push_str(&decoded);
                 }
@@ -329,7 +394,12 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
         }
         buf.clear();
     }
-    flush_run(&mut para_runs, &mut run_text, &run_style);
+    flush_run(
+        &mut para_runs,
+        &mut run_text,
+        &run_style,
+        pending_href.as_deref(),
+    );
     flush_p(&mut body, &mut para_runs);
     if have_section || !body.is_empty() {
         section.body = body;
@@ -341,12 +411,20 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
     Ok(doc)
 }
 
-fn flush_run(runs: &mut Vec<Run>, text: &mut String, style: &CharStyle) {
+fn flush_run(runs: &mut Vec<Run>, text: &mut String, style: &CharStyle, href: Option<&str>) {
     if text.is_empty() {
         return;
     }
-    let mut run = Run::text(std::mem::take(text));
+    let display = std::mem::take(text);
+    let mut run = if let Some(url) = href.filter(|u| !u.is_empty()) {
+        Run::hyperlink(display, url)
+    } else {
+        Run::text(display)
+    };
     run.style = style.clone();
+    if href.filter(|u| !u.is_empty()).is_some() {
+        run.style.underline = Underline::Single;
+    }
     runs.push(run);
 }
 
@@ -375,6 +453,13 @@ fn attr_u32(e: &BytesStart<'_>, key: &str) -> Option<u32> {
         .ok()
         .flatten()
         .and_then(|a| String::from_utf8_lossy(&a.value).parse().ok())
+}
+
+fn attr_string(e: &BytesStart<'_>, key: &str) -> Option<String> {
+    e.try_get_attribute(key)
+        .ok()
+        .flatten()
+        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
 }
 
 pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
@@ -424,5 +509,31 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.strike && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_hyperlink() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        let xml = p_xml(&p, &[CharStyle::default()]);
+        assert!(xml.contains(r#"Type="Hyperlink""#), "{xml}");
+        assert!(xml.contains("STRINGPARAM"), "{xml}");
+        assert!(xml.contains("https://github.com/kevin9327/docagent"), "{xml}");
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
     }
 }
