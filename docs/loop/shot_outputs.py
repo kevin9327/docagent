@@ -195,7 +195,7 @@ def main() -> None:
     doc.close()
 
     html_raw = ROOT / "_html_shot.png"
-    chrome_shot(ROOT / "letter.html", html_raw, 900, 920)
+    chrome_shot(ROOT / "letter.html", html_raw, 900, 1100)
     html_img = crop_whitespace(Image.open(html_raw).convert("RGB"), (248, 250, 252), 24)
 
     cap_html = write_capsule_html()

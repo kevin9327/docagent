@@ -378,6 +378,7 @@ pub struct Paragraph {
     pub widow_control: Option<bool>,
     pub outline_level: Option<u8>,
     pub quote: bool,
+    pub code_block: bool,
     pub layout_hints: Vec<LayoutHint>,
 }
 
@@ -399,6 +400,7 @@ impl Paragraph {
             widow_control: None,
             outline_level: None,
             quote: false,
+            code_block: false,
             layout_hints: Vec::new(),
         }
     }

@@ -1,22 +1,22 @@
 # DocAgent #1 loop state
 
-Last cycle: 25 (2026-09-06) — thematic-break rule fills
+Last cycle: 26 (2026-09-06) — fenced code-block fills
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- IR adds `BreakKind::Thematic`. Layout paints a full-width teal `FillRect` (80 HU).
-- Markdown reads/writes `---`. HTML emits `<hr/>`. DOCX emits `w:pStyle HorizontalLine` plus a bottom `w:pBdr`. ODT emits `text:p` HorizontalLine with `fo:border-bottom`.
-- Fixture inserts `---` after the hop table so the GitHub PDF/HTML screenshots show a real rule.
+- IR adds `Paragraph.code_block`. Layout paints a full-width teal background `FillRect` behind the fence.
+- Markdown reads/writes ` ``` ` fences. HTML emits `<pre><code>`. DOCX emits `w:pStyle CodeBlock` plus `w:shd` fill `CCFBF1`. ODT emits `text:p` CodeBlock with `fo:background-color="#ccfbf1"`.
+- Fixture inserts `docagent prove examples/letter.md` in a fence so the GitHub PDF/HTML screenshots show a real code block.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `382159e5d15d629c4aac774fa906542a42729ba3d23f1eb682da7dfe14fdd6f1`
+- input  `7ee000d85cbb55d6049eaa11d52ff34c8ae0da6b637aa24f00056ecbf066f067`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `10b4d9226d4a6c441b7801bf7849515392ffc256e9bdc5363aa74f32d803736f`
+- output `fc43e2e04bda1dc3909c9be2f9068b0b7cbe63f0a28d64e56ed40ef715e6e382`
 
-Plan hash matches cycle 21–24 (plan is command + targets + fonts, not the paint tree). Input and output hashes changed with the fixture and rule fill.
+Plan hash matches cycle 21–25 (plan is command + targets + fonts, not the paint tree). Input and output hashes changed with the fixture and fence fill.
 
 ## Next
 

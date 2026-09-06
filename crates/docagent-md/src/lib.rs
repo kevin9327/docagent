@@ -37,8 +37,25 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     let mut doc = Document::new();
     let mut section = Section::default();
     let mut table_rows: Vec<Vec<String>> = Vec::new();
+    let mut in_fence = false;
+    let mut fence_lines: Vec<String> = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim_end();
+        if in_fence {
+            if trimmed.trim_start().starts_with("```") {
+                flush_fence(&mut section, &mut fence_lines);
+                in_fence = false;
+            } else {
+                fence_lines.push(trimmed.to_string());
+            }
+            continue;
+        }
+        if trimmed.trim_start().starts_with("```") {
+            flush_table(&mut section, &mut table_rows);
+            in_fence = true;
+            fence_lines.clear();
+            continue;
+        }
         if trimmed.starts_with('|') && trimmed.contains('|') {
             let cells: Vec<String> = trimmed
                 .trim_matches('|')
@@ -83,8 +100,21 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
         }
     }
     flush_table(&mut section, &mut table_rows);
+    if in_fence {
+        flush_fence(&mut section, &mut fence_lines);
+    }
     doc.sections.push(section);
     Ok(doc)
+}
+
+fn flush_fence(section: &mut Section, lines: &mut Vec<String>) {
+    let body = lines.join(" ");
+    lines.clear();
+    let mut p = Paragraph::from_text(body);
+    p.code_block = true;
+    p.space_before = 80;
+    p.space_after = 200;
+    section.body.push(Block::Paragraph(p));
 }
 
 fn ordered_item(line: &str) -> Option<(u32, &str)> {
@@ -284,6 +314,11 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                             out.push_str(&format!("{pad}- {}\n", write_runs(p)));
                         }
                         _ if p.quote => out.push_str(&format!("> {}\n\n", write_runs(p))),
+                        _ if p.code_block => {
+                            out.push_str("```\n");
+                            out.push_str(&p.plain_text());
+                            out.push_str("\n```\n\n");
+                        }
                         _ => out.push_str(&format!("{}\n\n", write_runs(p))),
                     }
                     if listed {
@@ -558,6 +593,23 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn code_blocks_roundtrip() {
+        let src = b"before\n\n```\ndocagent prove examples/letter.md\n```\n\nafter\n";
+        let doc = read(src).unwrap();
+        let block = doc.sections[0]
+            .body
+            .iter()
+            .find(|b| matches!(b, Block::Paragraph(p) if p.code_block));
+        let Some(Block::Paragraph(p)) = block else {
+            panic!("code block");
+        };
+        assert!(p.plain_text().contains("docagent prove"));
+        assert!(!p.plain_text().contains("```"));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("```\ndocagent prove examples/letter.md\n```"), "{back}");
     }
 
     #[test]

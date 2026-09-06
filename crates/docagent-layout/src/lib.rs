@@ -429,7 +429,13 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
         .as_deref()
         .map(|m| shape(fonts, m, size).width)
         .unwrap_or(0);
-    let quote_pad = if p.quote { 720 } else { 0 };
+    let quote_pad = if p.quote {
+        720
+    } else if p.code_block {
+        200
+    } else {
+        0
+    };
     let usable = (width - p.indent_left - quote_pad - p.indent_right - marker_w).max(1);
     let shaped = shape(fonts, &text, size);
     let ranges = break_lines(text.clone(), shaped.advances.clone(), usable);
@@ -468,6 +474,15 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 width: 80,
                 height: lh,
                 fill: [19, 78, 74, 255],
+            });
+        }
+        if p.code_block {
+            fills.push(RectFrag {
+                x: p.indent_left,
+                y: 0,
+                width,
+                height: lh,
+                fill: [204, 251, 241, 255],
             });
         }
         return (out, fills);
@@ -559,6 +574,16 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             width: 80,
             height: h,
             fill: [19, 78, 74, 255],
+        });
+    }
+    if p.code_block {
+        let h = out.iter().map(|l| l.height).sum::<i32>().max(lh);
+        fills.push(RectFrag {
+            x: p.indent_left,
+            y: 0,
+            width,
+            height: h,
+            fill: [204, 251, 241, 255],
         });
     }
     (out, fills)
@@ -1021,6 +1046,30 @@ mod tests {
                 s.fill == [204, 251, 241, 255] && s.width > 80 && s.height > 80
             }),
             "code background missing: {:?}",
+            page.strokes
+        );
+    }
+
+    #[test]
+    fn code_blocks_emit_background_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("docagent prove examples/letter.md");
+        p.code_block = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        assert!(
+            page.lines
+                .iter()
+                .any(|l| l.text.contains("docagent prove"))
+        );
+        assert!(
+            page.strokes.iter().any(|s| {
+                s.fill == [204, 251, 241, 255] && s.width > 10000 && s.height > 80
+            }),
+            "code block fill missing: {:?}",
             page.strokes
         );
     }

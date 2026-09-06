@@ -10,6 +10,10 @@ The shipment left Busan on 4 September and is booked on the 11 September rail wi
 
 > Replay is evidence. Same fonts, same bytes.
 
+```
+docagent prove examples/letter.md
+```
+
 | **Hop** | **File** | **Proof** |
 | --- | --- | --- |
 | Input | letter.md | input SHA-256 |
