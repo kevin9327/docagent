@@ -170,22 +170,31 @@ fn parse_runs(text: &str) -> Vec<Run> {
     let mut italic = false;
     let mut strike = false;
     let mut code = false;
+    let mut mark = false;
     let mut i = 0;
-    let flush =
-        |runs: &mut Vec<Run>, buf: &mut String, bold: bool, italic: bool, strike: bool, code: bool| {
-            if buf.is_empty() {
-                return;
-            }
-            let mut run = Run::text(std::mem::take(buf));
-            run.style.bold = bold;
-            run.style.italic = italic;
-            run.style.strike = strike;
-            run.style.code = code;
-            runs.push(run);
-        };
+    let flush = |runs: &mut Vec<Run>,
+                 buf: &mut String,
+                 bold: bool,
+                 italic: bool,
+                 strike: bool,
+                 code: bool,
+                 mark: bool| {
+        if buf.is_empty() {
+            return;
+        }
+        let mut run = Run::text(std::mem::take(buf));
+        run.style.bold = bold;
+        run.style.italic = italic;
+        run.style.strike = strike;
+        run.style.code = code;
+        if mark {
+            run.style.highlight = Some(docagent_model::Color::MARK);
+        }
+        runs.push(run);
+    };
     while i < chars.len() {
         if chars[i] == '`' {
-            flush(&mut runs, &mut buf, bold, italic, strike, code);
+            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
             code = !code;
             i += 1;
             continue;
@@ -193,25 +202,31 @@ fn parse_runs(text: &str) -> Vec<Run> {
         if !code && chars[i] == '['
             && let Some((display, target, next)) = parse_md_link(&chars, i)
         {
-            flush(&mut runs, &mut buf, bold, italic, strike, code);
+            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
             runs.push(Run::hyperlink(display, target));
             i = next;
             continue;
         }
+        if !code && chars[i] == '=' && i + 1 < chars.len() && chars[i + 1] == '=' {
+            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
+            mark = !mark;
+            i += 2;
+            continue;
+        }
         if !code && chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
-            flush(&mut runs, &mut buf, bold, italic, strike, code);
+            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
             strike = !strike;
             i += 2;
             continue;
         }
         if !code && chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
-            flush(&mut runs, &mut buf, bold, italic, strike, code);
+            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
             bold = !bold;
             i += 2;
             continue;
         }
         if !code && (chars[i] == '*' || chars[i] == '_') {
-            flush(&mut runs, &mut buf, bold, italic, strike, code);
+            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
             italic = !italic;
             i += 1;
             continue;
@@ -219,7 +234,7 @@ fn parse_runs(text: &str) -> Vec<Run> {
         buf.push(chars[i]);
         i += 1;
     }
-    flush(&mut runs, &mut buf, bold, italic, strike, code);
+    flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
     runs
 }
 
@@ -458,12 +473,18 @@ fn write_runs(p: &Paragraph) -> String {
                 if run.style.strike {
                     s.push_str("~~");
                 }
+                if run.style.highlight.is_some() {
+                    s.push_str("==");
+                }
                 if run.style.code {
                     s.push('`');
                 }
                 s.push_str(t);
                 if run.style.code {
                     s.push('`');
+                }
+                if run.style.highlight.is_some() {
+                    s.push_str("==");
                 }
                 if run.style.strike {
                     s.push_str("~~");
@@ -634,6 +655,22 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn highlights_roundtrip() {
+        let src = b"one convert, ==three hashes==, GPU-free\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.highlight.is_some()
+                && matches!(&r.content, RunContent::Text(t) if t == "three hashes")
+        }));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("==three hashes=="), "{back}");
+        assert!(!back.contains("==one"), "{back}");
     }
 
     #[test]

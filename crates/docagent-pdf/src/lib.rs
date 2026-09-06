@@ -371,6 +371,41 @@ mod tests {
     }
 
     #[test]
+    fn highlight_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("hashes");
+        p.runs[0].style.highlight = Some(docagent_model::Color::MARK);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [253, 230, 138, 255] && *w > 80 && *h > 80
+                )
+            }),
+            "highlight must paint an amber fill"
+        );
+        let marked = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("hashes")));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(marked, plain_pdf, "highlight must change PDF bytes");
+        assert!(claims_pdfa(&marked));
+    }
+
+    #[test]
     fn task_box_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();

@@ -63,6 +63,13 @@ impl Color {
         b: 255,
         a: 255,
     };
+    /// Amber mark used for `==highlight==` / `<mark>`.
+    pub const MARK: Color = Color {
+        r: 253,
+        g: 230,
+        b: 138,
+        a: 255,
+    };
     pub const TRANSPARENT: Color = Color {
         r: 0,
         g: 0,

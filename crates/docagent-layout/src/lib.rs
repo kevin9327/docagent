@@ -45,6 +45,7 @@ pub struct LineFrag {
     pub underline: bool,
     pub strike: bool,
     pub code: bool,
+    pub highlight: bool,
     /// External URI for this run, if it is a hyperlink.
     pub href: Option<String>,
 }
@@ -275,6 +276,20 @@ fn push_underlined_line(page: &mut PageFrag, placed: LineFrag) {
             fill: [204, 251, 241, 255],
         });
     }
+    if placed.highlight && placed.width > 0 {
+        let h = placed.font_size.saturating_add(80).max(1);
+        page.strokes.push(RectFrag {
+            x: placed.x,
+            y: placed
+                .y
+                .saturating_add(placed.baseline)
+                .saturating_sub(placed.font_size)
+                .saturating_sub(40),
+            width: placed.width,
+            height: h,
+            fill: [253, 230, 138, 255],
+        });
+    }
     page.lines.push(placed);
 }
 
@@ -475,6 +490,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             underline: false,
             strike: false,
             code: false,
+            highlight: false,
             href: None,
         });
         if bullet {
@@ -534,6 +550,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 underline: false,
                 strike: false,
                 code: false,
+                highlight: false,
                 href: None,
             });
             x += marker_w;
@@ -559,6 +576,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 underline: span.underline,
                 strike: span.strike,
                 code: span.code,
+                highlight: span.highlight,
                 href: span.href.clone(),
             });
             x += w;
@@ -585,6 +603,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 underline: false,
                 strike: false,
                 code: false,
+                highlight: false,
                 href: None,
             });
         }
@@ -682,6 +701,7 @@ struct RunSpan {
     underline: bool,
     strike: bool,
     code: bool,
+    highlight: bool,
     href: Option<String>,
 }
 
@@ -711,6 +731,7 @@ fn run_spans(p: &Paragraph) -> Vec<RunSpan> {
             underline,
             strike: run.style.strike,
             code: run.style.code,
+            highlight: run.style.highlight.is_some(),
             href,
         });
         i += n;
@@ -1125,6 +1146,33 @@ mod tests {
                 .iter()
                 .any(|s| s.fill == [19, 78, 74, 255] && s.height == 80 && s.width > 80),
             "hyperlink underline missing: {:?}",
+            page.strokes
+        );
+    }
+
+    #[test]
+    fn highlights_emit_background_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("three ");
+        let mut mark = docagent_model::Run::text("hashes");
+        mark.style.highlight = Some(docagent_model::Color::MARK);
+        p.runs.push(mark);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let line = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("hashes"))
+            .expect("mark run");
+        assert!(line.highlight);
+        assert!(
+            page.strokes.iter().any(|s| {
+                s.fill == [253, 230, 138, 255] && s.width > 80 && s.height > 80
+            }),
+            "highlight fill missing: {:?}",
             page.strokes
         );
     }
