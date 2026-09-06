@@ -89,9 +89,9 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 
 | Hash | SHA-256 (both runs) |
 | --- | --- |
-| input | `a328a883d9d711e046d86839b69b19684c3187f7916d2082f7318671a0791988` |
+| input | `5f33b7f2389a3c4a4f53b638808a8e958305cc8f8a77b976d03f3d41f3d4a85f` |
 | plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
-| output | `ec44ccc0879c16189ab9d9d3d335439a3f082a044126fb83473e8ed33a42e088` |
+| output | `910fabe0392779c89fdc1e0920e8d0a36f659cf89dd349364bca05e2d21299b8` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this. We do not ship OmniDocBench numbers.
 
@@ -107,7 +107,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
 </p>
-<p align="center"><sub>HTML from the same IR. Headings, tables, nested bullets, and numbered lists an agent can read back.</sub></p>
+<p align="center"><sub>HTML from the same IR. Headings, tables, nested lists, <strong>bold</strong> and <em>italic</em>.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">

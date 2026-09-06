@@ -2,11 +2,11 @@
 
 #![forbid(unsafe_code)]
 
-use docagent_model::{Block, Document, Paragraph, Table};
+use docagent_model::{Block, Document, Paragraph, RunContent, Table};
 
 pub fn to_html(doc: &Document) -> String {
     let mut s = String::from(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a}p{margin:0 0 .7rem}ul,ol{margin:0 0 1rem;padding-left:1.25rem}ul ul,ol ul,ul ol,ol ol{margin:.25rem 0}li{margin:0 0 .35rem}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#f0fdfa;color:#134e4a}</style></head><body>"#,
+        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a}p{margin:0 0 .7rem}strong{font-weight:700}em{font-style:italic}ul,ol{margin:0 0 1rem;padding-left:1.25rem}ul ul,ol ul,ul ol,ol ol{margin:.25rem 0}li{margin:0 0 .35rem}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#f0fdfa;color:#134e4a}</style></head><body>"#,
     );
     for (i, section) in doc.sections.iter().enumerate() {
         s.push_str(&format!(r#"<article data-section="{i}">"#));
@@ -82,7 +82,7 @@ fn emit_list(s: &mut String, blocks: &[Block], i: &mut usize) {
             break;
         };
         s.push_str("<li>");
-        s.push_str(&escape(&p.plain_text()));
+        push_runs(s, p);
         *i += 1;
         if *i < blocks.len() && list_level(&blocks[*i]).is_some_and(|nl| nl > base) {
             emit_list(s, blocks, i);
@@ -127,10 +127,35 @@ fn push_para(s: &mut String, p: &Paragraph) {
     s.push_str("<");
     s.push_str(tag);
     s.push_str(">");
-    s.push_str(&escape(&p.plain_text()));
+    push_runs(s, p);
     s.push_str("</");
     s.push_str(tag);
     s.push_str(">");
+}
+
+fn push_runs(s: &mut String, p: &Paragraph) {
+    for run in &p.runs {
+        let RunContent::Text(t) = &run.content else {
+            continue;
+        };
+        if t.is_empty() {
+            continue;
+        }
+        let escaped = escape(t);
+        if run.style.bold {
+            s.push_str("<strong>");
+        }
+        if run.style.italic {
+            s.push_str("<em>");
+        }
+        s.push_str(&escaped);
+        if run.style.italic {
+            s.push_str("</em>");
+        }
+        if run.style.bold {
+            s.push_str("</strong>");
+        }
+    }
 }
 
 fn push_table(s: &mut String, t: &Table) {
@@ -198,8 +223,8 @@ mod tests {
         section.body.push(Block::Paragraph(h2));
         doc.sections.push(section);
         let html = to_html(&doc);
-        assert!(html.contains("<h1>Title</h1>"));
-        assert!(html.contains("<h2>Section</h2>"));
+        assert!(html.contains("<h1>") && html.contains("Title") && html.contains("</h1>"));
+        assert!(html.contains("<h2>") && html.contains("Section") && html.contains("</h2>"));
     }
 
     #[test]
@@ -281,5 +306,21 @@ mod tests {
         doc.sections.push(section);
         let html = to_html(&doc);
         assert!(html.contains("<ul><li>dock<ul><li>bay 4</li></ul></li></ul>"), "{html}");
+    }
+
+    #[test]
+    fn emphasis_emits_strong_and_em() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("two");
+        p.runs[0].style.bold = true;
+        let mut q = Paragraph::from_text("four");
+        q.runs[0].style.italic = true;
+        section.body.push(Block::Paragraph(p));
+        section.body.push(Block::Paragraph(q));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<strong>two</strong>"), "{html}");
+        assert!(html.contains("<em>four</em>"), "{html}");
     }
 }

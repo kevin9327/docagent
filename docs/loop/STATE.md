@@ -1,25 +1,24 @@
 # DocAgent #1 loop state
 
-Last cycle: 7 (2026-09-06) — nested lists on the sample letter
+Last cycle: 8 (2026-09-06) — markdown/HTML inline emphasis
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- Markdown nested lists (`  -` / `   -`) set `NumberingRef.level` and hanging indent.
-- HTML emits nested `<ul>`/`<ol>` inside the parent `<li>`.
-- Layout now places lines at `origin_x + line.x` so list indent is not discarded.
-- Sample letter shows a nested dock note and nested PDF/A·HTML under Convert. Screenshots and prove hashes refreshed.
+- Markdown `**bold**`, `*italic*`, `_italic_` become IR `CharStyle` runs (asterisks are not left in the text).
+- HTML emits `<strong>` / `<em>`. Sample letter uses **GPU-free** and _byte-for-byte_.
+- PDF still uses the single Regular face; emphasis is in the IR and HTML screenshot. Screenshots and prove hashes refreshed.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `a328a883d9d711e046d86839b69b19684c3187f7916d2082f7318671a0791988`
+- input  `5f33b7f2389a3c4a4f53b638808a8e958305cc8f8a77b976d03f3d41f3d4a85f`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `ec44ccc0879c16189ab9d9d3d335439a3f082a044126fb83473e8ed33a42e088`
+- output `910fabe0392779c89fdc1e0920e8d0a36f659cf89dd349364bca05e2d21299b8`
 
 ## Next
 
-1. Inline emphasis (`**bold**` / `_italic_`) in markdown → HTML `<strong>`/`<em>` (PDF needs a bold face).
+1. PDF emphasis: bundle a bold face or synthetic bold on `CharStyle.bold` spans.
 2. Or PDF drawing of non-table fills beyond the grid.
 3. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 

@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 
 use docagent_model::{
-    Block, Document, NumberFormat, NumberingRef, Paragraph, Section, Table,
+    Block, Document, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section, Table,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -68,7 +68,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
         } else if let Some((n, rest)) = ordered_item(content) {
             section.body.push(Block::Paragraph(decimal_item(rest, n, nest)));
         } else {
-            let mut p = Paragraph::from_text(trimmed);
+            let mut p = paragraph_from_inlines(trimmed);
             p.space_after = 200;
             section.body.push(Block::Paragraph(p));
         }
@@ -96,8 +96,53 @@ fn list_indent(nest: u8) -> i32 {
     1440i32.saturating_mul(i32::from(nest) + 1)
 }
 
+fn paragraph_from_inlines(text: &str) -> Paragraph {
+    let mut p = Paragraph::from_text("");
+    p.runs = parse_runs(text);
+    if p.runs.is_empty() {
+        p.runs.push(Run::text(""));
+    }
+    p
+}
+
+fn parse_runs(text: &str) -> Vec<Run> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut runs = Vec::new();
+    let mut buf = String::new();
+    let mut bold = false;
+    let mut italic = false;
+    let mut i = 0;
+    let flush = |runs: &mut Vec<Run>, buf: &mut String, bold: bool, italic: bool| {
+        if buf.is_empty() {
+            return;
+        }
+        let mut run = Run::text(std::mem::take(buf));
+        run.style.bold = bold;
+        run.style.italic = italic;
+        runs.push(run);
+    };
+    while i < chars.len() {
+        if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            flush(&mut runs, &mut buf, bold, italic);
+            bold = !bold;
+            i += 2;
+            continue;
+        }
+        if chars[i] == '*' || chars[i] == '_' {
+            flush(&mut runs, &mut buf, bold, italic);
+            italic = !italic;
+            i += 1;
+            continue;
+        }
+        buf.push(chars[i]);
+        i += 1;
+    }
+    flush(&mut runs, &mut buf, bold, italic);
+    runs
+}
+
 fn decimal_item(text: &str, n: u32, nest: u8) -> Paragraph {
-    let mut p = Paragraph::from_text(text);
+    let mut p = paragraph_from_inlines(text);
     p.space_after = 80;
     p.indent_left = list_indent(nest);
     p.numbering = Some(NumberingRef {
@@ -110,7 +155,7 @@ fn decimal_item(text: &str, n: u32, nest: u8) -> Paragraph {
 }
 
 fn bullet_item(text: &str, nest: u8) -> Paragraph {
-    let mut p = Paragraph::from_text(text);
+    let mut p = paragraph_from_inlines(text);
     p.space_after = 80;
     p.indent_left = list_indent(nest);
     p.numbering = Some(NumberingRef {
@@ -123,11 +168,11 @@ fn bullet_item(text: &str, nest: u8) -> Paragraph {
 }
 
 fn heading(text: &str, level: u8, size_hu: i32, before: i32, after: i32) -> Paragraph {
-    let mut p = Paragraph::from_text(text);
+    let mut p = paragraph_from_inlines(text);
     p.outline_level = Some(level);
     p.space_before = before;
     p.space_after = after;
-    if let Some(run) = p.runs.first_mut() {
+    for run in &mut p.runs {
         run.style.size = size_hu;
         run.style.bold = true;
     }
@@ -159,10 +204,9 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         for block in &section.body {
             match block {
                 Block::Paragraph(p) => {
-                    let t = p.plain_text();
                     match p.outline_level {
-                        Some(1) => out.push_str(&format!("# {t}\n\n")),
-                        Some(2) => out.push_str(&format!("## {t}\n\n")),
+                        Some(1) => out.push_str(&format!("# {}\n\n", p.plain_text())),
+                        Some(2) => out.push_str(&format!("## {}\n\n", p.plain_text())),
                         _ if p.numbering.as_ref().is_some_and(|n| {
                             n.format == Some(NumberFormat::Decimal)
                         }) =>
@@ -170,15 +214,15 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                             let nref = p.numbering.as_ref().unwrap();
                             let i = nref.start.unwrap_or(1);
                             let pad = "  ".repeat(nref.level as usize);
-                            out.push_str(&format!("{pad}{i}. {t}\n"));
+                            out.push_str(&format!("{pad}{i}. {}\n", write_runs(p)));
                         }
                         _ if p.numbering.is_some() => {
                             let pad = "  ".repeat(
                                 p.numbering.as_ref().map(|n| n.level as usize).unwrap_or(0),
                             );
-                            out.push_str(&format!("{pad}- {t}\n"));
+                            out.push_str(&format!("{pad}- {}\n", write_runs(p)));
                         }
-                        _ => out.push_str(&format!("{t}\n\n")),
+                        _ => out.push_str(&format!("{}\n\n", write_runs(p))),
                     }
                 }
                 Block::Table(table) => {
@@ -209,6 +253,34 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         }
     }
     Ok(out.into_bytes())
+}
+
+fn write_runs(p: &Paragraph) -> String {
+    let mut s = String::new();
+    for run in &p.runs {
+        let RunContent::Text(t) = &run.content else {
+            continue;
+        };
+        if t.is_empty() {
+            continue;
+        }
+        if run.style.bold && run.style.italic {
+            s.push_str("***");
+            s.push_str(t);
+            s.push_str("***");
+        } else if run.style.bold {
+            s.push_str("**");
+            s.push_str(t);
+            s.push_str("**");
+        } else if run.style.italic {
+            s.push('_');
+            s.push_str(t);
+            s.push('_');
+        } else {
+            s.push_str(t);
+        }
+    }
+    s
 }
 
 #[cfg(test)]
@@ -286,6 +358,36 @@ mod tests {
         let back = write(&doc).unwrap();
         let text = String::from_utf8(back).unwrap();
         assert!(text.contains("  - bay 4"), "{text}");
+    }
+
+    #[test]
+    fn emphasis_splits_runs_and_roundtrips() {
+        let src = b"one **two** three _four_\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        let flags: Vec<_> = p
+            .runs
+            .iter()
+            .map(|r| (r.style.bold, r.style.italic, match &r.content {
+                RunContent::Text(t) => t.as_str(),
+                _ => "",
+            }))
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                (false, false, "one "),
+                (true, false, "two"),
+                (false, false, " three "),
+                (false, true, "four"),
+            ]
+        );
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("**two**"), "{back}");
+        assert!(back.contains("_four_"), "{back}");
+        assert!(!back.contains("**one"), "{back}");
     }
 
     #[test]
