@@ -99,7 +99,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                         y = origin_y + space_before;
                     }
                     let mut placed = line;
-                    placed.x = origin_x;
+                    placed.x = origin_x.saturating_add(placed.x);
                     placed.y = y;
                     y += placed.height;
                     current.lines.push(placed);
@@ -620,5 +620,34 @@ mod tests {
         let text = &tree.pages[0].lines[0].text;
         assert!(text.starts_with("3. "), "{text}");
         assert!(text.contains("Hash the input"), "{text}");
+    }
+
+    #[test]
+    fn nested_bullet_hangs_further() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut a = Paragraph::from_text("dock");
+        a.indent_left = 1440;
+        a.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut b = Paragraph::from_text("bay 4");
+        b.indent_left = 2880;
+        b.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        section.body.push(Block::Paragraph(a));
+        section.body.push(Block::Paragraph(b));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let xs: Vec<_> = tree.pages[0].lines.iter().map(|l| l.x).collect();
+        assert!(xs.len() >= 2);
+        assert!(xs[1] > xs[0], "{xs:?}");
     }
 }

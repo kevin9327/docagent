@@ -54,17 +54,19 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
         if trimmed.is_empty() {
             continue;
         }
-        if let Some(rest) = trimmed.strip_prefix("# ") {
+        let nest = list_nest(trimmed);
+        let content = trimmed.trim_start();
+        if let Some(rest) = content.strip_prefix("# ") {
             section.body.push(Block::Paragraph(heading(rest, 1, 1800, 200, 400)));
-        } else if let Some(rest) = trimmed.strip_prefix("## ") {
+        } else if let Some(rest) = content.strip_prefix("## ") {
             section.body.push(Block::Paragraph(heading(rest, 2, 1400, 360, 240)));
-        } else if let Some(rest) = trimmed
+        } else if let Some(rest) = content
             .strip_prefix("- ")
-            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| content.strip_prefix("* "))
         {
-            section.body.push(Block::Paragraph(bullet_item(rest)));
-        } else if let Some((n, rest)) = ordered_item(trimmed) {
-            section.body.push(Block::Paragraph(decimal_item(rest, n)));
+            section.body.push(Block::Paragraph(bullet_item(rest, nest)));
+        } else if let Some((n, rest)) = ordered_item(content) {
+            section.body.push(Block::Paragraph(decimal_item(rest, n, nest)));
         } else {
             let mut p = Paragraph::from_text(trimmed);
             p.space_after = 200;
@@ -85,26 +87,35 @@ fn ordered_item(line: &str) -> Option<(u32, &str)> {
     (n > 0).then_some((n, rest))
 }
 
-fn decimal_item(text: &str, n: u32) -> Paragraph {
+fn list_nest(line: &str) -> u8 {
+    let spaces = line.bytes().take_while(|b| *b == b' ').count();
+    (spaces / 2).min(3) as u8
+}
+
+fn list_indent(nest: u8) -> i32 {
+    1440i32.saturating_mul(i32::from(nest) + 1)
+}
+
+fn decimal_item(text: &str, n: u32, nest: u8) -> Paragraph {
     let mut p = Paragraph::from_text(text);
     p.space_after = 80;
-    p.indent_left = 1440;
+    p.indent_left = list_indent(nest);
     p.numbering = Some(NumberingRef {
         definition_id: 1,
-        level: 0,
+        level: nest,
         start: Some(n),
         format: Some(NumberFormat::Decimal),
     });
     p
 }
 
-fn bullet_item(text: &str) -> Paragraph {
+fn bullet_item(text: &str, nest: u8) -> Paragraph {
     let mut p = Paragraph::from_text(text);
     p.space_after = 80;
-    p.indent_left = 1440;
+    p.indent_left = list_indent(nest);
     p.numbering = Some(NumberingRef {
         definition_id: 0,
-        level: 0,
+        level: nest,
         start: None,
         format: Some(NumberFormat::Bullet),
     });
@@ -156,14 +167,17 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                             n.format == Some(NumberFormat::Decimal)
                         }) =>
                         {
-                            let i = p
-                                .numbering
-                                .as_ref()
-                                .and_then(|n| n.start)
-                                .unwrap_or(1);
-                            out.push_str(&format!("{i}. {t}\n"));
+                            let nref = p.numbering.as_ref().unwrap();
+                            let i = nref.start.unwrap_or(1);
+                            let pad = "  ".repeat(nref.level as usize);
+                            out.push_str(&format!("{pad}{i}. {t}\n"));
                         }
-                        _ if p.numbering.is_some() => out.push_str(&format!("- {t}\n")),
+                        _ if p.numbering.is_some() => {
+                            let pad = "  ".repeat(
+                                p.numbering.as_ref().map(|n| n.level as usize).unwrap_or(0),
+                            );
+                            out.push_str(&format!("{pad}- {t}\n"));
+                        }
                         _ => out.push_str(&format!("{t}\n\n")),
                     }
                 }
@@ -254,6 +268,24 @@ mod tests {
         let text = String::from_utf8(back).unwrap();
         assert!(text.contains("1. Hash the input"));
         assert!(text.contains("2. Run Convert"));
+    }
+
+    #[test]
+    fn nested_bullets_keep_level() {
+        let src = b"- dock\n  - bay 4\n- hashes\n";
+        let doc = read(src).unwrap();
+        let levels: Vec<_> = doc.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| n.level),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(levels, [0, 1, 0]);
+        let back = write(&doc).unwrap();
+        let text = String::from_utf8(back).unwrap();
+        assert!(text.contains("  - bay 4"), "{text}");
     }
 
     #[test]

@@ -1,25 +1,27 @@
 # DocAgent #1 loop state
 
-Last cycle: 6 (2026-09-06) — ordered lists (`1.`) on the sample letter
+Last cycle: 7 (2026-09-06) — nested lists on the sample letter
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- Markdown `1. item` keeps `NumberFormat::Decimal` and `start` on the IR.
-- Layout prefixes `1. ` / `2. ` with hanging indent. HTML emits `<ol><li>`.
-- `examples/letter.md` now has an agent-replay numbered list. Convert screenshots and prove hashes refreshed.
+- Markdown nested lists (`  -` / `   -`) set `NumberingRef.level` and hanging indent.
+- HTML emits nested `<ul>`/`<ol>` inside the parent `<li>`.
+- Layout now places lines at `origin_x + line.x` so list indent is not discarded.
+- Sample letter shows a nested dock note and nested PDF/A·HTML under Convert. Screenshots and prove hashes refreshed.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `e28e664baf239f721fd4965f699ef959a8c7d0ef4e84412768d39342db21cd6f`
+- input  `a328a883d9d711e046d86839b69b19684c3187f7916d2082f7318671a0791988`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `2da54d85c18913bb9df41d6df7ac015f3a915969af796fc0aa81fc9ab7e90833`
+- output `ec44ccc0879c16189ab9d9d3d335439a3f082a044126fb83473e8ed33a42e088`
 
 ## Next
 
-1. Nested lists, or PDF drawing of non-table fills beyond the grid.
-2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
+1. Inline emphasis (`**bold**` / `_italic_`) in markdown → HTML `<strong>`/`<em>` (PDF needs a bold face).
+2. Or PDF drawing of non-table fills beyond the grid.
+3. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule
 
