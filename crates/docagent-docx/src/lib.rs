@@ -360,10 +360,10 @@ fn flush_para(body: &mut Vec<Block>, runs: &mut Vec<Run>) {
 }
 
 fn ooxml_on(e: &BytesStart<'_>) -> bool {
-    match attr(e, "val").as_deref() {
-        Some("0") | Some("false") | Some("off") => false,
-        _ => true,
-    }
+    !matches!(
+        attr(e, "val").as_deref(),
+        Some("0") | Some("false") | Some("off")
+    )
 }
 
 fn local_name(e: &BytesStart<'_>) -> String {

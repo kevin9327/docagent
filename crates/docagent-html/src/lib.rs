@@ -124,13 +124,13 @@ fn push_para(s: &mut String, p: &Paragraph) {
         Some(3) => "h3",
         _ => "p",
     };
-    s.push_str("<");
+    s.push('<');
     s.push_str(tag);
-    s.push_str(">");
+    s.push('>');
     push_runs(s, p);
     s.push_str("</");
     s.push_str(tag);
-    s.push_str(">");
+    s.push('>');
 }
 
 fn push_runs(s: &mut String, p: &Paragraph) {

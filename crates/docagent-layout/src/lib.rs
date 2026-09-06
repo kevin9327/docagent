@@ -293,21 +293,21 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
         let extra_indent = if li == 0 { p.indent_first } else { 0 };
         let mut x = p.indent_left + extra_indent + if li == 0 { 0 } else { marker_w };
         let mut row: Vec<LineFrag> = Vec::new();
-        if li == 0 {
-            if let Some(m) = marker.as_deref() {
-                row.push(LineFrag {
-                    x,
-                    y: 0,
-                    width: marker_w,
-                    height: 0,
-                    baseline,
-                    text: m.to_string(),
-                    font_size: size,
-                    bold: false,
-                    italic: false,
-                });
-                x += marker_w;
-            }
+        if li == 0
+            && let Some(m) = marker.as_deref()
+        {
+            row.push(LineFrag {
+                x,
+                y: 0,
+                width: marker_w,
+                height: 0,
+                baseline,
+                text: m.to_string(),
+                font_size: size,
+                bold: false,
+                italic: false,
+            });
+            x += marker_w;
         }
         for (rs, re, bold, italic) in &spans {
             let s = (*rs).max(a);
