@@ -10,6 +10,7 @@ OmniDocBench scores, no VLM accuracy claims, and no invented GPU numbers.
 
 First-screen job: **picture in, PDF/A out.** A PNG or JPEG in Markdown, HTML,
 DOCX, or ODT becomes a PDF/A XObject. We embed the file. We do not OCR it.
+The demo convert paints the teal harbor mark under the H2.
 
 ## Runtime axes
 
@@ -56,10 +57,11 @@ teaser.
 Images are **yes** (PNG and JPEG) on Markdown, HTML, PDF/A, DOCX, and ODT. They
 stay **—** on Hangul.
 
-`examples/letter.md` now includes `![Harbor mark](docs/assets/mark.png)`. Convert
-shots in `docs/assets/output-*.png` are still text-only — no Harbor mark on the
-page. The Images row above is still **yes** on the five codecs. Do not read a
-missing photo in a stale PNG as a missing engine.
+`examples/letter.md` includes `![Harbor mark](docs/assets/mark.png)`. Convert
+shots in `docs/assets/output-*.png` show the teal mark under the H2 on the
+PDF/A page and the HTML page. Capsule hashes travel with the files.
+
+![PDF/A page from examples/letter.md — teal harbor mark under the H2](../assets/output-pdf.png)
 
 | Placement | What ships |
 | --- | --- |

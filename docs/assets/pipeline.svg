@@ -28,9 +28,9 @@
     <rect x="706" y="70" width="250" height="160" rx="16" fill="#111827" stroke="#1f2937"/>
     <text x="831" y="104" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="700">OUTPUT</text>
     <text x="831" y="136" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">PDF/A</text>
-    <text x="831" y="162" text-anchor="middle" fill="#cbd5e1" font-size="15">picture as XObject</text>
-    <text x="831" y="190" text-anchor="middle" fill="#cbd5e1" font-size="15">HTML · DOCX · ODT</text>
-    <text x="831" y="214" text-anchor="middle" fill="#64748b" font-size="12">same picture, same bytes</text>
+    <text x="831" y="162" text-anchor="middle" fill="#cbd5e1" font-size="15">teal mark under H2</text>
+    <text x="831" y="190" text-anchor="middle" fill="#cbd5e1" font-size="15">picture as XObject</text>
+    <text x="831" y="214" text-anchor="middle" fill="#64748b" font-size="12">HTML · DOCX · ODT · same bytes</text>
 
     <polygon points="970,150 998,138 998,162" fill="#2dd4bf"/>
 

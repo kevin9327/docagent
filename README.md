@@ -25,7 +25,7 @@ Same fonts → same bytes. Agents call <code>Command::Convert</code>. We embed t
 </p>
 
 <p align="center">
-  <img src="docs/assets/mark.png" alt="Harbor mark — the picture that goes in" width="96">
+  <img src="docs/assets/mark.png" alt="Harbor mark — the PNG that goes in" width="96">
 </p>
 
 ```markdown
@@ -36,7 +36,18 @@ Same fonts → same bytes. Agents call <code>Command::Convert</code>. We embed t
 docagent convert examples/letter.md --pdf out.pdf --html out.html --capsule cap.json
 ```
 
-<p align="center"><sub>That line is in <code>examples/letter.md</code> now. The picture becomes a PDF/A XObject. Not a scan. Not a VLM guess. Not OmniDocBench.</sub></p>
+<p align="center"><sub>That line is in <code>examples/letter.md</code>. Convert paints the teal harbor mark under the H2 as a PDF/A XObject. Not a scan. Not a VLM guess. Not OmniDocBench.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/output-trio.png" alt="Real convert of examples/letter.md: PDF/A page with the teal harbor mark under the H2, semantic HTML with the same mark, capsule SHA-256 ×3" width="100%">
+</p>
+<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. The teal harbor mark sits under the H2 on the page.<br>
+<strong>Images row:</strong> PNG + JPEG are <strong>yes</strong> on Markdown / HTML / PDF/A / DOCX / ODT (PDF/A XObject, DOCX <code>a:blip</code>, ODT <code>draw:image</code>, HTML <code>&lt;img&gt;</code>). Hangul images are <strong>—</strong>.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/output-pdf.png" alt="PDF/A page from examples/letter.md — teal harbor mark under the H2 as a PDF/A XObject" width="100%">
+</p>
+<p align="center"><sub>PDF/A from the integer layout engine. The teal mark is under <em>Delivery confirmation — order 48291</em>. GPU-free. Same fonts → same bytes.</sub></p>
 
 ---
 
@@ -47,13 +58,6 @@ docagent convert examples/letter.md --pdf out.pdf --html out.html --capsule cap.
 <p align="center">
   <img src="docs/assets/ships.svg" alt="PNG and JPEG on Markdown, HTML, PDF/A, DOCX, and ODT become PDF/A XObjects. Hangul images are a dash. Not OCR, not VLM, not OmniDocBench." width="100%">
 </p>
-
-<p align="center">
-  <img src="docs/assets/output-trio.png" alt="Real convert of examples/letter.md: PDF/A page, semantic HTML, capsule SHA-256 ×3" width="100%">
-</p>
-<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. Not mockups.<br>
-<strong>Images row:</strong> PNG + JPEG are <strong>yes</strong> on Markdown / HTML / PDF/A / DOCX / ODT (PDF/A XObject, DOCX <code>a:blip</code>, ODT <code>draw:image</code>, HTML <code>&lt;img&gt;</code>). Hangul images are <strong>—</strong>.<br>
-<code>examples/letter.md</code> contains <code>![Harbor mark](docs/assets/mark.png)</code>. These <code>output-*.png</code> frames are still text-only — no Harbor mark on the page. A stale shot is not a missing Images row.</sub></p>
 
 ## Why this exists
 
@@ -98,7 +102,7 @@ No OmniDocBench numbers live on this page.
 **North star:** drop `examples/letter.md` (or DOCX/ODT) that contains a PNG or JPEG, and get PDF/A + HTML + Markdown + DOCX + ODT whose bytes match the next run, with three hashes in the capsule. The picture is a PDF/A XObject. Not OCR.
 
 Images: **yes** PNG + JPEG on Markdown / HTML / PDF/A / DOCX / ODT. **—** on Hangul.
-The demo letter is `![Harbor mark](docs/assets/mark.png)`. Convert shots on this page (`docs/assets/output-*.png`) are still text-only — no picture painted. A stale screenshot is not a missing Images row.
+The demo letter is `![Harbor mark](docs/assets/mark.png)`. Convert shots on this page show the teal mark under the H2.
 
 ## What ships
 
@@ -119,7 +123,7 @@ Honest codec coverage — not a wishlist. Full table: [`docs/src/capabilities.md
 | **Images (PNG, JPEG)** | `![alt](…)` | `<img>` | **XObject** | `a:blip` | `draw:image` | **—** |
 | Table header | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** |
 
-**Images are the first-class row.** PNG and JPEG round-trip on Markdown, HTML, PDF/A, DOCX, and ODT. They stay **—** on Hangul. That dash is real. The demo letter is `![Harbor mark](docs/assets/mark.png)` — picture in. PDF/A out paints it as an XObject.
+**Images are the first-class row.** PNG and JPEG round-trip on Markdown, HTML, PDF/A, DOCX, and ODT. They stay **—** on Hangul. That dash is real. The demo letter is `![Harbor mark](docs/assets/mark.png)` — picture in. PDF/A out paints it as an XObject under the H2.
 
 HTML `read` recovers data-URI `<img>`, lists, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, and `<mark>` into the same IR. `http(s):` `src` is skipped. This is not a full HTML5 engine.
 
@@ -159,13 +163,13 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 <p align="center">
   <img src="docs/assets/output-rerun.png" alt="Two converts of examples/letter.md with identical input, plan, and output SHA-256 hashes" width="100%">
 </p>
-<p align="center"><sub>Run 1 and run 2. <code>identical: true</code>. PDF bytes equal. HTML bytes equal.</sub></p>
+<p align="center"><sub>Run 1 and run 2. <code>identical: true</code>. PDF bytes equal. HTML bytes equal. GPU-free. Deterministic.</sub></p>
 
-| Hash | SHA-256 (both runs) |
+| Hash | SHA-256 |
 | --- | --- |
-| input | `927baa86fcdc5d76a72cfbcc8ee32ac3cadbcefb2505bc4bb80b335a14ddef74` |
-| plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
-| output | `86f9fb0ea23d189dddd58705f2330e44312a6b557459d332f9bf188dfe505d92` |
+| input | `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf` |
+| plan | `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a` |
+| output | `9f5df3a92ef707fade241aac183d90e21c50922bacf76d2ad13eb282a63bebfd` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this.
 
@@ -174,15 +178,9 @@ These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json)
 Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [DOCX](docs/assets/letter.docx) · [ODT](docs/assets/letter.odt) · [Markdown](docs/assets/letter.md) · [capsule JSON](docs/assets/letter-capsule.json).
 
 <p align="center">
-  <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
+  <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter, teal harbor mark under the H2" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. Marks are painted fills. PNG and JPEG are PDF/A XObjects. GPU-free. Same fonts → same bytes.<br>
-Source of truth: <code>![Harbor mark](docs/assets/mark.png)</code> in <code>examples/letter.md</code>. This PNG is still text-only — demo has not refreshed <code>output-pdf.png</code>.</sub></p>
-
-<p align="center">
-  <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
-</p>
-<p align="center"><sub>HTML from the same IR. Write emits <code>&lt;img&gt;</code> for the Harbor mark; <code>read</code> recovers data-URI images. Not HTML5. This frame is still text-only — no picture.</sub></p>
+<p align="center"><sub>HTML from the same IR. The teal mark is under the H2 as <code>&lt;img&gt;</code>. <code>read</code> recovers data-URI images. Not HTML5. GPU-free.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">

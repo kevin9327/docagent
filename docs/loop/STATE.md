@@ -32,3 +32,7 @@ First screen now sells **picture in, PDF/A out**. Hero / pipeline / ships drop w
 ## Cycle 50 landing (2026-09-06)
 
 Shallow score vs the locked ten. `examples/letter.md` has `![Harbor mark](docs/assets/mark.png)`. `output-pdf.png`, `output-html.png`, and `output-trio.png` are still text-only — no Harbor mark painted. Captions on README / intro / capabilities stay honest: GitHub-image gap **open**. Next gap is not WeasyPrint until those shots show the mark. No new IR. No OCR. Hangul still **stop deepening**.
+
+## Cycle 51 landing (2026-09-06)
+
+GitHub first screen now uses the refreshed convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) that show the teal harbor mark under the H2. Dropped every stale / no-picture caption. Capsule hashes on README match `letter-capsule.json`. Capsule / determinism / GPU-free kept. Demo-image gap **closed**. Next gap: PDF page looking as dense as WeasyPrint/MinerU — still no invented numbers. No OCR. No wrap. Hangul still **stop deepening**.

@@ -37,6 +37,6 @@
   </g>
 
   <text x="40" y="196" fill="#94a3b8" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="14">Markdown ![alt] · HTML &lt;img&gt; · PDF/A XObject · DOCX a:blip · ODT draw:image. Embed the file. Do not invent pixels.</text>
-  <text x="40" y="222" fill="#64748b" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="13">Demo letter: ![Harbor mark](docs/assets/mark.png). Convert shots pick it up when output-*.png are rewritten. Stale text-only frames are not a missing Images row.</text>
+  <text x="40" y="222" fill="#64748b" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="13">Demo letter: ![Harbor mark](docs/assets/mark.png). Convert shots show the teal mark under the H2 as a PDF/A XObject. Capsule hashed. GPU-free.</text>
   <text x="40" y="254" fill="#475569" font-family="ui-monospace, Consolas, monospace" font-size="13">not claimed: OCR · VLM · OmniDocBench · Hangul images</text>
 </svg>

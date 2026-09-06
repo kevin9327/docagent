@@ -2,20 +2,20 @@
 
 | Axis | DocAgent | Best of the ten | Gap |
 | --- | --- | --- | --- |
-| GitHub first screen | Picture-in copy; letter.md has Harbor mark; `output-*.png` still text-only | MinerU/Docling photos | GitHub-image gap **open** — shots show no picture |
+| GitHub first screen | Convert shots show the teal harbor mark under the H2 | MinerU/Docling photos | **closed** — demo-image gap is closed |
 | Agent API + capsule | Command + SHA-256×3 | none | none — keep |
 | Same bytes (`prove`) | yes | none | none — keep |
-| Demo letter looks real | source has `![Harbor mark]`; GitHub frames do not | Pandoc/WeasyPrint | demo must rewrite `output-*.png` |
-| Images in the demo | letter.md **has** `![`; convert shots **do not** | yes | captions stay honest: no picture in those PNGs |
-| DOCX/ODT/MD/HTML/PDF/A | five codecs; PNG/JPEG engine yes | Pandoc | engine yes; Hangul images **—**; **stop deepening Hangul** |
+| Demo letter looks real | mark under H2 on PDF/A + HTML shots | WeasyPrint / MinerU page density | next gap: PDF page as dense as WeasyPrint/MinerU |
+| Images in the demo | letter.md `![` and shots paint the teal mark | yes | **closed** |
+| DOCX/ODT/MD/HTML/PDF/A | five codecs; PNG/JPEG engine yes | Pandoc | Hangul images **—**; **stop deepening Hangul** |
 
-**This hour’s six (no trivia, no new IR):**
+**This hour’s six (no trivia, no new IR, no invented numbers):**
 
-1. landing — first screen already sells picture in, PDF/A out. Captions must say the convert shots are still text-only. Do not invent OCR. Do not claim the GitHub-image gap is closed.
-2. pdf — Harbor mark must paint as a PDF/A XObject on the letter page. No wrap-mode archaeology.
-3. docx — `letter.docx` from that letter includes the picture (`a:blip`).
-4. odt — same for `letter.odt` (`draw:image`).
-5. mdhtml — `![alt](docs/assets/mark.png)` round-trips; HTML write is `<img>`, not a broken link.
-6. demo — convert + prove `examples/letter.md`; refresh `docs/assets/letter.*` and `output-*.png` so GitHub shows the mark.
+1. landing — first screen uses the harbor-mark convert shots. Drop stale / no-picture captions. Keep capsule, determinism, GPU-free. Demo-image gap is closed.
+2. pdf — PDF page looking as dense as WeasyPrint/MinerU (type, spacing, table). Harbor mark already paints as an XObject. No wrap-mode archaeology. No invented scores.
+3. docx — do not invent work. Picture already `a:blip`. No wrap trivia.
+4. odt — do not invent work. Picture already `draw:image`.
+5. mdhtml — do not invent work. `![alt]` / `<img>` already round-trip.
+6. demo — keep `letter.*` and `output-*.png` in lockstep with the engine. No invented numbers.
 
-GitHub-image gap stays open until those shots show the mark. Then the next gap is PDF page quality vs WeasyPrint — still no new IR.
+No OmniDocBench. No OCR/VLM claims. Next gap is visual density of the PDF page, not another screenshot disclaimer.

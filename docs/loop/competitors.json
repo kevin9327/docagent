@@ -1,7 +1,7 @@
 {
   "locked_at": "2026-09-06",
   "category": "Agent document runtime — flow documents only (not OCR suites, not office GUIs)",
-  "north_star": "A stranger opening github.com/kevin9327/docagent must immediately see picture in, PDF/A out — hero art, a capability matrix, and real outputs, at the visual density of MinerU/Docling/Pandoc. First screen: PNG/JPEG in Markdown/HTML/DOCX/ODT become a PDF/A XObject. Capsule hashed. GPU-free. Not OCR. DocAgent wins the agent-runtime axes: Command/Query/Event, capsule hashes, integer layout, byte-identical reruns, GPU-free convert. Hangul is a regional codec, not the first-screen story.",
+  "north_star": "A stranger opening github.com/kevin9327/docagent must immediately see picture in, PDF/A out — hero art, a capability matrix, and real convert shots with the teal harbor mark under the H2, at the visual density of MinerU/Docling/Pandoc. First screen: PNG/JPEG in Markdown/HTML/DOCX/ODT become a PDF/A XObject. Capsule hashed. GPU-free. Not OCR. DocAgent wins the agent-runtime axes: Command/Query/Event, capsule hashes, integer layout, byte-identical reruns, GPU-free convert. Hangul is a regional codec, not the first-screen story. Demo-image gap is closed. Next gap: PDF page density vs WeasyPrint/MinerU.",
   "not_claimed": ["OCR", "VLM", "OmniDocBench"],
   "docagent_ships": {
     "runtime": ["Command/Query/Event", "capsule SHA-256 ×3", "byte-identical rerun", "integer layout 1/7200 in", "GPU-free"],
@@ -15,7 +15,7 @@
       "HTML <img> write and data-URI read (no http src, not HTML5)",
       "DOCX a:blip, ODT draw:image",
       "Hangul images: not yet",
-      "examples/letter.md now includes ![Harbor mark](docs/assets/mark.png); output-*.png frames are still text-only — a stale shot is not a missing Images row; GitHub-image gap stays open until demo rewrites those PNGs"
+      "examples/letter.md includes ![Harbor mark](docs/assets/mark.png); convert shots (output-trio.png, output-pdf.png, output-html.png) show the teal mark under the H2; demo-image gap is closed"
     ]
   },
   "repos": [

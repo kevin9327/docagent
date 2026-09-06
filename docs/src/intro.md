@@ -31,9 +31,12 @@ docagent prove examples/letter.md
 ![Harbor mark](docs/assets/mark.png)
 ```
 
-That line is in `examples/letter.md`. Picture in, PDF/A out. Convert shots in
-`docs/assets/output-*.png` are still text-only — no Harbor mark on those
-frames. The source has the picture; the screenshots have not been rewritten.
+That line is in `examples/letter.md`. Convert paints the teal harbor mark under
+the H2 as a PDF/A XObject. The GitHub shots
+[`output-trio.png`](../assets/output-trio.png) and
+[`output-pdf.png`](../assets/output-pdf.png) are that page.
+
+![PDF/A, HTML, and capsule from examples/letter.md — teal harbor mark under the H2](../assets/output-trio.png)
 
 No GUI. No spreadsheet or presentation models. No OCR scores.
 
