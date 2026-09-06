@@ -1,26 +1,27 @@
 # DocAgent #1 loop state
 
-Last cycle: 26 (2026-09-06) — fenced code-block fills
+Last cycle: 27 (2026-09-06) — GFM task-list checkbox fills
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- IR adds `Paragraph.code_block`. Layout paints a full-width teal background `FillRect` behind the fence.
-- Markdown reads/writes ` ``` ` fences. HTML emits `<pre><code>`. DOCX emits `w:pStyle CodeBlock` plus `w:shd` fill `CCFBF1`. ODT emits `text:p` CodeBlock with `fo:background-color="#ccfbf1"`.
-- Fixture inserts `docagent prove examples/letter.md` in a fence so the GitHub PDF/HTML screenshots show a real code block.
+- IR adds `NumberFormat::Task` (`start == Some(1)` means checked).
+- Layout paints a hollow teal box; checked items get an inner fill. No `•` glyph.
+- Markdown reads/writes `- [x]` / `- [ ]`. HTML emits disabled checkboxes in `ul.tasks`. DOCX/ODT keep `[x]` / `[ ]` prefixes on roundtrip.
+- Fixture tasks: dock clear and hashes checked; "hoping" unchecked. Nested bay stays a bullet.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `7ee000d85cbb55d6049eaa11d52ff34c8ae0da6b637aa24f00056ecbf066f067`
+- input  `d8604c5c02966b38f7516918e0ff33f59640ac304895561645cbc6be80de1b52`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `fc43e2e04bda1dc3909c9be2f9068b0b7cbe63f0a28d64e56ed40ef715e6e382`
+- output `17aa085cdbb55b6739fb8485fba68adc055917eb19fb7e493b6be12a017218af`
 
-Plan hash matches cycle 21–25 (plan is command + targets + fonts, not the paint tree). Input and output hashes changed with the fixture and fence fill.
+Plan hash matches cycle 21–26 (plan is command + targets + fonts, not the paint tree). Input and output hashes changed with the fixture and task boxes.
 
 ## Next
 
-1. Hangul codec hyperlinks / strikethrough / quotes / code / breaks, or inline images.
+1. Hangul codec hyperlinks / strikethrough / quotes / code / breaks / tasks, or inline images.
 2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule

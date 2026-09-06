@@ -84,7 +84,13 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             .strip_prefix("- ")
             .or_else(|| content.strip_prefix("* "))
         {
-            section.body.push(Block::Paragraph(bullet_item(rest, nest)));
+            if let Some((checked, body)) = task_item(rest) {
+                section
+                    .body
+                    .push(Block::Paragraph(task_para(body, nest, checked)));
+            } else {
+                section.body.push(Block::Paragraph(bullet_item(rest, nest)));
+            }
         } else if let Some((n, rest)) = ordered_item(content) {
             section.body.push(Block::Paragraph(decimal_item(rest, n, nest)));
         } else if let Some(rest) = content.strip_prefix("> ") {
@@ -230,6 +236,28 @@ fn decimal_item(text: &str, n: u32, nest: u8) -> Paragraph {
     p
 }
 
+fn task_item(text: &str) -> Option<(bool, &str)> {
+    if let Some(rest) = text.strip_prefix("[ ] ") {
+        return Some((false, rest));
+    }
+    text.strip_prefix("[x] ")
+        .or_else(|| text.strip_prefix("[X] "))
+        .map(|rest| (true, rest))
+}
+
+fn task_para(text: &str, nest: u8, checked: bool) -> Paragraph {
+    let mut p = paragraph_from_inlines(text);
+    p.space_after = 80;
+    p.indent_left = list_indent(nest);
+    p.numbering = Some(NumberingRef {
+        definition_id: 2,
+        level: nest,
+        start: checked.then_some(1),
+        format: Some(NumberFormat::Task),
+    });
+    p
+}
+
 fn bullet_item(text: &str, nest: u8) -> Paragraph {
     let mut p = paragraph_from_inlines(text);
     p.space_after = 80;
@@ -306,6 +334,19 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                             let i = nref.start.unwrap_or(1);
                             let pad = "  ".repeat(nref.level as usize);
                             out.push_str(&format!("{pad}{i}. {}\n", write_runs(p)));
+                        }
+                        _ if p.numbering.as_ref().is_some_and(|n| {
+                            n.format == Some(NumberFormat::Task)
+                        }) =>
+                        {
+                            let nref = p.numbering.as_ref().unwrap();
+                            let pad = "  ".repeat(nref.level as usize);
+                            let mark = if nref.start == Some(1) {
+                                "- [x] "
+                            } else {
+                                "- [ ] "
+                            };
+                            out.push_str(&format!("{pad}{mark}{}\n", write_runs(p)));
                         }
                         _ if p.numbering.is_some() => {
                             let pad = "  ".repeat(
@@ -593,6 +634,33 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn task_items_roundtrip() {
+        let src = b"- [x] Replay the convert\n- [ ] Hope\n";
+        let doc = read(src).unwrap();
+        let flags: Vec<_> = doc.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p
+                    .numbering
+                    .as_ref()
+                    .map(|n| (n.format, n.start, p.plain_text())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                (Some(NumberFormat::Task), Some(1), "Replay the convert".into()),
+                (Some(NumberFormat::Task), None, "Hope".into()),
+            ]
+        );
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("- [x] Replay the convert"), "{back}");
+        assert!(back.contains("- [ ] Hope"), "{back}");
     }
 
     #[test]

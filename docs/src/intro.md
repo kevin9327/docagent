@@ -11,7 +11,7 @@ Formats, in the order agents usually meet them:
 | --- | --- | --- |
 | Word / OOXML | DOCX | Default interchange with Microsoft Word (`Heading1`/`Heading2`, `Quote`, `Code`, `CodeBlock`, `HorizontalLine`) |
 | OpenDocument | ODT | Default interchange with LibreOffice (`text:h` 18pt/14pt, Quote, `Tcode`, `CodeBlock`, `HorizontalLine`) |
-| Web / notes | Markdown, HTML | Agent-native text (`> quote`, `` `code` ``, ` ```fence``` `, `---`) and semantic HTML (`<blockquote>`, `<pre>`, `<hr/>`) |
+| Web / notes | Markdown, HTML | Agent-native text (`> quote`, `` `code` ``, ` ```fence``` `, `- [x]`, `---`) and semantic HTML (`<blockquote>`, `<pre>`, checkbox, `<hr/>`) |
 | Print | PDF/A | Archival, byte-identical on two runs |
 | Regional | HWP 5, HWPX, HWP 3, HML | East-Asian office formats, same IR |
 

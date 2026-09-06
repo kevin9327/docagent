@@ -24,10 +24,10 @@ docagent prove examples/letter.md
 
 Please confirm before 09:00 local:
 
-- Receiving dock is clear
+- [x] Receiving dock is clear
   - Bay 4, not bay 2
-- Capsule hashes travel with the files
-- Replay the convert instead of hoping
+- [x] Capsule hashes travel with the files
+- [ ] Replay the convert instead of hoping
 
 Agent replay:
 

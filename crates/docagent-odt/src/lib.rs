@@ -315,6 +315,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                                     format: Some(ctx.format),
                                 });
                             }
+                            apply_task_marker(&mut p);
                             if in_table {
                                 cell_blocks.push(Block::Paragraph(p));
                             } else {
@@ -428,6 +429,28 @@ fn attr(e: &BytesStart<'_>, key: &str) -> Option<String> {
         .map(|a| String::from_utf8_lossy(&a.value).into_owned())
 }
 
+fn apply_task_marker(p: &mut Paragraph) {
+    let Some(run) = p.runs.first_mut() else {
+        return;
+    };
+    let RunContent::Text(text) = &mut run.content else {
+        return;
+    };
+    let checked = text.starts_with("[x] ") || text.starts_with("[X] ");
+    let unchecked = text.starts_with("[ ] ");
+    if !checked && !unchecked {
+        return;
+    }
+    *text = text[4..].to_string();
+    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+    p.numbering = Some(NumberingRef {
+        definition_id: 2,
+        level,
+        start: checked.then_some(1),
+        format: Some(NumberFormat::Task),
+    });
+}
+
 fn odt_para(p: &Paragraph) -> String {
     let inner = odt_runs(p);
     if p.code_block {
@@ -452,6 +475,15 @@ fn odt_para(p: &Paragraph) -> String {
 
 fn odt_runs(p: &Paragraph) -> String {
     let mut s = String::new();
+    if let Some(n) = p.numbering.as_ref()
+        && n.format == Some(NumberFormat::Task)
+    {
+        if n.start == Some(1) {
+            s.push_str("[x] ");
+        } else {
+            s.push_str("[ ] ");
+        }
+    }
     for run in &p.runs {
         match &run.content {
             RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
@@ -647,6 +679,32 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_task_item() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay the convert");
+        p.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Task),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("[x] "), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.start)),
+            Some((Some(NumberFormat::Task), Some(1)))
+        );
+        assert_eq!(p.plain_text(), "Replay the convert");
     }
 
     #[test]

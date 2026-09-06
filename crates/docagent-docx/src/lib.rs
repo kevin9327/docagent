@@ -260,6 +260,17 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
         }
         s.push_str("</w:pPr>");
     }
+    let task_prefix = match p.numbering.as_ref() {
+        Some(n) if n.format == Some(NumberFormat::Task) => {
+            if n.start == Some(1) {
+                Some("[x] ")
+            } else {
+                Some("[ ] ")
+            }
+        }
+        _ => None,
+    };
+    let mut prefixed = task_prefix.is_none();
     let mut wrote = false;
     for run in &p.runs {
         match &run.content {
@@ -309,6 +320,10 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                     s.push_str("</w:rPr>");
                 }
                 s.push_str("<w:t xml:space=\"preserve\">");
+                if !prefixed && let Some(pre) = task_prefix {
+                    s.push_str(pre);
+                    prefixed = true;
+                }
                 s.push_str(&xml_escape(t));
                 s.push_str("</w:t></w:r>");
                 wrote = true;
@@ -478,7 +493,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_text.clear();
                     }
                     "tbl" => {
-                        if let Some(p) = take_para(
+                        if let Some(mut p) = take_para(
                             &mut para_runs,
                             &mut para_outline,
                             &mut para_quote,
@@ -487,6 +502,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                             &mut para_ilvl,
                             &mut decimal_seq,
                         ) {
+                            apply_task_marker(&mut p);
                             body.push(Block::Paragraph(p));
                         }
                         in_tbl = true;
@@ -575,7 +591,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                             if !in_tbl {
                                 body.push(Block::Break(BreakKind::Thematic));
                             }
-                        } else if let Some(p) = take_para(
+                        } else if let Some(mut p) = take_para(
                             &mut para_runs,
                             &mut para_outline,
                             &mut para_quote,
@@ -584,6 +600,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                             &mut para_ilvl,
                             &mut decimal_seq,
                         ) {
+                            apply_task_marker(&mut p);
                             if in_tbl {
                                 cell_blocks.push(Block::Paragraph(p));
                             } else {
@@ -592,7 +609,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         }
                     }
                     "tc" if in_tbl => {
-                        if let Some(p) = take_para(
+                        if let Some(mut p) = take_para(
                             &mut para_runs,
                             &mut para_outline,
                             &mut para_quote,
@@ -601,6 +618,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                             &mut para_ilvl,
                             &mut decimal_seq,
                         ) {
+                            apply_task_marker(&mut p);
                             cell_blocks.push(Block::Paragraph(p));
                         }
                         cur_row.push(TableCell {
@@ -650,7 +668,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
         },
         hyperlink_target.as_deref(),
     );
-    if let Some(p) = take_para(
+    if let Some(mut p) = take_para(
         &mut para_runs,
         &mut para_outline,
         &mut para_quote,
@@ -659,6 +677,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
         &mut para_ilvl,
         &mut decimal_seq,
     ) {
+        apply_task_marker(&mut p);
         body.push(Block::Paragraph(p));
     }
     section.body = body;
@@ -702,6 +721,28 @@ fn flush_run(runs: &mut Vec<Run>, text: &mut String, marks: RunMarks, href: Opti
         run.style.size = sz;
     }
     runs.push(run);
+}
+
+fn apply_task_marker(p: &mut Paragraph) {
+    let Some(run) = p.runs.first_mut() else {
+        return;
+    };
+    let RunContent::Text(text) = &mut run.content else {
+        return;
+    };
+    let checked = text.starts_with("[x] ") || text.starts_with("[X] ");
+    let unchecked = text.starts_with("[ ] ");
+    if !checked && !unchecked {
+        return;
+    }
+    *text = text[4..].to_string();
+    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+    p.numbering = Some(NumberingRef {
+        definition_id: 2,
+        level,
+        start: checked.then_some(1),
+        format: Some(NumberFormat::Task),
+    });
 }
 
 fn take_para(
@@ -915,6 +956,32 @@ mod tests {
         };
         assert!(p.quote);
         assert!(p.plain_text().contains("Replay is evidence"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_task_item() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay the convert");
+        p.numbering = Some(NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Task),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("[x] "), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.start)),
+            Some((Some(NumberFormat::Task), Some(1)))
+        );
+        assert_eq!(p.plain_text(), "Replay the convert");
     }
 
     #[test]

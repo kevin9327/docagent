@@ -393,6 +393,17 @@ fn is_bullet(p: &Paragraph) -> bool {
     )
 }
 
+fn is_task(p: &Paragraph) -> bool {
+    matches!(
+        p.numbering.as_ref().and_then(|n| n.format),
+        Some(NumberFormat::Task)
+    )
+}
+
+fn task_checked(p: &Paragraph) -> bool {
+    p.numbering.as_ref().is_some_and(|n| n.start == Some(1))
+}
+
 fn bullet_disc(size: Hu) -> Hu {
     (size / 5).max(160)
 }
@@ -444,6 +455,8 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     let mut out = Vec::new();
     let mut fills = Vec::new();
     let bullet = is_bullet(p);
+    let task = is_task(p);
+    let box_mark = bullet || task;
     if ranges.is_empty() {
         out.push(LineFrag {
             x: p.indent_left + quote_pad,
@@ -451,7 +464,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             width: 0,
             height: lh,
             baseline,
-            text: if bullet {
+            text: if box_mark {
                 String::new()
             } else {
                 marker.unwrap_or_default()
@@ -466,6 +479,14 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
         });
         if bullet {
             fills.push(bullet_fill(p.indent_left + quote_pad, baseline, size));
+        }
+        if task {
+            fills.extend(task_fills(
+                p.indent_left + quote_pad,
+                baseline,
+                size,
+                task_checked(p),
+            ));
         }
         if p.quote {
             fills.push(RectFrag {
@@ -493,6 +514,9 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
         let mut row: Vec<LineFrag> = Vec::new();
         if li == 0 && bullet {
             fills.push(bullet_fill(x, baseline, size));
+            x += marker_w;
+        } else if li == 0 && task {
+            fills.extend(task_fills(x, baseline, size, task_checked(p)));
             x += marker_w;
         } else if li == 0
             && let Some(m) = marker.as_deref()
@@ -600,6 +624,56 @@ fn bullet_fill(x: Hu, baseline: Hu, size: Hu) -> RectFrag {
     }
 }
 
+fn task_fills(x: Hu, baseline: Hu, size: Hu, checked: bool) -> Vec<RectFrag> {
+    let s = bullet_disc(size);
+    let x = x.saturating_add(80);
+    let y = baseline.saturating_sub(s);
+    let t = (s / 6).max(40);
+    let teal = [19, 78, 74, 255];
+    let mut out = vec![
+        RectFrag {
+            x,
+            y,
+            width: s,
+            height: t,
+            fill: teal,
+        },
+        RectFrag {
+            x,
+            y,
+            width: t,
+            height: s,
+            fill: teal,
+        },
+        RectFrag {
+            x,
+            y: y + s - t,
+            width: s,
+            height: t,
+            fill: teal,
+        },
+        RectFrag {
+            x: x + s - t,
+            y,
+            width: t,
+            height: s,
+            fill: teal,
+        },
+    ];
+    if checked {
+        let inset = t;
+        let inner = (s - inset.saturating_mul(2)).max(1);
+        out.push(RectFrag {
+            x: x + inset,
+            y: y + inset,
+            width: inner,
+            height: inner,
+            fill: teal,
+        });
+    }
+    out
+}
+
 struct RunSpan {
     start: usize,
     end: usize,
@@ -647,7 +721,7 @@ fn run_spans(p: &Paragraph) -> Vec<RunSpan> {
 fn list_marker(p: &Paragraph) -> Option<String> {
     let n = p.numbering.as_ref()?;
     match n.format {
-        Some(NumberFormat::Bullet) => Some("• ".into()),
+        Some(NumberFormat::Bullet) | Some(NumberFormat::Task) => Some("• ".into()),
         Some(NumberFormat::Decimal) => {
             Some(format!("{}. ", n.start.unwrap_or(1)))
         }
@@ -985,6 +1059,43 @@ mod tests {
             "bullet marker fill missing: {:?}",
             tree.pages[0].strokes
         );
+    }
+
+    #[test]
+    fn task_boxes_emit_checkbox_fills() {
+        fn tree_for(checked: bool) -> FragmentTree {
+            let mut doc = Document::new();
+            let mut section = Section::default();
+            let mut p = Paragraph::from_text("Replay the convert");
+            p.numbering = Some(NumberingRef {
+                definition_id: 2,
+                level: 0,
+                start: checked.then_some(1),
+                format: Some(NumberFormat::Task),
+            });
+            section.body.push(Block::Paragraph(p));
+            doc.sections.push(section);
+            layout_document(&doc, &FontSet::bundled())
+        }
+        let open = tree_for(false);
+        let edges = open.pages[0]
+            .strokes
+            .iter()
+            .filter(|s| s.fill == [19, 78, 74, 255] && s.width != s.height)
+            .count();
+        assert!(edges >= 4, "unchecked box missing edges: {:?}", open.pages[0].strokes);
+        let done = tree_for(true);
+        let inner = done.pages[0].strokes.iter().any(|s| {
+            s.fill == [19, 78, 74, 255] && s.width == s.height && s.width >= 40 && s.width < 160
+        });
+        assert!(inner, "checked inner fill missing: {:?}", done.pages[0].strokes);
+        let joined: String = done.pages[0]
+            .lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect();
+        assert!(!joined.contains('•'), "{joined}");
+        assert!(joined.contains("Replay the convert"), "{joined}");
     }
 
     #[test]

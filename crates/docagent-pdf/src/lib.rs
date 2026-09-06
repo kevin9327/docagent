@@ -371,6 +371,32 @@ mod tests {
     }
 
     #[test]
+    fn task_box_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay the convert");
+        p.numbering = Some(docagent_model::NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: Some(1),
+            format: Some(docagent_model::NumberFormat::Task),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let edges = list.ops.iter().filter(|op| {
+            matches!(
+                op,
+                Op::FillRect { color, w, h, .. }
+                    if *color == [19, 78, 74, 255] && *w != *h && *w > 0 && *h > 0
+            )
+        }).count();
+        assert!(edges >= 4, "task box must paint edges");
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(claims_pdfa(&pdf));
+    }
+
+    #[test]
     fn code_block_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();

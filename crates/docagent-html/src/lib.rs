@@ -6,7 +6,7 @@ use docagent_model::{Block, Document, Paragraph, RunContent, Table};
 
 pub fn to_html(doc: &Document) -> String {
     let mut s = String::from(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em;padding-bottom:.4rem;border-bottom:3px solid #134e4a}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a;padding-bottom:.2rem;border-bottom:2px solid #0d9488}p{margin:0 0 .7rem}blockquote{margin:.5rem 0 1rem;padding:.15rem 0 .15rem 1rem;border-left:4px solid #134e4a;color:#134e4a}strong{font-weight:700}em{font-style:italic}a{color:#0d9488}u{text-decoration:underline}s{text-decoration:line-through;color:#134e4a}code{background:#ccfbf1;padding:.1em .35em;border-radius:3px;font-family:ui-monospace,Consolas,monospace;font-size:.92em;color:#134e4a}pre{background:#ccfbf1;padding:.75rem 1rem;margin:.6rem 0 1rem;border-radius:4px;overflow:auto}pre code{background:transparent;padding:0;color:#134e4a}hr{border:none;border-top:3px solid #134e4a;margin:1.1rem 0}ul,ol{margin:0 0 1rem;padding-left:1.25rem}ul ul,ol ul,ul ol,ol ol{margin:.25rem 0}li{margin:0 0 .35rem}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#f0fdfa;color:#134e4a}</style></head><body>"#,
+        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em;padding-bottom:.4rem;border-bottom:3px solid #134e4a}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a;padding-bottom:.2rem;border-bottom:2px solid #0d9488}p{margin:0 0 .7rem}blockquote{margin:.5rem 0 1rem;padding:.15rem 0 .15rem 1rem;border-left:4px solid #134e4a;color:#134e4a}strong{font-weight:700}em{font-style:italic}a{color:#0d9488}u{text-decoration:underline}s{text-decoration:line-through;color:#134e4a}code{background:#ccfbf1;padding:.1em .35em;border-radius:3px;font-family:ui-monospace,Consolas,monospace;font-size:.92em;color:#134e4a}pre{background:#ccfbf1;padding:.75rem 1rem;margin:.6rem 0 1rem;border-radius:4px;overflow:auto}pre code{background:transparent;padding:0;color:#134e4a}hr{border:none;border-top:3px solid #134e4a;margin:1.1rem 0}ul,ol{margin:0 0 1rem;padding-left:1.25rem}ul ul,ol ul,ul ol,ol ol{margin:.25rem 0}li{margin:0 0 .35rem}ul.tasks{list-style:none;padding-left:1.25rem}ul.tasks input{margin-right:.4rem;vertical-align:middle;accent-color:#134e4a}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#f0fdfa;color:#134e4a}</style></head><body>"#,
     );
     for (i, section) in doc.sections.iter().enumerate() {
         s.push_str(&format!(r#"<article data-section="{i}">"#));
@@ -50,6 +50,7 @@ fn emit_list(s: &mut String, blocks: &[Block], i: &mut usize) {
     let base = list_level(&blocks[*i]).unwrap_or(0);
     match fmt {
         docagent_model::NumberFormat::Bullet => s.push_str("<ul>"),
+        docagent_model::NumberFormat::Task => s.push_str(r#"<ul class="tasks">"#),
         docagent_model::NumberFormat::Decimal => {
             let start = match &blocks[*i] {
                 Block::Paragraph(p) => p.numbering.as_ref().and_then(|n| n.start).unwrap_or(1),
@@ -82,6 +83,13 @@ fn emit_list(s: &mut String, blocks: &[Block], i: &mut usize) {
             break;
         };
         s.push_str("<li>");
+        if fmt == docagent_model::NumberFormat::Task {
+            if p.numbering.as_ref().is_some_and(|n| n.start == Some(1)) {
+                s.push_str(r#"<input type="checkbox" disabled="" checked=""/>"#);
+            } else {
+                s.push_str(r#"<input type="checkbox" disabled=""/>"#);
+            }
+        }
         push_runs(s, p);
         *i += 1;
         if *i < blocks.len() && list_level(&blocks[*i]).is_some_and(|nl| nl > base) {
@@ -90,7 +98,9 @@ fn emit_list(s: &mut String, blocks: &[Block], i: &mut usize) {
         s.push_str("</li>");
     }
     match fmt {
-        docagent_model::NumberFormat::Bullet => s.push_str("</ul>"),
+        docagent_model::NumberFormat::Bullet | docagent_model::NumberFormat::Task => {
+            s.push_str("</ul>")
+        }
         docagent_model::NumberFormat::Decimal => s.push_str("</ol>"),
         _ => {}
     }
@@ -367,6 +377,34 @@ mod tests {
         let html = to_html(&doc);
         assert!(html.contains("<strong>two</strong>"), "{html}");
         assert!(html.contains("<em>four</em>"), "{html}");
+    }
+
+    #[test]
+    fn tasks_emit_checkboxes() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut a = Paragraph::from_text("Replay the convert");
+        a.numbering = Some(docagent_model::NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: Some(1),
+            format: Some(docagent_model::NumberFormat::Task),
+        });
+        let mut b = Paragraph::from_text("Hope");
+        b.numbering = Some(docagent_model::NumberingRef {
+            definition_id: 2,
+            level: 0,
+            start: None,
+            format: Some(docagent_model::NumberFormat::Task),
+        });
+        section.body.push(Block::Paragraph(a));
+        section.body.push(Block::Paragraph(b));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains(r#"<ul class="tasks">"#), "{html}");
+        assert!(html.contains(r#"checked=""/>Replay the convert"#), "{html}");
+        assert!(html.contains(r#"disabled=""/>Hope"#), "{html}");
+        assert!(!html.contains("<p>Hope</p>"), "{html}");
     }
 
     #[test]
