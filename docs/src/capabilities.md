@@ -102,4 +102,4 @@ Proof files for `examples/letter.md`: [PDF/A](../assets/letter.pdf),
 [capsule](../assets/letter-capsule.json). SHA-256 lockstep:
 input `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf`,
 plan `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a`,
-output `f09d223f56e8adec474d9c24c3f0b2667f72104b1f67465f5e63c6c997a19ddf`.
+output `e38bb197cbc8a9379834e71c2a4827d5d8a5cc70af67ef2a68501fceccce916a`.

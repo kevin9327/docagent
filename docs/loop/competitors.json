@@ -15,7 +15,7 @@
       "HTML <img> write and data-URI read (no http src, not HTML5)",
       "DOCX a:blip, ODT draw:image",
       "Hangul images: not yet",
-      "examples/letter.md includes ![Harbor mark](docs/assets/mark.png); first screen is output-trio.png + output-pdf.png + output-html.png + mark.png; teal mark under the H2; README hashes lockstep with letter-capsule.json (output_hash f09d223f56e8adec474d9c24c3f0b2667f72104b1f67465f5e63c6c997a19ddf); demo-image gap is closed"
+      "examples/letter.md includes ![Harbor mark](docs/assets/mark.png); first screen is output-trio.png + output-pdf.png + output-html.png + mark.png; teal mark under the H2; README hashes lockstep with letter-capsule.json (output_hash e38bb197cbc8a9379834e71c2a4827d5d8a5cc70af67ef2a68501fceccce916a); demo-image gap is closed"
     ]
   },
   "repos": [

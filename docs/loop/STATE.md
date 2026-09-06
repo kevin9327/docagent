@@ -17,9 +17,9 @@ https://github.com/kevin9327/docagent
 
 ## Next
 
-- Put a real image in `examples/letter.md` and refresh GitHub convert shots.
-- Hangul images.
-- Keep visual density vs MinerU/Docling.
+- Demo keep `letter.*` / `output-*.png` in lockstep with the denser PDF page after `e93747f`.
+- Next gap: PDF page looking as dense as WeasyPrint/MinerU.
+- Hangul images still **—**; **stop deepening Hangul**.
 
 ## Rule
 
@@ -48,3 +48,11 @@ First screen uses the harbor-mark convert shots (`output-trio.png`, `output-pdf.
 ## Cycle 54 (2026-09-06)
 
 Committed PDF letter-page density (type, spacing, table) vs WeasyPrint/MinerU plus landing captions/hashes. Demo must refresh `letter.*` / `output-*.png` so GitHub matches the denser page. docx/odt/mdhtml: do not invent work. No OCR. Hangul still **stop deepening**.
+
+## Cycle 55 landing (2026-09-06)
+
+First screen uses the harbor-mark convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) plus `mark.png`. Captions already show the teal mark under the H2; no text-only / gap-open language; concept-art JPGs stay unused. After density commit `e93747f`, README and `docs/src` hashes lockstep with `letter-capsule.json` (`output_hash` `e38bb197cbc8a9379834e71c2a4827d5d8a5cc70af67ef2a68501fceccce916a`; input and plan unchanged). Capsule / determinism / GPU-free kept. Demo-image gap **closed**. No OCR. No OmniDocBench numbers. Hangul still **stop deepening**.
+
+## Cycle 56 (2026-09-06)
+
+Committed denser-page `letter.pdf` / `output-*.png` plus README hash lockstep (`output_hash` `e38bb197…`). Next gap still PDF page density vs WeasyPrint/MinerU — no invented numbers. docx/odt/mdhtml: do not invent work. Hangul still **stop deepening**.
