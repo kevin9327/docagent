@@ -8,6 +8,7 @@ use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
     Alignment, Block, Document, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow,
+    HU_PER_POINT,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -77,11 +78,14 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut in_table = false;
     let mut in_style = false;
     let mut style_name = String::new();
-    let mut style_bold = false;
-    let mut style_italic = false;
-    let mut styles: HashMap<String, (bool, bool)> = HashMap::new();
+    let mut style_bits = StyleBits::default();
+    let mut styles: HashMap<String, StyleBits> = HashMap::new();
     let mut span_bold = false;
     let mut span_italic = false;
+    let mut span_size: Option<i32> = None;
+    let mut para_bold = false;
+    let mut para_italic = false;
+    let mut para_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
     let mut para_outline: Option<u8> = None;
@@ -96,35 +100,56 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                     "style" => {
                         in_style = true;
                         style_name = attr(&e, "name").unwrap_or_default();
-                        style_bold = false;
-                        style_italic = false;
+                        style_bits = StyleBits::default();
                     }
                     "text-properties" if in_style => {
                         if let Some(w) = attr(&e, "font-weight") {
-                            style_bold = w == "bold" || w == "700";
+                            style_bits.bold = w == "bold" || w == "700";
                         }
                         if let Some(s) = attr(&e, "font-style") {
-                            style_italic = s == "italic" || s == "oblique";
+                            style_bits.italic = s == "italic" || s == "oblique";
+                        }
+                        if let Some(sz) = attr(&e, "font-size").and_then(|v| parse_fo_size(&v)) {
+                            style_bits.size = Some(sz);
                         }
                     }
                     "p" | "h" => {
                         in_p = true;
                         run_text.clear();
                         para_runs.clear();
-                        span_bold = false;
-                        span_italic = false;
                         para_outline = if name == "h" {
                             attr(&e, "outline-level").and_then(|v| v.parse().ok())
                         } else {
                             None
                         };
+                        let st = attr(&e, "style-name")
+                            .and_then(|k| styles.get(&k).copied())
+                            .unwrap_or_default();
+                        para_bold = st.bold;
+                        para_italic = st.italic;
+                        para_size = st.size;
+                        span_bold = para_bold;
+                        span_italic = para_italic;
+                        span_size = para_size;
                     }
                     "span" if in_p => {
-                        flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
+                        flush_odt_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            span_bold,
+                            span_italic,
+                            span_size,
+                        );
                         let key = attr(&e, "style-name").unwrap_or_default();
-                        let (b, i) = styles.get(&key).copied().unwrap_or((false, false));
-                        span_bold = b;
-                        span_italic = i;
+                        if let Some(st) = styles.get(&key).copied() {
+                            span_bold = st.bold;
+                            span_italic = st.italic;
+                            span_size = st.size.or(para_size);
+                        } else {
+                            span_bold = para_bold;
+                            span_italic = para_italic;
+                            span_size = para_size;
+                        }
                     }
                     "table" => {
                         in_table = true;
@@ -141,17 +166,30 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                     "style" => {
                         in_style = false;
                         if !style_name.is_empty() {
-                            styles.insert(style_name.clone(), (style_bold, style_italic));
+                            styles.insert(style_name.clone(), style_bits);
                         }
                     }
                     "span" if in_p => {
-                        flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
-                        span_bold = false;
-                        span_italic = false;
+                        flush_odt_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            span_bold,
+                            span_italic,
+                            span_size,
+                        );
+                        span_bold = para_bold;
+                        span_italic = para_italic;
+                        span_size = para_size;
                     }
                     "p" | "h" => {
                         in_p = false;
-                        flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
+                        flush_odt_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            span_bold,
+                            span_italic,
+                            span_size,
+                        );
                         if !para_runs.is_empty() {
                             let mut p = Paragraph::from_text("");
                             p.runs = std::mem::take(&mut para_runs);
@@ -207,13 +245,45 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     Ok(doc)
 }
 
-fn flush_odt_run(runs: &mut Vec<Run>, text: &mut String, bold: bool, italic: bool) {
+#[derive(Clone, Copy, Debug, Default)]
+struct StyleBits {
+    bold: bool,
+    italic: bool,
+    size: Option<i32>,
+}
+
+fn parse_fo_size(s: &str) -> Option<i32> {
+    let s = s.trim();
+    let num = s.strip_suffix("pt").or_else(|| s.strip_suffix("PT"))?;
+    let pt: i32 = num.trim().parse().ok()?;
+    (pt > 0).then_some(pt.saturating_mul(HU_PER_POINT))
+}
+
+fn heading_style_name(level: u8) -> Option<&'static str> {
+    match level {
+        1 => Some("Heading1"),
+        2 => Some("Heading2"),
+        3 => Some("Heading3"),
+        _ => None,
+    }
+}
+
+fn flush_odt_run(
+    runs: &mut Vec<Run>,
+    text: &mut String,
+    bold: bool,
+    italic: bool,
+    size: Option<i32>,
+) {
     if text.is_empty() {
         return;
     }
     let mut run = Run::text(std::mem::take(text));
     run.style.bold = bold;
     run.style.italic = italic;
+    if let Some(sz) = size {
+        run.style.size = sz;
+    }
     runs.push(run);
 }
 
@@ -228,7 +298,13 @@ fn odt_para(p: &Paragraph) -> String {
     let inner = odt_runs(p);
     match p.outline_level {
         Some(level) if level > 0 => {
-            format!(r#"<text:h text:outline-level="{level}">{inner}</text:h>"#)
+            if let Some(style) = heading_style_name(level) {
+                format!(
+                    r#"<text:h text:style-name="{style}" text:outline-level="{level}">{inner}</text:h>"#
+                )
+            } else {
+                format!(r#"<text:h text:outline-level="{level}">{inner}</text:h>"#)
+            }
         }
         _ => format!("<text:p>{inner}</text:p>"),
     }
@@ -299,7 +375,7 @@ fn content_xml(doc: &Document) -> String {
         }
     }
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"><office:automatic-styles><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
     )
 }
 
@@ -353,14 +429,19 @@ mod tests {
         let mut h1 = Paragraph::from_text("Northwind Freight");
         h1.outline_level = Some(1);
         h1.runs[0].style.bold = true;
+        h1.runs[0].style.size = 1800;
         section.body.push(Block::Paragraph(h1));
         let mut h2 = Paragraph::from_text("Delivery confirmation");
         h2.outline_level = Some(2);
+        h2.runs[0].style.bold = true;
+        h2.runs[0].style.size = 1400;
         section.body.push(Block::Paragraph(h2));
         doc.sections.push(section);
         let xml = content_xml(&doc);
         assert!(xml.contains(r#"text:outline-level="1""#), "{xml}");
-        assert!(xml.contains(r#"text:outline-level="2""#), "{xml}");
+        assert!(xml.contains(r#"text:style-name="Heading1""#), "{xml}");
+        assert!(xml.contains(r#"fo:font-size="18pt""#), "{xml}");
+        assert!(xml.contains(r#"fo:font-size="14pt""#), "{xml}");
         assert!(xml.contains("<text:h"), "{xml}");
         let back = roundtrip(&doc).unwrap();
         let Block::Paragraph(p) = &back.sections[0].body[0] else {
@@ -368,10 +449,13 @@ mod tests {
         };
         assert_eq!(p.outline_level, Some(1));
         assert_eq!(p.plain_text(), "Northwind Freight");
+        assert_eq!(p.runs[0].style.size, 1800);
+        assert!(p.runs[0].style.bold);
         let Block::Paragraph(p2) = &back.sections[0].body[1] else {
             panic!("h2");
         };
         assert_eq!(p2.outline_level, Some(2));
+        assert_eq!(p2.runs[0].style.size, 1400);
     }
 
     #[test]

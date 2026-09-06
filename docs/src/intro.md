@@ -10,7 +10,7 @@ Formats, in the order agents usually meet them:
 | Family | Codec | Role |
 | --- | --- | --- |
 | Word / OOXML | DOCX | Default interchange with Microsoft Word (`Heading1`/`Heading2`, run emphasis) |
-| OpenDocument | ODT | Default interchange with LibreOffice (`text:h`, run emphasis) |
+| OpenDocument | ODT | Default interchange with LibreOffice (`text:h` 18pt/14pt, run emphasis) |
 | Web / notes | Markdown, HTML | Agent-native text and semantic HTML |
 | Print | PDF/A | Archival, byte-identical on two runs |
 | Regional | HWP 5, HWPX, HWP 3, HML | East-Asian office formats, same IR |

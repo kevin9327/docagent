@@ -1,16 +1,15 @@
 # DocAgent #1 loop state
 
-Last cycle: 13 (2026-09-06) — PDF heading-rule fills
+Last cycle: 14 (2026-09-06) — ODT heading fo:font-size
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- Layout paints heading rules as non-table `FillRect`s (H1 full-width 2pt `#134e4a`, H2 text-width 1pt `#0d9488`).
-- Table cell fills stay on `rects`; heading rules go on `strokes` so `table_row_heights` is unchanged.
-- HTML matches with `border-bottom` on `h1`/`h2`.
-- Regenerated [letter.pdf](../assets/letter.pdf), [letter.html](../assets/letter.html), capsule, prove JSON, and README screenshots.
+- ODT write emits `Heading1/2/3` paragraph styles with `fo:font-size` 18pt/14pt/12pt and `text:h text:style-name`.
+- Read restores run `size` from those styles (and span overlays).
+- [`letter.odt`](../assets/letter.odt) from `examples/letter.md` keeps 18pt/14pt headings. PDF/A + HTML hashes unchanged.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 - input  `5f33b7f2389a3c4a4f53b638808a8e958305cc8f8a77b976d03f3d41f3d4a85f`
@@ -19,7 +18,7 @@ Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 
 ## Next
 
-1. Heading size in ODT text-properties, or HTML table-cell emphasis.
+1. HTML table-cell emphasis (`<strong>`/`<em>` inside `td`/`th`).
 2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule
