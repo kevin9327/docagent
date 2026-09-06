@@ -240,7 +240,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                     }
                 }
                 Block::Table(table) => {
-                    for row in &table.rows {
+                    for (ri, row) in table.rows.iter().enumerate() {
                         let cells: Vec<String> = row
                             .cells
                             .iter()
@@ -259,6 +259,12 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                         out.push(' ');
                         out.push_str(&cells.join(" | "));
                         out.push_str(" |\n");
+                        if ri == 0 {
+                            let n = cells.len().max(1);
+                            out.push('|');
+                            out.push_str(&" --- |".repeat(n));
+                            out.push('\n');
+                        }
                     }
                     out.push('\n');
                 }
@@ -312,6 +318,24 @@ mod tests {
         let again = read(&back).unwrap();
         assert!(again.plain_text().contains("Title"));
         assert!(again.plain_text().contains("a"));
+        let text = String::from_utf8(back).unwrap();
+        assert!(text.contains("| --- | --- |"), "{text}");
+    }
+
+    #[test]
+    fn table_write_emits_gfm_separator() {
+        let src = b"| Hop | File | Proof |\n| --- | --- | --- |\n| Input | letter.md | input SHA-256 |\n";
+        let doc = read(src).unwrap();
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("| --- | --- | --- |"), "{back}");
+        let again = read(back.as_bytes()).unwrap();
+        assert_eq!(again.table_count(), 1);
+        let Block::Table(t) = &again.sections[0].body[0] else {
+            panic!("table");
+        };
+        assert_eq!(t.rows.len(), 2, "separator must not become a data row");
+        assert!(t.rows[0].header);
+        assert!(again.plain_text().contains("letter.md"));
     }
 
     #[test]

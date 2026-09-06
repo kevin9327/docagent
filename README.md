@@ -97,7 +97,15 @@ These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json)
 
 ## What you get
 
-These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [DOCX](docs/assets/letter.docx) (`Heading1` / `Heading2`) · [ODT](docs/assets/letter.odt) (`text:h` 18pt/14pt) · [capsule JSON](docs/assets/letter-capsule.json).
+These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [DOCX](docs/assets/letter.docx) (`Heading1` / `Heading2`) · [ODT](docs/assets/letter.odt) (`text:h` 18pt/14pt) · [Markdown](docs/assets/letter.md) (GFM `| --- |`) · [capsule JSON](docs/assets/letter-capsule.json).
+
+```markdown
+| **Hop** | **File** | **Proof** |
+| --- | --- | --- |
+| Input | letter.md | input SHA-256 |
+| Plan | layout i32 @ 1/7200 in | plan SHA-256 |
+| Output | PDF/A · HTML · ODT | output SHA-256 |
+```
 
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
@@ -130,6 +138,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
 | **PDF/A** | Archival print. Heading rules, list markers, and table fills are `FillRect`s. Two runs, same fonts, same bytes. |
 | **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Runs keep `w:b`/`w:i` in body and table cells. |
+| **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. |
 | **HTML** | Semantic HTML an agent can read back. Table cells keep `<strong>`/`<em>`. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
 | **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. |
