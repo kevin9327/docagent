@@ -86,7 +86,11 @@ pub fn paint(tree: &FragmentTree) -> DisplayList {
                 y: line.y + line.baseline,
                 size: line.font_size,
                 text: line.text.clone(),
-                color: [0, 0, 0, 255],
+                color: if line.href.is_some() {
+                    [13, 148, 136, 255]
+                } else {
+                    [0, 0, 0, 255]
+                },
                 bold: line.bold,
                 italic: line.italic,
             });
@@ -187,6 +191,17 @@ mod tests {
                 )
             }),
             "link op missing: {:?}",
+            list.ops
+        );
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Text { text, color, .. }
+                        if text.contains("DocAgent") && *color == [13, 148, 136, 255]
+                )
+            }),
+            "link text must be teal: {:?}",
             list.ops
         );
     }

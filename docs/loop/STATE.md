@@ -1,22 +1,22 @@
 # DocAgent #1 loop state
 
-Last cycle: 33 (2026-09-06) — table header cells as teal PDF fills
+Last cycle: 34 (2026-09-06) — hyperlink glyphs as teal PDF text
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- Header rows (`row.header` or `header_row_count`) paint `#ccfbf1` cell fills, same teal as code spans.
-- HTML `th` uses that fill. DOCX keeps `w:tblHeader` + `w:shd CCFBF1`. ODT keeps `table:table-header-rows` + `THcell`.
-- Fixture table already marked the first row as header, so the GitHub PDF/HTML shots now show a teal Hop / File / Proof band.
+- Hyperlink runs paint `#0d9488` glyphs (same as HTML `a`), not black text with only an underline.
+- PDF uses that fill on `Op::Text`. DOCX keeps `w:color 0D9488`. ODT keeps `Tlink` `fo:color="#0d9488"`.
+- Fixture closer `[DocAgent](...)` is teal on the GitHub PDF shot, matching the HTML shot.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 - input  `927baa86fcdc5d76a72cfbcc8ee32ac3cadbcefb2505bc4bb80b335a14ddef74`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `47f11bf2366c7ce1f629a781814956a0824b415df1bc051f5c9ad91acb70776d`
+- output `86f9fb0ea23d189dddd58705f2330e44312a6b557459d332f9bf188dfe505d92`
 
-Input and plan hashes match cycle 32. Output hash changed with the header fills.
+Input and plan hashes match cycle 32–33. Output hash changed with the teal glyphs.
 
 ## Next
 

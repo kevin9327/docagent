@@ -102,7 +102,7 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                             y,
                             size,
                             text,
-                            color: _,
+                            color,
                             bold,
                             italic,
                         } => {
@@ -111,7 +111,7 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                                 continue;
                             }
                             surface.set_fill(Some(Fill {
-                                paint: rgb::Color::black().into(),
+                                paint: rgb::Color::new(color[0], color[1], color[2]).into(),
                                 opacity: NormalizedF32::ONE,
                                 rule: Default::default(),
                             }));
@@ -549,6 +549,29 @@ mod tests {
             "PDF URI target missing"
         );
         assert!(s.contains("/Link"), "PDF /Link subtype missing");
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Text { text, color, .. }
+                        if text.contains("DocAgent") && *color == [13, 148, 136, 255]
+                )
+            }),
+            "link glyphs must be teal: {:?}",
+            list.ops
+        );
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("DocAgent")));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(pdf, plain_pdf, "teal link text must change PDF bytes");
     }
 
     #[test]

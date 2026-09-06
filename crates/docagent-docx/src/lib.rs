@@ -281,7 +281,7 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                 *link_i += 1;
                 let rid = *link_i + 2;
                 s.push_str(&format!(r#"<w:hyperlink r:id="rId{rid}">"#));
-                s.push_str(r#"<w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">"#);
+                s.push_str(r#"<w:r><w:rPr><w:u w:val="single"/><w:color w:val="0D9488"/></w:rPr><w:t xml:space="preserve">"#);
                 s.push_str(&xml_escape(display));
                 s.push_str("</w:t></w:r></w:hyperlink>");
                 wrote = true;
@@ -1320,6 +1320,7 @@ mod tests {
         let xml = document_xml(&doc);
         assert!(xml.contains("w:hyperlink"), "{xml}");
         assert!(xml.contains("w:u"), "{xml}");
+        assert!(xml.contains(r#"w:val="0D9488""#), "{xml}");
         let rels = document_rels(&doc);
         assert!(rels.contains("hyperlink"), "{rels}");
         assert!(rels.contains("https://github.com/kevin9327/docagent"), "{rels}");
