@@ -8,8 +8,9 @@
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, Diagnostic, DiagnosticCode, Document, Paragraph, Run, RunContent, Section,
-    Severity, Table, TableCell, TableRow, DEFAULT_FONT_SIZE_HU, hu_to_twips, twips_to_hu,
+    Alignment, Block, Diagnostic, DiagnosticCode, Document, NumberFormat, NumberingRef, Paragraph,
+    Run, RunContent, Section, Severity, Table, TableCell, TableRow, DEFAULT_FONT_SIZE_HU,
+    hu_to_twips, twips_to_hu,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -61,7 +62,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         zip.start_file("[Content_Types].xml", deflated)?;
         zip.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#,
+            br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#,
         )?;
         zip.start_file("_rels/.rels", deflated)?;
         zip.write_all(
@@ -69,10 +70,12 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         )?;
         zip.start_file("word/_rels/document.xml.rels", deflated)?;
         zip.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#,
+            br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#,
         )?;
         zip.start_file("word/styles.xml", deflated)?;
         zip.write_all(STYLES_XML.as_bytes())?;
+        zip.start_file("word/numbering.xml", deflated)?;
+        zip.write_all(NUMBERING_XML.as_bytes())?;
         zip.start_file("word/document.xml", deflated)?;
         zip.write_all(document_xml(doc).as_bytes())?;
         zip.finish()?;
@@ -139,14 +142,30 @@ fn half_points_to_hu(hp: i32) -> i32 {
     hp.saturating_mul(50)
 }
 
+const NUMBERING_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%2."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%3."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#;
+
 fn p_xml(p: &Paragraph) -> String {
     let mut s = String::from("<w:p>");
-    if let Some(level) = p.outline_level.filter(|l| *l > 0) {
-        let outline = level.saturating_sub(1);
+    let heading = p.outline_level.filter(|l| *l > 0);
+    let num = p.numbering.as_ref();
+    if heading.is_some() || num.is_some() {
         s.push_str("<w:pPr>");
-        s.push_str(&format!(
-            r#"<w:pStyle w:val="Heading{level}"/><w:outlineLvl w:val="{outline}"/>"#
-        ));
+        if let Some(level) = heading {
+            let outline = level.saturating_sub(1);
+            s.push_str(&format!(
+                r#"<w:pStyle w:val="Heading{level}"/><w:outlineLvl w:val="{outline}"/>"#
+            ));
+        }
+        if let Some(n) = num {
+            let num_id = match n.format {
+                Some(NumberFormat::Decimal) => 2,
+                _ => 1,
+            };
+            let ilvl = n.level;
+            s.push_str(&format!(
+                r#"<w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="{num_id}"/></w:numPr>"#
+            ));
+        }
         s.push_str("</w:pPr>");
     }
     let mut wrote = false;
@@ -244,6 +263,9 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
     let mut para_outline: Option<u8> = None;
+    let mut para_num_id: Option<u32> = None;
+    let mut para_ilvl: u8 = 0;
+    let mut decimal_seq: u32 = 1;
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_blocks: Vec<Block> = Vec::new();
@@ -268,6 +290,14 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                             para_outline = Some(v.saturating_add(1));
                         }
                     }
+                    "ilvl" if in_ppr => {
+                        if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<u8>().ok()) {
+                            para_ilvl = v;
+                        }
+                    }
+                    "numId" if in_ppr => {
+                        para_num_id = attr(&e, "val").and_then(|v| v.parse().ok());
+                    }
                     "rPr" if in_run => in_rpr = true,
                     "b" if in_rpr => run_bold = ooxml_on(&e),
                     "i" if in_rpr => run_italic = ooxml_on(&e),
@@ -286,13 +316,21 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                     "p" => {
                         para_runs.clear();
                         para_outline = None;
+                        para_num_id = None;
+                        para_ilvl = 0;
                         run_bold = false;
                         run_italic = false;
                         run_size = None;
                         run_text.clear();
                     }
                     "tbl" => {
-                        if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+                        if let Some(p) = take_para(
+                            &mut para_runs,
+                            &mut para_outline,
+                            &mut para_num_id,
+                            &mut para_ilvl,
+                            &mut decimal_seq,
+                        ) {
                             body.push(Block::Paragraph(p));
                         }
                         in_tbl = true;
@@ -361,7 +399,13 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                             run_italic,
                             run_size,
                         );
-                        if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+                        if let Some(p) = take_para(
+                            &mut para_runs,
+                            &mut para_outline,
+                            &mut para_num_id,
+                            &mut para_ilvl,
+                            &mut decimal_seq,
+                        ) {
                             if in_tbl {
                                 cell_blocks.push(Block::Paragraph(p));
                             } else {
@@ -370,7 +414,13 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                         }
                     }
                     "tc" if in_tbl => {
-                        if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+                        if let Some(p) = take_para(
+                            &mut para_runs,
+                            &mut para_outline,
+                            &mut para_num_id,
+                            &mut para_ilvl,
+                            &mut decimal_seq,
+                        ) {
                             cell_blocks.push(Block::Paragraph(p));
                         }
                         cur_row.push(TableCell {
@@ -415,7 +465,13 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
         run_italic,
         run_size,
     );
-    if let Some(p) = take_para(&mut para_runs, &mut para_outline) {
+    if let Some(p) = take_para(
+        &mut para_runs,
+        &mut para_outline,
+        &mut para_num_id,
+        &mut para_ilvl,
+        &mut decimal_seq,
+    ) {
         body.push(Block::Paragraph(p));
     }
     section.body = body;
@@ -452,14 +508,48 @@ fn flush_run(
     runs.push(run);
 }
 
-fn take_para(runs: &mut Vec<Run>, outline: &mut Option<u8>) -> Option<Paragraph> {
+fn take_para(
+    runs: &mut Vec<Run>,
+    outline: &mut Option<u8>,
+    num_id: &mut Option<u32>,
+    ilvl: &mut u8,
+    decimal_seq: &mut u32,
+) -> Option<Paragraph> {
     if runs.is_empty() {
         *outline = None;
+        *num_id = None;
+        *ilvl = 0;
         return None;
     }
     let mut p = Paragraph::from_text("");
     p.runs = std::mem::take(runs);
     p.outline_level = outline.take();
+    if let Some(id) = num_id.take() {
+        let format = if id == 2 {
+            NumberFormat::Decimal
+        } else {
+            NumberFormat::Bullet
+        };
+        let start = if format == NumberFormat::Decimal && *ilvl == 0 {
+            let n = *decimal_seq;
+            *decimal_seq = decimal_seq.saturating_add(1);
+            Some(n)
+        } else {
+            None
+        };
+        if format == NumberFormat::Bullet && *ilvl == 0 {
+            *decimal_seq = 1;
+        }
+        p.numbering = Some(NumberingRef {
+            definition_id: id,
+            level: *ilvl,
+            start,
+            format: Some(format),
+        });
+    } else {
+        *decimal_seq = 1;
+    }
+    *ilvl = 0;
     Some(p)
 }
 
@@ -562,7 +652,7 @@ pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docagent_model::{LayoutHint, Paragraph, Run};
+    use docagent_model::{LayoutHint, NumberFormat, NumberingRef, Paragraph, Run};
 
     #[test]
     fn roundtrip_keeps_bold_and_italic() {
@@ -590,6 +680,70 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_list_numbering() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut a = Paragraph::from_text("Receiving dock is clear");
+        a.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut b = Paragraph::from_text("Bay 4, not bay 2");
+        b.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut c = Paragraph::from_text("Hash the input");
+        c.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let mut d = Paragraph::from_text("Run Convert");
+        d.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(2),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(a));
+        section.body.push(Block::Paragraph(b));
+        section.body.push(Block::Paragraph(c));
+        section.body.push(Block::Paragraph(d));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:numPr>"), "{xml}");
+        assert!(xml.contains(r#"w:val="1""#), "{xml}");
+        assert!(xml.contains(r#"w:val="2""#), "{xml}");
+        let bytes = write(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert!(zip.by_name("word/numbering.xml").is_ok());
+        let back = roundtrip(&doc).unwrap();
+        let nums: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                (Some(NumberFormat::Bullet), 0, None),
+                (Some(NumberFormat::Bullet), 1, None),
+                (Some(NumberFormat::Decimal), 0, Some(1)),
+                (Some(NumberFormat::Decimal), 0, Some(2)),
+            ]
+        );
     }
 
     #[test]

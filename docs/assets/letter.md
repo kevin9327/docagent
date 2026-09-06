@@ -20,6 +20,7 @@ Please confirm before 09:00 local:
   - Bay 4, not bay 2
 - Capsule hashes travel with the files
 - Replay the convert instead of hoping
+
 Agent replay:
 
 1. Hash the input
@@ -27,5 +28,6 @@ Agent replay:
   - PDF/A
   - HTML
 3. Compare the capsule
+
 DocAgent runtime — DOCX · ODT · Markdown · HTML · PDF/A
 

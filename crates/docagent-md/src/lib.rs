@@ -215,9 +215,10 @@ fn flush_table(section: &mut Section, rows: &mut Vec<Vec<String>>) {
 pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
     let mut out = String::new();
     for section in &doc.sections {
-        for block in &section.body {
+        for (i, block) in section.body.iter().enumerate() {
             match block {
                 Block::Paragraph(p) => {
+                    let listed = p.numbering.is_some();
                     match p.outline_level {
                         Some(1) => out.push_str(&format!("# {}\n\n", p.plain_text())),
                         Some(2) => out.push_str(&format!("## {}\n\n", p.plain_text())),
@@ -237,6 +238,14 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                             out.push_str(&format!("{pad}- {}\n", write_runs(p)));
                         }
                         _ => out.push_str(&format!("{}\n\n", write_runs(p))),
+                    }
+                    if listed {
+                        let next_listed = section.body.get(i + 1).is_some_and(|b| {
+                            matches!(b, Block::Paragraph(q) if q.numbering.is_some())
+                        });
+                        if !next_listed {
+                            out.push('\n');
+                        }
                     }
                 }
                 Block::Table(table) => {
@@ -387,6 +396,8 @@ mod tests {
             .filter(|b| matches!(b, Block::Paragraph(p) if p.numbering.is_some()))
             .count();
         assert_eq!(n, 2);
+        let text = String::from_utf8(back).unwrap();
+        assert!(text.contains("- replay the convert\n\n"), "{text}");
     }
 
     #[test]
