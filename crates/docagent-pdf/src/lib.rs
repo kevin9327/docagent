@@ -284,6 +284,35 @@ mod tests {
     }
 
     #[test]
+    fn bullet_marker_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Receiving dock is clear");
+        p.numbering = Some(docagent_model::NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(docagent_model::NumberFormat::Bullet),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let list = paint(&tree);
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *h == *w && *h >= 160 && *h < 1000
+                )
+            }),
+            "bullet marker must paint a square fill"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(claims_pdfa(&pdf));
+    }
+
+    #[test]
     fn synthetic_bold_changes_pdf_bytes() {
         fn pdf_for(bold: bool) -> Vec<u8> {
             let mut doc = Document::new();

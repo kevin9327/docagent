@@ -95,11 +95,14 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                 space_before,
                 space_after,
                 rule,
+                fills,
             } => {
                 y += space_before;
                 let mut text_left: Option<Hu> = None;
                 let mut text_right = origin_x;
                 let mut block_bottom = y;
+                let mut first_line_y = y;
+                let mut saw_line = false;
                 for line in lines {
                     if y + line.height > origin_y + content_h && !current.lines.is_empty() {
                         pages.push(std::mem::replace(
@@ -111,6 +114,10 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                     let mut placed = line;
                     placed.x = origin_x.saturating_add(placed.x);
                     placed.y = y;
+                    if !saw_line {
+                        first_line_y = y;
+                        saw_line = true;
+                    }
                     if placed.width > 0 {
                         text_left = Some(text_left.map_or(placed.x, |l| l.min(placed.x)));
                         text_right = text_right.max(placed.x.saturating_add(placed.width));
@@ -133,6 +140,15 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                         width: rw,
                         height: rule.thickness,
                         fill: rule.color,
+                    });
+                }
+                for fill in fills {
+                    current.strokes.push(RectFrag {
+                        x: origin_x.saturating_add(fill.x),
+                        y: first_line_y.saturating_add(fill.y),
+                        width: fill.width,
+                        height: fill.height,
+                        fill: fill.fill,
                     });
                 }
                 y += space_after;
@@ -236,6 +252,7 @@ enum Prepared {
         space_before: Hu,
         space_after: Hu,
         rule: Option<HeadingRule>,
+        fills: Vec<RectFrag>,
     },
     Table {
         rows: Vec<Vec<PreparedCell>>,
@@ -275,23 +292,39 @@ struct PreparedCell {
 
 fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
     match block {
-        Block::Paragraph(p) => Prepared::Lines {
-            lines: layout_paragraph(p, fonts, width),
-            space_before: p.space_before.max(0),
-            space_after: p.space_after.max(0),
-            rule: heading_rule(p.outline_level),
-        },
+        Block::Paragraph(p) => {
+            let (lines, fills) = layout_paragraph(p, fonts, width);
+            Prepared::Lines {
+                lines,
+                space_before: p.space_before.max(0),
+                space_after: p.space_after.max(0),
+                rule: heading_rule(p.outline_level),
+                fills,
+            }
+        }
         Block::Table(t) => prepare_table(t, fonts, width),
         Block::Float(_) | Block::Break(_) => Prepared::Lines {
             lines: Vec::new(),
             space_before: 0,
             space_after: 0,
             rule: None,
+            fills: Vec::new(),
         },
     }
 }
 
-fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> {
+fn is_bullet(p: &Paragraph) -> bool {
+    matches!(
+        p.numbering.as_ref().and_then(|n| n.format),
+        Some(NumberFormat::Bullet)
+    )
+}
+
+fn bullet_disc(size: Hu) -> Hu {
+    (size / 5).max(160)
+}
+
+fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>, Vec<RectFrag>) {
     let text = p.plain_text();
     let size = p
         .runs
@@ -329,6 +362,8 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
     let spans = run_spans(p);
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
+    let mut fills = Vec::new();
+    let bullet = is_bullet(p);
     if ranges.is_empty() {
         out.push(LineFrag {
             x: p.indent_left,
@@ -336,18 +371,28 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
             width: 0,
             height: lh,
             baseline,
-            text: marker.unwrap_or_default(),
+            text: if bullet {
+                String::new()
+            } else {
+                marker.unwrap_or_default()
+            },
             font_size: size,
             bold: false,
             italic: false,
         });
-        return out;
+        if bullet {
+            fills.push(bullet_fill(p.indent_left, baseline, size));
+        }
+        return (out, fills);
     }
     for (li, (a, b)) in ranges.into_iter().enumerate() {
         let extra_indent = if li == 0 { p.indent_first } else { 0 };
         let mut x = p.indent_left + extra_indent + if li == 0 { 0 } else { marker_w };
         let mut row: Vec<LineFrag> = Vec::new();
-        if li == 0
+        if li == 0 && bullet {
+            fills.push(bullet_fill(x, baseline, size));
+            x += marker_w;
+        } else if li == 0
             && let Some(m) = marker.as_deref()
         {
             row.push(LineFrag {
@@ -407,7 +452,18 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
         }
         out.extend(row);
     }
-    out
+    (out, fills)
+}
+
+fn bullet_fill(x: Hu, baseline: Hu, size: Hu) -> RectFrag {
+    let disc = bullet_disc(size);
+    RectFrag {
+        x: x.saturating_add(80),
+        y: baseline.saturating_sub(disc),
+        width: disc,
+        height: disc,
+        fill: [19, 78, 74, 255],
+    }
 }
 
 fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool)> {
@@ -526,7 +582,8 @@ fn prepare_table(table: &Table, fonts: &FontSet, width: Hu) -> Prepared {
             let mut lines = Vec::new();
             for block in &cell.blocks {
                 if let Block::Paragraph(p) = block {
-                    lines.extend(layout_paragraph(p, fonts, inner));
+                    let (cell_lines, _) = layout_paragraph(p, fonts, inner);
+                    lines.extend(cell_lines);
                 }
             }
             let height = lines.iter().map(|l| l.height).sum::<i32>()
@@ -754,8 +811,16 @@ mod tests {
             .iter()
             .map(|l| l.text.as_str())
             .collect();
-        assert!(joined.starts_with('•'), "{joined}");
+        assert!(!joined.contains('•'), "{joined}");
         assert!(joined.contains("Receiving dock is clear"), "{joined}");
+        assert!(
+            tree.pages[0]
+                .strokes
+                .iter()
+                .any(|s| s.fill == [19, 78, 74, 255] && s.width == s.height && s.width >= 160),
+            "bullet marker fill missing: {:?}",
+            tree.pages[0].strokes
+        );
     }
 
     #[test]
