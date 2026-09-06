@@ -366,9 +366,17 @@ fn tbl_xml(table: &Table, link_i: &mut u32) -> String {
     s.push_str("</w:tblGrid>");
     for row in &table.rows {
         s.push_str("<w:tr>");
+        if row.header {
+            s.push_str(r#"<w:trPr><w:tblHeader/></w:trPr>"#);
+        }
         for cell in &row.cells {
+            let shd = if row.header {
+                r#"<w:shd w:val="clear" w:fill="CCFBF1"/>"#
+            } else {
+                ""
+            };
             s.push_str(&format!(
-                r#"<w:tc><w:tcPr><w:tcW w:w="{}" w:type="dxa"/></w:tcPr>"#,
+                r#"<w:tc><w:tcPr><w:tcW w:w="{}" w:type="dxa"/>{shd}</w:tcPr>"#,
                 hu_to_twips(cell.width)
             ));
             let mut wrote_p = false;
@@ -429,6 +437,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut cell_blocks: Vec<Block> = Vec::new();
     let mut cell_width = 10000i32;
     let mut hyperlink_target: Option<String> = None;
+    let mut row_header = false;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -547,7 +556,11 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         }
                         in_tbl = true;
                     }
-                    "tr" if in_tbl => cur_row.clear(),
+                    "tr" if in_tbl => {
+                        cur_row.clear();
+                        row_header = false;
+                    }
+                    "tblHeader" => row_header = true,
                     "tc" if in_tbl => {
                         cell_blocks.clear();
                         cell_width = 10000;
@@ -682,14 +695,18 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     "tr" if in_tbl => table_rows.push(TableRow {
                         cells: std::mem::take(&mut cur_row),
                         height: None,
-                        header: false,
+                        header: row_header,
                         cant_split: None,
                     }),
                     "tbl" => {
                         in_tbl = false;
+                        let rows = std::mem::take(&mut table_rows);
+                        let header_row_count =
+                            rows.iter().take_while(|r| r.header).count() as u8;
                         body.push(Block::Table(Table {
-                            rows: std::mem::take(&mut table_rows),
+                            rows,
                             alignment: Alignment::Start,
+                            header_row_count,
                             ..Table::from_cells(Vec::new())
                         }));
                     }
@@ -1384,6 +1401,30 @@ mod tests {
         assert!(cell.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_table_header() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:tblHeader/>"), "{xml}");
+        assert!(xml.contains(r#"w:fill="CCFBF1""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        assert!(t.rows[0].header);
+        assert!(!t.rows[1].header);
+        assert_eq!(t.header_row_count, 1);
     }
 
     #[test]

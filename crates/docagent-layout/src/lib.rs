@@ -201,7 +201,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                             width: cw,
                             height: row_h,
                             fill: if cell.header {
-                                [240, 253, 250, 255]
+                                [204, 251, 241, 255]
                             } else {
                                 [255, 255, 255, 255]
                             },
@@ -864,8 +864,9 @@ fn prepare_table(table: &Table, fonts: &FontSet, width: Hu) -> Prepared {
         }
     }
     let mut rows = Vec::new();
-    for row in &table.rows {
+    for (ri, row) in table.rows.iter().enumerate() {
         let mut cells = Vec::new();
+        let header = row.header || ri < table.header_row_count as usize;
         for (ci, cell) in row.cells.iter().enumerate() {
             let cw = *col_widths.get(ci).unwrap_or(&10000);
             let inner = (cw - cell.padding.left - cell.padding.right - 160).max(1);
@@ -884,7 +885,7 @@ fn prepare_table(table: &Table, fonts: &FontSet, width: Hu) -> Prepared {
             cells.push(PreparedCell {
                 lines,
                 height,
-                header: row.header,
+                header,
             });
         }
         rows.push(cells);
@@ -1043,6 +1044,33 @@ mod tests {
         assert_eq!(page.rects.len(), 4, "one fill per cell");
         assert!(page.strokes.len() >= 16, "four edges per cell");
         assert_eq!(table_row_heights(&tree).len(), 4);
+    }
+
+    #[test]
+    fn table_headers_emit_teal_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let headers = page
+            .rects
+            .iter()
+            .filter(|r| r.fill == [204, 251, 241, 255])
+            .count();
+        let body = page
+            .rects
+            .iter()
+            .filter(|r| r.fill == [255, 255, 255, 255])
+            .count();
+        assert_eq!(headers, 2, "header cells missing teal fill: {:?}", page.rects);
+        assert_eq!(body, 2, "body cells missing white fill: {:?}", page.rects);
     }
 
     #[test]

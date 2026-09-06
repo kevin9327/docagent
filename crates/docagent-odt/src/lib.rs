@@ -111,6 +111,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut cell_blocks: Vec<Block> = Vec::new();
     let mut list_stack: Vec<ListCtx> = Vec::new();
     let mut a_href: Option<String> = None;
+    let mut in_header_rows = false;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
@@ -266,7 +267,9 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                     "table" => {
                         in_table = true;
                         table_rows.clear();
+                        in_header_rows = false;
                     }
+                    "table-header-rows" if in_table => in_header_rows = true,
                     "table-row" if in_table => cur_row.clear(),
                     "table-cell" if in_table => cell_blocks.clear(),
                     _ => {}
@@ -400,19 +403,24 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             ..TableCell::default()
                         });
                     }
+                    "table-header-rows" if in_table => in_header_rows = false,
                     "table-row" if in_table => {
                         table_rows.push(TableRow {
                             cells: std::mem::take(&mut cur_row),
                             height: None,
-                            header: false,
+                            header: in_header_rows,
                             cant_split: None,
                         });
                     }
                     "table" => {
                         in_table = false;
+                        let rows = std::mem::take(&mut table_rows);
+                        let header_row_count =
+                            rows.iter().take_while(|r| r.header).count() as u8;
                         section.body.push(Block::Table(Table {
-                            rows: std::mem::take(&mut table_rows),
+                            rows,
                             alignment: Alignment::Start,
+                            header_row_count,
                             ..Table::from_cells(Vec::new())
                         }));
                     }
@@ -645,25 +653,43 @@ fn emit_list(body: &mut String, blocks: &[Block], i: &mut usize) {
 
 fn push_table(body: &mut String, table: &Table) {
     body.push_str("<table:table>");
-    for row in &table.rows {
-        body.push_str("<table:table-row>");
-        for cell in &row.cells {
-            body.push_str("<table:table-cell>");
-            let mut wrote = false;
-            for b in &cell.blocks {
-                if let Block::Paragraph(p) = b {
-                    body.push_str(&odt_para(p));
-                    wrote = true;
-                }
-            }
-            if !wrote {
-                body.push_str("<text:p/>");
-            }
-            body.push_str("</table:table-cell>");
+    let mut i = 0usize;
+    if table.rows.iter().any(|r| r.header) {
+        body.push_str("<table:table-header-rows>");
+        while i < table.rows.len() && table.rows[i].header {
+            push_table_row(body, &table.rows[i], true);
+            i += 1;
         }
-        body.push_str("</table:table-row>");
+        body.push_str("</table:table-header-rows>");
+    }
+    while i < table.rows.len() {
+        push_table_row(body, &table.rows[i], false);
+        i += 1;
     }
     body.push_str("</table:table>");
+}
+
+fn push_table_row(body: &mut String, row: &TableRow, header: bool) {
+    body.push_str("<table:table-row>");
+    for cell in &row.cells {
+        if header {
+            body.push_str(r#"<table:table-cell table:style-name="THcell">"#);
+        } else {
+            body.push_str("<table:table-cell>");
+        }
+        let mut wrote = false;
+        for b in &cell.blocks {
+            if let Block::Paragraph(p) = b {
+                body.push_str(&odt_para(p));
+                wrote = true;
+            }
+        }
+        if !wrote {
+            body.push_str("<text:p/>");
+        }
+        body.push_str("</table:table-cell>");
+    }
+    body.push_str("</table:table-row>");
 }
 
 fn content_xml(doc: &Document) -> String {
@@ -687,7 +713,7 @@ fn content_xml(doc: &Document) -> String {
         }
     }
     format!(
-        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="HorizontalLine" style:family="paragraph"><style:paragraph-properties fo:border-bottom="0.02in solid #134e4a" fo:margin-top="0.15in" fo:margin-bottom="0.15in"/></style:style><style:style style:name="CodeBlock" style:family="paragraph"><style:paragraph-properties fo:background-color="#ccfbf1" fo:padding="0.1in"/><style:text-properties fo:font-family="Consolas"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><style:style style:name="Tmark" style:family="text"><style:text-properties fo:background-color="#fde68a"/></style:style><style:style style:name="Tunder" style:family="text"><style:text-properties style:text-underline-style="solid"/></style:style><style:style style:name="Tsuper" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style><style:style style:name="Tsub" style:family="text"><style:text-properties style:text-position="sub 58%"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
+        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="HorizontalLine" style:family="paragraph"><style:paragraph-properties fo:border-bottom="0.02in solid #134e4a" fo:margin-top="0.15in" fo:margin-bottom="0.15in"/></style:style><style:style style:name="CodeBlock" style:family="paragraph"><style:paragraph-properties fo:background-color="#ccfbf1" fo:padding="0.1in"/><style:text-properties fo:font-family="Consolas"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><style:style style:name="Tmark" style:family="text"><style:text-properties fo:background-color="#fde68a"/></style:style><style:style style:name="Tunder" style:family="text"><style:text-properties style:text-underline-style="solid"/></style:style><style:style style:name="Tsuper" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style><style:style style:name="Tsub" style:family="text"><style:text-properties style:text-position="sub 58%"/></style:style><style:style style:name="THcell" style:family="table-cell"><style:table-cell-properties fo:background-color="#ccfbf1"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
     )
 }
 
@@ -1137,6 +1163,30 @@ mod tests {
         assert!(cell.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_table_header() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("table-header-rows"), "{xml}");
+        assert!(xml.contains("THcell"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        assert!(t.rows[0].header);
+        assert!(!t.rows[1].header);
+        assert_eq!(t.header_row_count, 1);
     }
 
     #[test]

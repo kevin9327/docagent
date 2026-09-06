@@ -1,22 +1,22 @@
 # DocAgent #1 loop state
 
-Last cycle: 32 (2026-09-06) — subscripts as a smaller lowered face
+Last cycle: 33 (2026-09-06) — table header cells as teal PDF fills
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- `CharStyle.subscript` lays out at 2/3 size on a baseline lowered by 1/5 em.
-- Markdown reads/writes `~text~` (after `~~strike~~`). HTML emits `<sub>`. DOCX keeps `w:vertAlign subscript`. ODT keeps `Tsub` `style:text-position="sub 58%"`.
-- Fixture: `H~2~O` in the body, nested list, and closer so the GitHub PDF/HTML shots show a lowered 2 next to PDF/^A^.
+- Header rows (`row.header` or `header_row_count`) paint `#ccfbf1` cell fills, same teal as code spans.
+- HTML `th` uses that fill. DOCX keeps `w:tblHeader` + `w:shd CCFBF1`. ODT keeps `table:table-header-rows` + `THcell`.
+- Fixture table already marked the first row as header, so the GitHub PDF/HTML shots now show a teal Hop / File / Proof band.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 - input  `927baa86fcdc5d76a72cfbcc8ee32ac3cadbcefb2505bc4bb80b335a14ddef74`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `fa51b7d4611202e46c63d21102874259c6167e006c4d7573fc2825deffae2213`
+- output `47f11bf2366c7ce1f629a781814956a0824b415df1bc051f5c9ad91acb70776d`
 
-Plan hash matches cycle 21–31. Input and output hashes changed with the fixture and smaller lowered glyphs.
+Input and plan hashes match cycle 32. Output hash changed with the header fills.
 
 ## Next
 

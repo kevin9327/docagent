@@ -271,6 +271,47 @@ mod tests {
     }
 
     #[test]
+    fn table_header_paints_teal_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = docagent_model::Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, w, h, .. }
+                        if *color == [204, 251, 241, 255] && *w > 80 && *h > 80
+                )
+            }),
+            "header cells must paint a teal fill"
+        );
+        let marked = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Table(
+            docagent_model::Table::from_cells(vec![
+                vec!["Hop".into(), "File".into()],
+                vec!["Input".into(), "letter.md".into()],
+            ]),
+        ));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(marked, plain_pdf, "header fill must change PDF bytes");
+        assert!(claims_pdfa(&marked));
+    }
+
+    #[test]
     fn heading_rule_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();
