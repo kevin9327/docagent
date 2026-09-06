@@ -338,6 +338,43 @@ mod tests {
     }
 
     #[test]
+    fn underline_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("09:00 local");
+        p.runs[0].style.underline = docagent_model::Underline::Single;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *h == 80 && *w > 80
+                )
+            }),
+            "underline must paint a fill"
+        );
+        let marked = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("09:00 local")));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(marked, plain_pdf, "underline must change PDF bytes");
+        assert!(claims_pdfa(&marked));
+        let s = String::from_utf8_lossy(&marked);
+        assert!(!s.contains("/URI"), "plain underline must not be a /Link");
+    }
+
+    #[test]
     fn hyperlink_underline_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();

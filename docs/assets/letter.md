@@ -22,7 +22,7 @@ docagent prove examples/letter.md
 
 ---
 
-Please confirm before 09:00 local:
+Please confirm before __09:00 local__:
 
 - [x] Receiving dock is clear
   - Bay 4, not bay 2

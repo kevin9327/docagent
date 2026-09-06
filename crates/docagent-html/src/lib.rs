@@ -386,6 +386,18 @@ mod tests {
     }
 
     #[test]
+    fn underlines_emit_u() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("09:00 local");
+        p.runs[0].style.underline = docagent_model::Underline::Single;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<u>09:00 local</u>"), "{html}");
+    }
+
+    #[test]
     fn highlights_emit_mark() {
         let mut doc = Document::new();
         let mut section = Section::default();

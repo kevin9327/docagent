@@ -1120,6 +1120,32 @@ mod tests {
     }
 
     #[test]
+    fn underlines_emit_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("09:00 local");
+        p.runs[0].style.underline = docagent_model::Underline::Single;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let line = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("09:00"))
+            .expect("underlined run");
+        assert!(line.underline);
+        assert!(line.href.is_none());
+        assert!(
+            page.strokes
+                .iter()
+                .any(|s| s.fill == [19, 78, 74, 255] && s.height == 80 && s.width > 80),
+            "underline fill missing: {:?}",
+            page.strokes
+        );
+    }
+
+    #[test]
     fn hyperlinks_emit_underline_fills() {
         let mut doc = Document::new();
         let mut section = Section::default();

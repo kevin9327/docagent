@@ -11,7 +11,7 @@ use std::io::{Cursor, Read, Write};
 use docagent_model::{
     Alignment, Block, BreakKind, Diagnostic, DiagnosticCode, Document, InlineObject, NumberFormat,
     NumberingRef, Paragraph, Run, RunContent, Section, Severity, Table, TableCell, TableRow,
-    DEFAULT_FONT_SIZE_HU, hu_to_twips, twips_to_hu,
+    Underline, DEFAULT_FONT_SIZE_HU, hu_to_twips, twips_to_hu,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -298,6 +298,7 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                     || run.style.strike
                     || run.style.code
                     || run.style.highlight.is_some()
+                    || run.style.underline != Underline::None
                     || sz != default_sz
                 {
                     s.push_str("<w:rPr>");
@@ -309,6 +310,9 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                     }
                     if run.style.strike {
                         s.push_str("<w:strike/>");
+                    }
+                    if run.style.underline != Underline::None {
+                        s.push_str(r#"<w:u w:val="single"/>"#);
                     }
                     if run.style.code {
                         s.push_str(
@@ -400,6 +404,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut run_strike = false;
     let mut run_code = false;
     let mut run_mark = false;
+    let mut run_under = false;
     let mut run_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
@@ -468,6 +473,10 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         let v = attr(&e, "val").unwrap_or_default();
                         run_mark = !v.is_empty() && !v.eq_ignore_ascii_case("none");
                     }
+                    "u" if in_rpr => {
+                        let v = attr(&e, "val").unwrap_or_else(|| "single".into());
+                        run_under = !v.eq_ignore_ascii_case("none");
+                    }
                     "sz" if in_rpr => {
                         if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<i32>().ok()) {
                             run_size = Some(half_points_to_hu(v));
@@ -484,6 +493,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_strike = false;
                         run_code = false;
                         run_mark = false;
+                        run_under = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -500,6 +510,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_strike = false;
                         run_code = false;
                         run_mark = false;
+                        run_under = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -571,6 +582,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                                 strike: run_strike,
                                 code: run_code,
                                 highlight: run_mark,
+                                underline: run_under,
                                 size: run_size,
                             },
                             hyperlink_target.as_deref(),
@@ -581,6 +593,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_strike = false;
                         run_code = false;
                         run_mark = false;
+                        run_under = false;
                         run_size = None;
                     }
                     "hyperlink" => {
@@ -596,6 +609,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                                 strike: run_strike,
                                 code: run_code,
                                 highlight: run_mark,
+                                underline: run_under,
                                 size: run_size,
                             },
                             hyperlink_target.as_deref(),
@@ -679,6 +693,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
             strike: run_strike,
             code: run_code,
             highlight: run_mark,
+            underline: run_under,
             size: run_size,
         },
         hyperlink_target.as_deref(),
@@ -717,6 +732,7 @@ struct RunMarks {
     strike: bool,
     code: bool,
     highlight: bool,
+    underline: bool,
     size: Option<i32>,
 }
 
@@ -735,6 +751,9 @@ fn flush_run(runs: &mut Vec<Run>, text: &mut String, marks: RunMarks, href: Opti
     run.style.code = marks.code;
     if marks.highlight {
         run.style.highlight = Some(docagent_model::Color::MARK);
+    }
+    if marks.underline {
+        run.style.underline = Underline::Single;
     }
     if let Some(sz) = marks.size {
         run.style.size = sz;
@@ -975,6 +994,26 @@ mod tests {
         };
         assert!(p.quote);
         assert!(p.plain_text().contains("Replay is evidence"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_underline() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("09:00 local");
+        p.runs[0].style.underline = Underline::Single;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains(r#"w:val="single""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.underline != Underline::None
+                && matches!(&r.content, RunContent::Text(t) if t == "09:00 local")
+        }));
     }
 
     #[test]

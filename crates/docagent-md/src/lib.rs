@@ -162,79 +162,88 @@ fn paragraph_from_inlines(text: &str) -> Paragraph {
     p
 }
 
+#[derive(Clone, Copy, Default)]
+struct InlineMarks {
+    bold: bool,
+    italic: bool,
+    strike: bool,
+    code: bool,
+    mark: bool,
+    under: bool,
+}
+
 fn parse_runs(text: &str) -> Vec<Run> {
     let chars: Vec<char> = text.chars().collect();
     let mut runs = Vec::new();
     let mut buf = String::new();
-    let mut bold = false;
-    let mut italic = false;
-    let mut strike = false;
-    let mut code = false;
-    let mut mark = false;
+    let mut marks = InlineMarks::default();
     let mut i = 0;
-    let flush = |runs: &mut Vec<Run>,
-                 buf: &mut String,
-                 bold: bool,
-                 italic: bool,
-                 strike: bool,
-                 code: bool,
-                 mark: bool| {
+    let flush = |runs: &mut Vec<Run>, buf: &mut String, marks: InlineMarks| {
         if buf.is_empty() {
             return;
         }
         let mut run = Run::text(std::mem::take(buf));
-        run.style.bold = bold;
-        run.style.italic = italic;
-        run.style.strike = strike;
-        run.style.code = code;
-        if mark {
+        run.style.bold = marks.bold;
+        run.style.italic = marks.italic;
+        run.style.strike = marks.strike;
+        run.style.code = marks.code;
+        if marks.mark {
             run.style.highlight = Some(docagent_model::Color::MARK);
+        }
+        if marks.under {
+            run.style.underline = docagent_model::Underline::Single;
         }
         runs.push(run);
     };
     while i < chars.len() {
         if chars[i] == '`' {
-            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
-            code = !code;
+            flush(&mut runs, &mut buf, marks);
+            marks.code = !marks.code;
             i += 1;
             continue;
         }
-        if !code && chars[i] == '['
+        if !marks.code && chars[i] == '['
             && let Some((display, target, next)) = parse_md_link(&chars, i)
         {
-            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
+            flush(&mut runs, &mut buf, marks);
             runs.push(Run::hyperlink(display, target));
             i = next;
             continue;
         }
-        if !code && chars[i] == '=' && i + 1 < chars.len() && chars[i + 1] == '=' {
-            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
-            mark = !mark;
+        if !marks.code && chars[i] == '=' && i + 1 < chars.len() && chars[i + 1] == '=' {
+            flush(&mut runs, &mut buf, marks);
+            marks.mark = !marks.mark;
             i += 2;
             continue;
         }
-        if !code && chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
-            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
-            strike = !strike;
+        if !marks.code && chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
+            flush(&mut runs, &mut buf, marks);
+            marks.strike = !marks.strike;
             i += 2;
             continue;
         }
-        if !code && chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
-            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
-            bold = !bold;
+        if !marks.code && chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            flush(&mut runs, &mut buf, marks);
+            marks.bold = !marks.bold;
             i += 2;
             continue;
         }
-        if !code && (chars[i] == '*' || chars[i] == '_') {
-            flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
-            italic = !italic;
+        if !marks.code && chars[i] == '_' && i + 1 < chars.len() && chars[i + 1] == '_' {
+            flush(&mut runs, &mut buf, marks);
+            marks.under = !marks.under;
+            i += 2;
+            continue;
+        }
+        if !marks.code && (chars[i] == '*' || chars[i] == '_') {
+            flush(&mut runs, &mut buf, marks);
+            marks.italic = !marks.italic;
             i += 1;
             continue;
         }
         buf.push(chars[i]);
         i += 1;
     }
-    flush(&mut runs, &mut buf, bold, italic, strike, code, mark);
+    flush(&mut runs, &mut buf, marks);
     runs
 }
 
@@ -467,6 +476,9 @@ fn write_runs(p: &Paragraph) -> String {
                 if run.style.bold {
                     s.push_str("**");
                 }
+                if run.style.underline != docagent_model::Underline::None {
+                    s.push_str("__");
+                }
                 if run.style.italic {
                     s.push('_');
                 }
@@ -491,6 +503,9 @@ fn write_runs(p: &Paragraph) -> String {
                 }
                 if run.style.italic {
                     s.push('_');
+                }
+                if run.style.underline != docagent_model::Underline::None {
+                    s.push_str("__");
                 }
                 if run.style.bold {
                     s.push_str("**");
@@ -655,6 +670,22 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn underlines_roundtrip() {
+        let src = b"Please confirm before __09:00 local__:\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.underline != docagent_model::Underline::None
+                && matches!(&r.content, RunContent::Text(t) if t == "09:00 local")
+        }));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("__09:00 local__"), "{back}");
+        assert!(!back.contains("__Please"), "{back}");
     }
 
     #[test]
