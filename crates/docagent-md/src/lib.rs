@@ -68,6 +68,12 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             section.body.push(Block::Paragraph(bullet_item(rest, nest)));
         } else if let Some((n, rest)) = ordered_item(content) {
             section.body.push(Block::Paragraph(decimal_item(rest, n, nest)));
+        } else if let Some(rest) = content.strip_prefix("> ") {
+            let mut p = paragraph_from_inlines(rest);
+            p.quote = true;
+            p.space_before = 80;
+            p.space_after = 200;
+            section.body.push(Block::Paragraph(p));
         } else {
             let mut p = paragraph_from_inlines(trimmed);
             p.space_after = 200;
@@ -254,6 +260,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                             );
                             out.push_str(&format!("{pad}- {}\n", write_runs(p)));
                         }
+                        _ if p.quote => out.push_str(&format!("> {}\n\n", write_runs(p))),
                         _ => out.push_str(&format!("{}\n\n", write_runs(p))),
                     }
                     if listed {
@@ -521,6 +528,19 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn quotes_roundtrip() {
+        let src = b"> Replay is evidence. Same fonts, same bytes.\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.quote);
+        assert!(p.plain_text().contains("Replay is evidence"));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.starts_with("> Replay is evidence"), "{back}");
     }
 
     #[test]

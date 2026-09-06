@@ -211,7 +211,7 @@ fn document_xml(doc: &Document) -> String {
     s
 }
 
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="24" w:space="4" w:color="134E4A"/></w:pBdr><w:ind w:left="144"/></w:pPr></w:style></w:styles>"#;
 
 fn hu_to_half_points(hu: i32) -> i32 {
     (hu / 50).max(1)
@@ -227,13 +227,18 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
     let mut s = String::from("<w:p>");
     let heading = p.outline_level.filter(|l| *l > 0);
     let num = p.numbering.as_ref();
-    if heading.is_some() || num.is_some() {
+    if heading.is_some() || num.is_some() || p.quote {
         s.push_str("<w:pPr>");
         if let Some(level) = heading {
             let outline = level.saturating_sub(1);
             s.push_str(&format!(
                 r#"<w:pStyle w:val="Heading{level}"/><w:outlineLvl w:val="{outline}"/>"#
             ));
+        }
+        if p.quote {
+            s.push_str(
+                r#"<w:pStyle w:val="Quote"/><w:pBdr><w:left w:val="single" w:sz="24" w:space="4" w:color="134E4A"/></w:pBdr>"#,
+            );
         }
         if let Some(n) = num {
             let num_id = match n.format {
@@ -360,6 +365,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
     let mut para_outline: Option<u8> = None;
+    let mut para_quote = false;
     let mut para_num_id: Option<u32> = None;
     let mut para_ilvl: u8 = 0;
     let mut decimal_seq: u32 = 1;
@@ -377,10 +383,12 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     "t" => in_t = true,
                     "pPr" => in_ppr = true,
                     "pStyle" if in_ppr => {
-                        if let Some(v) = attr(&e, "val")
-                            && let Some(level) = heading_level_from_style(&v)
-                        {
-                            para_outline = Some(level);
+                        if let Some(v) = attr(&e, "val") {
+                            if let Some(level) = heading_level_from_style(&v) {
+                                para_outline = Some(level);
+                            } else if v.eq_ignore_ascii_case("Quote") {
+                                para_quote = true;
+                            }
                         }
                     }
                     "outlineLvl" if in_ppr => {
@@ -420,6 +428,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     "p" => {
                         para_runs.clear();
                         para_outline = None;
+                        para_quote = false;
                         para_num_id = None;
                         para_ilvl = 0;
                         run_bold = false;
@@ -432,6 +441,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         if let Some(p) = take_para(
                             &mut para_runs,
                             &mut para_outline,
+                            &mut para_quote,
                             &mut para_num_id,
                             &mut para_ilvl,
                             &mut decimal_seq,
@@ -515,6 +525,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         if let Some(p) = take_para(
                             &mut para_runs,
                             &mut para_outline,
+                            &mut para_quote,
                             &mut para_num_id,
                             &mut para_ilvl,
                             &mut decimal_seq,
@@ -530,6 +541,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         if let Some(p) = take_para(
                             &mut para_runs,
                             &mut para_outline,
+                            &mut para_quote,
                             &mut para_num_id,
                             &mut para_ilvl,
                             &mut decimal_seq,
@@ -583,6 +595,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     if let Some(p) = take_para(
         &mut para_runs,
         &mut para_outline,
+        &mut para_quote,
         &mut para_num_id,
         &mut para_ilvl,
         &mut decimal_seq,
@@ -633,12 +646,14 @@ fn flush_run(
 fn take_para(
     runs: &mut Vec<Run>,
     outline: &mut Option<u8>,
+    quote: &mut bool,
     num_id: &mut Option<u32>,
     ilvl: &mut u8,
     decimal_seq: &mut u32,
 ) -> Option<Paragraph> {
     if runs.is_empty() {
         *outline = None;
+        *quote = false;
         *num_id = None;
         *ilvl = 0;
         return None;
@@ -646,6 +661,7 @@ fn take_para(
     let mut p = Paragraph::from_text("");
     p.runs = std::mem::take(runs);
     p.outline_level = outline.take();
+    p.quote = std::mem::take(quote);
     if let Some(id) = num_id.take() {
         let format = if id == 2 {
             NumberFormat::Decimal
@@ -816,6 +832,25 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_quote() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay is evidence. Same fonts, same bytes.");
+        p.quote = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains(r#"w:val="Quote""#), "{xml}");
+        assert!(xml.contains("w:pBdr"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.quote);
+        assert!(p.plain_text().contains("Replay is evidence"));
     }
 
     #[test]

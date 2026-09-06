@@ -401,7 +401,8 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
         .as_deref()
         .map(|m| shape(fonts, m, size).width)
         .unwrap_or(0);
-    let usable = (width - p.indent_left - p.indent_right - marker_w).max(1);
+    let quote_pad = if p.quote { 720 } else { 0 };
+    let usable = (width - p.indent_left - quote_pad - p.indent_right - marker_w).max(1);
     let shaped = shape(fonts, &text, size);
     let ranges = break_lines(text.clone(), shaped.advances.clone(), usable);
     let spans = run_spans(p);
@@ -411,7 +412,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     let bullet = is_bullet(p);
     if ranges.is_empty() {
         out.push(LineFrag {
-            x: p.indent_left,
+            x: p.indent_left + quote_pad,
             y: 0,
             width: 0,
             height: lh,
@@ -429,13 +430,22 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             href: None,
         });
         if bullet {
-            fills.push(bullet_fill(p.indent_left, baseline, size));
+            fills.push(bullet_fill(p.indent_left + quote_pad, baseline, size));
+        }
+        if p.quote {
+            fills.push(RectFrag {
+                x: p.indent_left,
+                y: 0,
+                width: 80,
+                height: lh,
+                fill: [19, 78, 74, 255],
+            });
         }
         return (out, fills);
     }
     for (li, (a, b)) in ranges.into_iter().enumerate() {
         let extra_indent = if li == 0 { p.indent_first } else { 0 };
-        let mut x = p.indent_left + extra_indent + if li == 0 { 0 } else { marker_w };
+        let mut x = p.indent_left + quote_pad + extra_indent + if li == 0 { 0 } else { marker_w };
         let mut row: Vec<LineFrag> = Vec::new();
         if li == 0 && bullet {
             fills.push(bullet_fill(x, baseline, size));
@@ -484,7 +494,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             x += w;
         }
         let total_w = row.iter().map(|f| f.width).sum::<i32>();
-        let origin = p.indent_left + extra_indent;
+        let origin = p.indent_left + quote_pad + extra_indent;
         let shift = align_x(origin, total_w, usable + marker_w, p.alignment) - origin;
         for f in &mut row {
             f.x += shift;
@@ -493,7 +503,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             last.height = lh;
         } else {
             row.push(LineFrag {
-                x: p.indent_left,
+                x: p.indent_left + quote_pad,
                 y: 0,
                 width: 0,
                 height: lh,
@@ -508,6 +518,16 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             });
         }
         out.extend(row);
+    }
+    if p.quote {
+        let h = out.iter().map(|l| l.height).sum::<i32>().max(lh);
+        fills.push(RectFrag {
+            x: p.indent_left,
+            y: 0,
+            width: 80,
+            height: h,
+            fill: [19, 78, 74, 255],
+        });
     }
     (out, fills)
 }
@@ -935,6 +955,30 @@ mod tests {
                 .iter()
                 .any(|s| s.fill == [19, 78, 74, 255] && s.height == 80 && s.width > 80),
             "hyperlink underline missing: {:?}",
+            page.strokes
+        );
+    }
+
+    #[test]
+    fn quotes_emit_left_bar_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay is evidence. Same fonts, same bytes.");
+        p.quote = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        assert!(
+            page.lines
+                .iter()
+                .any(|l| l.text.contains("Replay is evidence"))
+        );
+        assert!(
+            page.strokes.iter().any(|s| {
+                s.fill == [19, 78, 74, 255] && s.width == 80 && s.height > 200
+            }),
+            "quote bar missing: {:?}",
             page.strokes
         );
     }

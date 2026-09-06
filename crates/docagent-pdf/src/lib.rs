@@ -371,6 +371,41 @@ mod tests {
     }
 
     #[test]
+    fn quote_bar_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay is evidence. Same fonts, same bytes.");
+        p.quote = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *w == 80 && *h > 200
+                )
+            }),
+            "quote bar must paint a tall fill"
+        );
+        let quoted = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            "Replay is evidence. Same fonts, same bytes.",
+        )));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(quoted, plain_pdf, "quote bar must change PDF bytes");
+        assert!(claims_pdfa(&quoted));
+    }
+
+    #[test]
     fn strikethrough_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();

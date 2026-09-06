@@ -8,6 +8,8 @@ To: operations desk, Duisburg terminal.
 
 The shipment left Busan on 4 September and is booked on the 11 September rail window. This is a flow document: one convert, three hashes, **GPU-free**. Run it twice with the same fonts and the PDF/A bytes match _byte-for-byte_. Agents ~~guess~~.
 
+> Replay is evidence. Same fonts, same bytes.
+
 | Hop | File | Proof |
 | --- | --- | --- |
 | Input | letter.md | input SHA-256 |
