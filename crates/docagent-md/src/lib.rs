@@ -556,7 +556,9 @@ fn image_run(alt: String, src: &str) -> Run {
 }
 
 fn image_from_src(alt: &str, src: &str) -> ImageData {
-    let (mime, bytes) = decode_data_uri(src).unwrap_or_else(|| (mime_from_name(src), Vec::new()));
+    let (mime, bytes) = decode_data_uri(src)
+        .or_else(|| read_relative_image(src))
+        .unwrap_or_else(|| (mime_from_name(src), Vec::new()));
     let (width, height) = raster_hu(&bytes);
     ImageData {
         bytes,
@@ -570,6 +572,54 @@ fn image_from_src(alt: &str, src: &str) -> ImageData {
         },
         wrap: WrapMode::Inline,
     }
+}
+
+fn is_remote_src(src: &str) -> bool {
+    let src = src.trim();
+    src.starts_with("http://")
+        || src.starts_with("https://")
+        || src.starts_with("//")
+        || src.starts_with("data:")
+}
+
+fn read_relative_image(src: &str) -> Option<(String, Vec<u8>)> {
+    if is_remote_src(src) {
+        return None;
+    }
+    let bytes = read_relative_bytes(src)?;
+    Some((mime_from_name(src), bytes))
+}
+
+fn read_relative_bytes(src: &str) -> Option<Vec<u8>> {
+    let src = src.trim();
+    if src.is_empty() {
+        return None;
+    }
+    let path = std::path::Path::new(src);
+    if path.is_absolute() {
+        return std::fs::read(path).ok();
+    }
+    let mut roots = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd);
+    }
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if !roots.iter().any(|r| r == &manifest) {
+        roots.push(manifest);
+    }
+    for root in roots {
+        let mut dir = root.as_path();
+        loop {
+            if let Ok(bytes) = std::fs::read(dir.join(path)) {
+                return Some(bytes);
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+    None
 }
 
 fn mime_from_name(name: &str) -> String {
@@ -1255,6 +1305,26 @@ mod tests {
             first_image(&read(titled.as_bytes()).unwrap()).alt_text.as_deref(),
             Some("caption")
         );
+    }
+
+    #[test]
+    fn images_parse_relative_path() {
+        let png = fixture_png();
+        let doc = read(b"![mark](docs/assets/mark.png)\n").unwrap();
+        let img = first_image(&doc);
+        assert_eq!(img.bytes, png);
+        assert!(!img.bytes.is_empty());
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.alt_text.as_deref(), Some("mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+        let (width, height) = raster_hu(&png);
+        assert_eq!((img.width, img.height), (width, height));
+        assert_ne!((img.width, img.height), (0, 0));
+        let titled = read(b"![mark](docs/assets/mark.png \"Harbor mark\")\n").unwrap();
+        assert_eq!(first_image(&titled).bytes, png);
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("![mark](data:image/png;base64,"), "{back}");
+        assert_eq!(first_image(&read(back.as_bytes()).unwrap()).bytes, png);
     }
 
     #[test]

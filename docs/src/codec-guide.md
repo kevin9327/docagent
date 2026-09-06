@@ -9,10 +9,9 @@ codecs next to DOCX. For RTF or another format:
 3. The contract is `sniff` / `read` / `write`. Lock round-trip text and tables with
    `proptest`. Map `CharStyle` (bold, italic, underline, strike, code, highlight,
    super/sub), `InlineObject::Hyperlink`, and `InlineObject::Image` (`image/png`,
-   `image/jpeg`) when the format has those primitives. If the format has wrapping
-   or table cells, map `WrapMode::Square` / `Behind` / `InFront` / `Tight` and
-   cell-level images the way DOCX (`wp:wrapSquare`, `behindDoc`, `wp:wrapNone` in
-   front) and ODT (cell `draw:image`, nested `text:list`, `Gtight`) already do.
+   `image/jpeg`) when the format has those primitives. Picture in, PDF/A out is
+   the product: a PNG or JPEG must survive into the IR so PDF/A can paint an
+   XObject. Do not invent OCR.
 4. Do not put a format identifier on the IR. Format-specific values become explicit
    `Option` fields.
 5. Promote the crate to a workspace member only after parse-loss 0 on the

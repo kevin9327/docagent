@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="DocAgent — deterministic document runtime for agents" width="100%">
+  <img src="docs/assets/hero.svg" alt="DocAgent — picture in, PDF/A out. Capsule hashed. GPU-free. Not OCR." width="100%">
 </p>
 
 <p align="center">
@@ -9,11 +9,12 @@
   <img src="https://img.shields.io/badge/layout-integer%201%2F7200%22-0f766e" alt="Integer layout">
   <img src="https://img.shields.io/badge/capsule-SHA--256%20×3-134e4a" alt="Capsule hashes">
   <img src="https://img.shields.io/badge/GPU-not%20required-111827" alt="No GPU">
+  <img src="https://img.shields.io/badge/OCR-not%20this%20product-1f2937" alt="Not OCR">
 </p>
 
-<p align="center"><b>Deterministic convert. Three-hash capsule. GPU-free.</b><br>
-Same fonts → same PDF/A bytes. One integer engine. Agents call <code>Command::Convert</code>, not a GUI.<br>
-DOCX · ODT · Markdown · HTML · PDF/A — PNG + JPEG (PDF float + cell + page header/footer, DOCX wrapSquare + behindDoc + inFront, ODT cell + nested lists + Tight). Hangul is a codec, not the product name.</p>
+<p align="center"><b>Picture in. PDF/A out. Capsule hashed. GPU-free.</b><br>
+A PNG or JPEG in Markdown, HTML, DOCX, or ODT becomes a PDF/A XObject.<br>
+Same fonts → same bytes. Agents call <code>Command::Convert</code>. We embed the file you already have — we do not OCR it.</p>
 
 <p align="center">
   <a href="#install--run">Install</a> ·
@@ -23,21 +24,36 @@ DOCX · ODT · Markdown · HTML · PDF/A — PNG + JPEG (PDF float + cell + page
   <a href="docs/src/intro.md">Docs</a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/mark.png" alt="Harbor mark — the picture that goes in" width="96">
+</p>
+
+```markdown
+![Harbor mark](docs/assets/mark.png)
+```
+
+```bash
+docagent convert examples/letter.md --pdf out.pdf --html out.html --capsule cap.json
+```
+
+<p align="center"><sub>That line is in <code>examples/letter.md</code> now. The picture becomes a PDF/A XObject. Not a scan. Not a VLM guess. Not OmniDocBench.</sub></p>
+
 ---
 
 <p align="center">
-  <img src="docs/assets/pipeline.svg" alt="Input formats → one integer engine → PDF/A HTML page header/footer DOCX wrapSquare behindDoc inFront ODT nested lists Tight wrap cell PNG JPEG float and cell XObject → capsule hashes" width="100%">
+  <img src="docs/assets/pipeline.svg" alt="Picture in: Markdown DOCX ODT HTML with PNG or JPEG. One integer engine. PDF/A out with that picture as an XObject. Three capsule hashes. Not OCR." width="100%">
 </p>
 
 <p align="center">
-  <img src="docs/assets/ships.svg" alt="Shipped IR marks: lists, links, strike, quotes, code, thematic, tasks, highlight, super/sub, underline, PNG/JPEG images, table headers. PDF float XObject, cell images, page header/footer. DOCX wrapSquare, behindDoc, inFront. ODT nested lists, tight wrap, cell images. HTML reads img data-URI, lists, table headers, blockquote, pre, a, mark — not HTML5. Hangul CHAR_SHAPE, hyperlinks, Quote, CodeBlock, HorizontalLine, Task, highlight shade, Bullet/Number lists, table headers except HWP 3. Dash on Hangul: images. No OCR or OmniDocBench." width="100%">
+  <img src="docs/assets/ships.svg" alt="PNG and JPEG on Markdown, HTML, PDF/A, DOCX, and ODT become PDF/A XObjects. Hangul images are a dash. Not OCR, not VLM, not OmniDocBench." width="100%">
 </p>
 
 <p align="center">
   <img src="docs/assets/output-trio.png" alt="Real convert of examples/letter.md: PDF/A page, semantic HTML, capsule SHA-256 ×3" width="100%">
 </p>
-<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. Not mockups. This fixture has no image.<br>
-PNG + JPEG on MD / HTML / PDF/A (float XObject, cell images, page header/footer text) / DOCX (<code>wrapSquare</code>, <code>behindDoc</code>, in-front) / ODT (cell <code>draw:image</code>, nested lists, Tight wrap). HTML <code>read</code> of <code>&lt;img data:…&gt;</code>, lists, <code>&lt;th&gt;</code>/<code>&lt;thead&gt;</code>, <code>&lt;blockquote&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;a href&gt;</code>, <code>&lt;mark&gt;</code> — not HTML5. Hangul Quote / CodeBlock / HorizontalLine / Task / CHAR_SHAPE highlight / Bullet / Number / table headers (not HWP 3). Not Hangul images.</sub></p>
+<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. Not mockups.<br>
+<strong>Images row:</strong> PNG + JPEG are <strong>yes</strong> on Markdown / HTML / PDF/A / DOCX / ODT (PDF/A XObject, DOCX <code>a:blip</code>, ODT <code>draw:image</code>, HTML <code>&lt;img&gt;</code>). Hangul images are <strong>—</strong>.<br>
+<code>examples/letter.md</code> contains <code>![Harbor mark](docs/assets/mark.png)</code>. These <code>output-*.png</code> frames are still text-only — no Harbor mark on the page. A stale shot is not a missing Images row.</sub></p>
 
 ## Why this exists
 
@@ -45,16 +61,16 @@ MinerU, Docling, Marker, and Unstructured turn documents into tokens for models.
 Pandoc, python-docx, WeasyPrint, ONLYOFFICE, and LibreOffice turn documents into other documents.
 **DocAgent is the runtime in the middle that an agent can call, replay, and prove.**
 
+Picture in, PDF/A out is the first-screen job. MinerU reads a scan. DocAgent embeds a PNG.
+
 | An agent needs | DocAgent |
 | --- | --- |
 | One typed call, not a GUI | `Command::Convert` |
 | Proof it ran the same file | capsule: input / plan / output SHA-256 |
 | Same fonts → same PDF twice | integer layout at 1/7200 inch |
 | Word, LibreOffice, Markdown, print | DOCX · ODT · MD · HTML · PDF/A |
-| Images on those five codecs | PNG + JPEG: `![alt]`, `<img data:…>`, PDF/A float + cell XObject + page header/footer text, DOCX `wp:wrapSquare` + `behindDoc` + in-front, ODT cell `draw:image` + nested `text:list` + Tight |
-| HTML an agent can import | `read` recovers data-URI `<img>`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>` — not HTML5 |
-| Korean public files without a second product | HWP · HWPX · HML · HWP 3 on the same IR |
-| No GPU bill, no VLM drift | CPU, deterministic |
+| A picture that survives convert | PNG + JPEG → PDF/A XObject on those five codecs. Hangul: **—** |
+| No GPU bill, no VLM drift | CPU, deterministic. Not OCR. |
 
 People still receive a normal file. The agent receives a capsule.
 
@@ -79,11 +95,10 @@ No OmniDocBench numbers live on this page.
 | [python-docx](https://github.com/python-openxml/python-docx) 5.7k | Word DOCX read/write | | | | | **yes** | |
 | [LibreOffice](https://github.com/LibreOffice/core) 4.3k | Headless office convert | | | | | **yes** | |
 
-**North star:** drop `examples/letter.md` (or DOCX/ODT) and get PDF/A + HTML + Markdown + DOCX + ODT whose bytes match the next run, with three hashes in the capsule.
-Images: **yes** PNG + JPEG on Markdown / HTML / PDF/A / DOCX / ODT — PDF float + cell XObject + page header/footer text, DOCX `wp:wrapSquare` + `behindDoc` + in-front, ODT cell `draw:image` + nested lists + Tight wrap. **—** on Hangul. `letter.md` itself still has no image.
-HTML: `read` recovers `<img src="data:…">`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>` (Pandoc-class import). Not a full HTML5 engine.
-Hangul CHAR_SHAPE (incl. shade highlight), hyperlinks, Quote / CodeBlock / HorizontalLine / Task, Bullet / Number lists, table headers: **yes** (headers not HWP 3).
-Hangul **—**: images. LineSeg vs rhwp is a regional CI track, not this page.
+**North star:** drop `examples/letter.md` (or DOCX/ODT) that contains a PNG or JPEG, and get PDF/A + HTML + Markdown + DOCX + ODT whose bytes match the next run, with three hashes in the capsule. The picture is a PDF/A XObject. Not OCR.
+
+Images: **yes** PNG + JPEG on Markdown / HTML / PDF/A / DOCX / ODT. **—** on Hangul.
+The demo letter is `![Harbor mark](docs/assets/mark.png)`. Convert shots on this page (`docs/assets/output-*.png`) are still text-only — no picture painted. A stale screenshot is not a missing Images row.
 
 ## What ships
 
@@ -91,26 +106,24 @@ Honest codec coverage — not a wishlist. Full table: [`docs/src/capabilities.md
 
 | Mark | Markdown | HTML | PDF/A | DOCX | ODT | Hangul |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| Lists (ul/ol, nested) | **yes** | `read` ul/ol/tasks | markers | `w:numPr` | nested `text:list` | **yes** · Bullet / Number |
-| Links | `[text](url)` | `<a href>` | URI `/Link` | `w:hyperlink` | `text:a` | `%hlk` / `HYPERLINK` / TagID 3 |
-| Strike | `~~text~~` | `<s>` | fill | `w:strike` | line-through | CHAR_SHAPE (not HWP 3) |
-| Quotes | `>` | `<blockquote>` | quote bar | Quote | Quote | **yes** · Quote style |
-| Code | `` `span` `` / fence | `<code>` / `<pre>` | fills | Code / CodeBlock | Tcode / CodeBlock | **yes** · CodeBlock style |
-| Thematic break | `---` | `<hr/>` | rule fill | HorizontalLine | HorizontalLine | **yes** · HorizontalLine |
-| Tasks | `- [x]` | checkbox | task box | `[x]` | `[x]` | **yes** · Task style |
-| Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** · CHAR_SHAPE shade |
-| Super / sub | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline | `w:vertAlign` | Tsuper / Tsub | CHAR_SHAPE |
-| Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | CHAR_SHAPE |
-| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | XObject · float · cell | `a:blip` · wrapSquare · behindDoc · inFront | `draw:image` · cell · Tight | — |
-| Table header | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** · not HWP 3 |
+| Lists (ul/ol, nested) | **yes** | `read` ul/ol/tasks | markers | `w:numPr` | `text:list` | **yes** |
+| Links | `[text](url)` | `<a href>` | URI `/Link` | `w:hyperlink` | `text:a` | **yes** |
+| Strike | `~~text~~` | `<s>` | fill | `w:strike` | line-through | **yes** |
+| Quotes | `>` | `<blockquote>` | quote bar | Quote | Quote | **yes** |
+| Code | `` `span` `` / fence | `<code>` / `<pre>` | fills | Code | Tcode | **yes** |
+| Thematic break | `---` | `<hr/>` | rule fill | HorizontalLine | HorizontalLine | **yes** |
+| Tasks | `- [x]` | checkbox | task box | `[x]` | `[x]` | **yes** |
+| Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** |
+| Super / sub | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline | `w:vertAlign` | Tsuper / Tsub | **yes** |
+| Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | **yes** |
+| **Images (PNG, JPEG)** | `![alt](…)` | `<img>` | **XObject** | `a:blip` | `draw:image` | **—** |
+| Table header | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** |
 
-Hangul CHAR_SHAPE maps bold / italic / underline / super / sub on HWP 5, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 attr bits (HWP 3 has no strike bit). Highlight is CHAR_SHAPE shade (HWP 5 shade RGB, HWPX `hh:shade`, HML `SHADECOLOR`, HWP 3 shade ratio). Table header rows round-trip on HWP 5 / HWPX / HML (HWP 3 has no header primitive). Hyperlinks: HWP 5 `%hlk`, HWPX `hp:fieldBegin type="HYPERLINK"`, HML `FIELDBEGIN Type="Hyperlink"`, HWP 3 control-10 + additional-info TagID 3. Para styles `Quote`, `CodeBlock`, `HorizontalLine`, `Task` (`[x]` / `[ ]`), `Bullet`, and `Number` round-trip on all four Hangul codecs. Images do not.
+**Images are the first-class row.** PNG and JPEG round-trip on Markdown, HTML, PDF/A, DOCX, and ODT. They stay **—** on Hangul. That dash is real. The demo letter is `![Harbor mark](docs/assets/mark.png)` — picture in. PDF/A out paints it as an XObject.
 
-HTML `read` recovers `<img src="data:image/png|jpeg;base64,…">`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, and `<mark>` into the same IR (Pandoc-class import). Write emits those tags. `http(s):` `src` is skipped. This is not a full HTML5 engine: no CSS layout, no JavaScript, no remote fetch. `examples/letter.md` has no image, so the convert shots below do not show one.
+HTML `read` recovers data-URI `<img>`, lists, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, and `<mark>` into the same IR. `http(s):` `src` is skipped. This is not a full HTML5 engine.
 
-PDF `Block::Float(Float::Image)` and table-cell `InlineObject::Image` layout and paint as PDF/A XObjects; oversized floats clamp to content width; cell images clamp to cell width. `Section.header` / `footer` paint in the margin bands (text and header images) and embed in PDF/A. DOCX `WrapMode::Square` / `Behind` / `InFront` / `Tight` round-trip as `wp:wrapSquare` / `wp:wrapNone`+behindDoc / `wp:wrapNone` in front / `wp:wrapTight`. ODT writes `draw:image` inside table cells, nested `<text:list>` inside `<text:list-item>`, `WrapMode::Tight` (`Gtight`), and `WrapMode::Behind` (`Gbehind`). HTML `read` also recovers `<s>`/`<u>`/`<sup>`/`<sub>` and `<header>`/`<footer>`.
-
-No spreadsheet. No slides. No cursor. No undo stack. Flow documents only.
+No spreadsheet. No slides. No cursor. No undo stack. No OCR. Flow documents only.
 
 ## Install / run
 
@@ -163,12 +176,13 @@ Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/lette
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. List markers, task boxes, links, strike, quote bars, code fills, highlight, rules, and header cells are painted fills. Superscripts/subscripts shift the baseline. Bold is a second fill; italic is a 0.20 shear. PNG and JPEG, when present, are PDF/A XObjects — <code>Block::Float</code> and table-cell images. Page header/footer text paints in the margin bands. This letter fixture has no image. GPU-free. Same fonts → same bytes.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. Marks are painted fills. PNG and JPEG are PDF/A XObjects. GPU-free. Same fonts → same bytes.<br>
+Source of truth: <code>![Harbor mark](docs/assets/mark.png)</code> in <code>examples/letter.md</code>. This PNG is still text-only — demo has not refreshed <code>output-pdf.png</code>.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
 </p>
-<p align="center"><sub>HTML from the same IR: headings, quotes, tables, nested lists, tasks, bold, italic, strike, code, fence, rule, highlight, underline, super/sub, and links. Write emits <code>&lt;img src="data:…"&gt;</code>, lists, <code>&lt;th&gt;</code>, <code>&lt;blockquote&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;a href&gt;</code>, <code>&lt;mark&gt;</code>; <code>read</code> recovers those tags plus <code>&lt;ul&gt;</code>/<code>&lt;ol&gt;</code>/<code>&lt;ul class="tasks"&gt;</code> and <code>&lt;th&gt;</code>/<code>&lt;thead&gt;</code>. The letter fixture has no image. Not HTML5.</sub></p>
+<p align="center"><sub>HTML from the same IR. Write emits <code>&lt;img&gt;</code> for the Harbor mark; <code>read</code> recovers data-URI images. Not HTML5. This frame is still text-only — no picture.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
@@ -176,24 +190,24 @@ Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/lette
 <p align="center"><sub>Capsule: input / plan / output SHA-256. Replay is evidence.</sub></p>
 
 <p align="center">
-  <img src="docs/assets/convert-story.jpg" alt="Paper in, PDF/A and HTML out, capsule on the desk" width="100%">
+  <img src="docs/assets/convert-story.jpg" alt="Picture in, PDF/A out: a photograph becomes a PDF/A page; the metal token is the capsule" width="100%">
 </p>
-<p align="center"><sub>Paper in → PDF/A + HTML out. The metal token is the capsule: three SHA-256 hashes an agent can replay.</sub></p>
+<p align="center"><sub>Picture in → PDF/A out. The metal token is the capsule: three SHA-256 hashes an agent can replay. Not a scanner.</sub></p>
 
 <p align="center">
-  <img src="docs/assets/capsule-page.jpg" alt="Laid-out page bound to a three-hash capsule chain" width="100%">
+  <img src="docs/assets/capsule-page.jpg" alt="Laid-out page with a picture, bound to a three-hash capsule chain" width="100%">
 </p>
-<p align="center"><sub>One layout pass. Input, plan, and output each get a hash. Same fonts, same bytes.</sub></p>
+<p align="center"><sub>One layout pass. The picture is in the page. Input, plan, and output each get a hash. Same fonts, same bytes.</sub></p>
 
 | Surface | What it is |
 | --- | --- |
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
-| **PDF/A** | Archival print from the integer plan. PNG and JPEG are XObjects, including `Block::Float(Float::Image)` and table-cell images. Oversized floats clamp to content width; cell images clamp to cell width. `Section.header` / `footer` text paints in the margin bands. Two runs, same fonts, same bytes. |
-| **DOCX / ODT** | Word and LibreOffice files. Headings, lists, links, strike, quotes, code, tasks, highlight, underline, super/sub, table headers, PNG + JPEG (`a:blip` / `draw:image`). DOCX `wrapSquare` / `behindDoc` / in-front. ODT nested lists + cell images + Tight wrap + `svg:desc` alt. |
-| **Markdown / HTML** | Agent-native text and semantic HTML. Markdown `![alt](src "title")`. HTML write emits `<img src="data:…">`, lists, `<th>`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>`; `read` recovers those tags plus `<ul>`/`<ol>`/`<ul class="tasks">` and `<th>`/`<thead>`. Not HTML5. |
+| **PDF/A** | Archival print from the integer plan. PNG and JPEG are XObjects. Two runs, same fonts, same bytes. |
+| **DOCX / ODT** | Word and LibreOffice files. Headings, lists, links, tables, PNG + JPEG (`a:blip` / `draw:image`). |
+| **Markdown / HTML** | Agent-native text and semantic HTML. `![alt](src)`. HTML `<img>` write / data-URI `read`. Not HTML5. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
-| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. CHAR_SHAPE (including shade highlight), hyperlinks, Quote / CodeBlock / Task / Bullet / Number styles, HorizontalLine thematic breaks, and table headers (not HWP 3). Still **—**: images. |
+| **Hangul** | Regional codecs on the same IR, not the product name. Images on Hangul are still **—**. |
 
 ## Command / Query / Event
 
@@ -208,9 +222,9 @@ the same `Engine`. See [`AGENTS.md`](AGENTS.md) and [`docs/src/intro.md`](docs/s
 
 ```mermaid
 flowchart LR
-  A[DOCX / ODT / MD / HTML / HWP] --> B[docagent-model IR]
+  A[DOCX / ODT / MD / HTML + PNG/JPEG] --> B[docagent-model IR]
   B --> C[docagent-layout<br/>i32 @ 1/7200 in]
-  C --> D[PDF/A]
+  C --> D[PDF/A XObject]
   C --> E[HTML]
   C --> F[DOCX / ODT / MD]
   B --> G[capsule.json<br/>input · plan · output]

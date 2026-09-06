@@ -909,24 +909,46 @@ mod tests {
         "/../../docs/assets/mark.png"
     ));
 
-    fn doc_with_mark() -> Document {
-        let mut doc = Document::new();
-        let mut section = Section::default();
-        let mut p = Paragraph::from_text("");
-        p.runs = vec![docagent_model::Run {
+    fn mark_run(width: i32, height: i32) -> docagent_model::Run {
+        docagent_model::Run {
             style: docagent_model::CharStyle::default(),
             content: docagent_model::RunContent::Inline(docagent_model::InlineObject::Image(
                 docagent_model::ImageData {
                     bytes: MARK_PNG.to_vec(),
                     mime: "image/png".into(),
-                    width: 1600,
-                    height: 1600,
+                    width,
+                    height,
                     alt_text: Some("mark".into()),
                     wrap: docagent_model::WrapMode::Inline,
                 },
             )),
-        }];
+        }
+    }
+
+    fn doc_with_mark() -> Document {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![mark_run(1600, 1600)];
         section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        doc
+    }
+
+    fn letter_with_mark(width: i32, height: i32) -> Document {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut heading = Paragraph::from_text("Northwind Freight");
+        heading.outline_level = Some(1);
+        heading.runs[0].style.size = 1800;
+        heading.runs[0].style.bold = true;
+        section.body.push(Block::Paragraph(heading));
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(width, height)];
+        section.body.push(Block::Paragraph(img_p));
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            "The shipment left Busan on 4 September",
+        )));
         doc.sections.push(section);
         doc
     }
@@ -967,6 +989,72 @@ mod tests {
             "embedded PNG must enlarge PDF ({} vs {})",
             pdf.len(),
             blank_pdf.len()
+        );
+    }
+
+    #[test]
+    fn letter_inline_image_paints_pdfa_at_imagedata_size() {
+        const W: i32 = 2400;
+        const H: i32 = 1600;
+        let list = paint(&layout_document(
+            &letter_with_mark(W, H),
+            &FontSet::bundled(),
+        ));
+        let image = list.ops.iter().find_map(|op| match op {
+            Op::Image { x, y, w, h, bytes, mime }
+                if bytes.as_slice() == MARK_PNG && mime == "image/png" =>
+            {
+                Some((*x, *y, *w, *h))
+            }
+            _ => None,
+        });
+        let (ix, iy, iw, ih) = image.expect("letter image op missing");
+        assert_eq!(
+            (iw, ih),
+            (W, H),
+            "PDF/A paint must use ImageData width×height, not PNG pixels"
+        );
+        let body = list.ops.iter().find_map(|op| match op {
+            Op::Text { x, y, size, text, .. } if text.contains("shipment") => {
+                Some((*x, *y, *size))
+            }
+            _ => None,
+        });
+        let (bx, by, bsize) = body.expect("body text op missing");
+        assert!(
+            by.saturating_sub(bsize) >= iy.saturating_add(ih),
+            "body baseline {by} size {bsize} overlaps image ({ix},{iy}) {iw}×{ih}; body x {bx}"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(
+            s.contains("/Image"),
+            "PDF image XObject missing: {}",
+            s.chars().take(400).collect::<String>()
+        );
+        assert!(s.contains("/Width"), "image width missing");
+        assert!(s.contains("/Height"), "image height missing");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("Northwind Freight")));
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            "The shipment left Busan on 4 September",
+        )));
+        plain.sections.push(section);
+        let without = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert!(
+            pdf.len() > without.len(),
+            "letter PNG must enlarge PDF ({} vs {})",
+            pdf.len(),
+            without.len()
         );
     }
 

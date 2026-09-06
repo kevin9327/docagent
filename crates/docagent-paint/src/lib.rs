@@ -249,24 +249,41 @@ mod tests {
         );
     }
 
-    #[test]
-    fn paint_emits_image_ops() {
-        let mut doc = Document::new();
-        let mut section = Section::default();
-        let mut p = Paragraph::from_text("mark");
-        p.runs.push(docagent_model::Run {
+    fn mark_run(width: i32, height: i32) -> docagent_model::Run {
+        docagent_model::Run {
             style: docagent_model::CharStyle::default(),
             content: docagent_model::RunContent::Inline(docagent_model::InlineObject::Image(
                 docagent_model::ImageData {
                     bytes: MARK_PNG.to_vec(),
                     mime: "image/png".into(),
-                    width: 1600,
-                    height: 1600,
+                    width,
+                    height,
                     alt_text: Some("mark".into()),
                     wrap: docagent_model::WrapMode::Inline,
                 },
             )),
-        });
+        }
+    }
+
+    fn boxes_overlap(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
+        let (ax, ay, aw, ah) = a;
+        let (bx, by, bw, bh) = b;
+        aw > 0
+            && ah > 0
+            && bw > 0
+            && bh > 0
+            && ax < bx.saturating_add(bw)
+            && ax.saturating_add(aw) > bx
+            && ay < by.saturating_add(bh)
+            && ay.saturating_add(ah) > by
+    }
+
+    #[test]
+    fn paint_emits_image_ops() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("mark");
+        p.runs.push(mark_run(1600, 1600));
         section.body.push(Block::Paragraph(p));
         doc.sections.push(section);
         let list = paint(&layout_document(&doc, &FontSet::bundled()));
@@ -279,6 +296,54 @@ mod tests {
                 )
             }),
             "image op missing"
+        );
+    }
+
+    #[test]
+    fn paint_letter_image_at_imagedata_size_without_overlapping_body() {
+        const W: i32 = 2400;
+        const H: i32 = 1600;
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut heading = Paragraph::from_text("Northwind Freight");
+        heading.outline_level = Some(1);
+        heading.runs[0].style.size = 1800;
+        heading.runs[0].style.bold = true;
+        section.body.push(Block::Paragraph(heading));
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(W, H)];
+        section.body.push(Block::Paragraph(img_p));
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            "The shipment left Busan on 4 September",
+        )));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let image = list.ops.iter().find_map(|op| match op {
+            Op::Image { x, y, w, h, bytes, mime }
+                if bytes.as_slice() == MARK_PNG && mime == "image/png" =>
+            {
+                Some((*x, *y, *w, *h))
+            }
+            _ => None,
+        });
+        let (ix, iy, iw, ih) = image.expect("letter image op missing");
+        assert_eq!((iw, ih), (W, H), "paint must use ImageData width×height");
+        let body = list.ops.iter().find_map(|op| match op {
+            Op::Text { x, y, size, text, .. } if text.contains("shipment") => {
+                Some((*x, *y, *size))
+            }
+            _ => None,
+        });
+        let (bx, by, bsize) = body.expect("body text op missing");
+        let img_box = (ix, iy, iw, ih);
+        let body_box = (bx, by.saturating_sub(bsize), 1, bsize.max(1));
+        assert!(
+            by.saturating_sub(bsize) >= iy.saturating_add(ih),
+            "body baseline {by} size {bsize} overlaps image y {iy} height {ih}"
+        );
+        assert!(
+            !boxes_overlap(img_box, body_box),
+            "image {img_box:?} overlaps body {body_box:?}"
         );
     }
 

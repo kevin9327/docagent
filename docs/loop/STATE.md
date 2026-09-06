@@ -24,3 +24,11 @@ https://github.com/kevin9327/docagent
 ## Rule
 
 Orchestrator fans out 6 lanes (LANES.md). One commit after clippy+tests. No overlapping files.
+
+## Cycle 49 landing (2026-09-06)
+
+First screen now sells **picture in, PDF/A out**. Hero / pipeline / ships drop wrap-mode and Hangul trivia. Images row: PNG+JPEG **yes** on MD/HTML/PDF/A/DOCX/ODT, Hangul **—**. Demo letter landed `![Harbor mark](docs/assets/mark.png)`; README points at that line and at `docs/assets/mark.png`. `output-*.png` were not rewritten by landing — captions stay honest if those frames are still text-only. No OCR claims.
+
+## Cycle 50 landing (2026-09-06)
+
+Shallow score vs the locked ten. `examples/letter.md` has `![Harbor mark](docs/assets/mark.png)`. `output-pdf.png`, `output-html.png`, and `output-trio.png` are still text-only — no Harbor mark painted. Captions on README / intro / capabilities stay honest: GitHub-image gap **open**. Next gap is not WeasyPrint until those shots show the mark. No new IR. No OCR. Hangul still **stop deepening**.

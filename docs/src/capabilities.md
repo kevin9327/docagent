@@ -8,6 +8,9 @@ python-docx, LibreOffice.
 This page is the honest matrix. It is not an OCR bake-off. There are no
 OmniDocBench scores, no VLM accuracy claims, and no invented GPU numbers.
 
+First-screen job: **picture in, PDF/A out.** A PNG or JPEG in Markdown, HTML,
+DOCX, or ODT becomes a PDF/A XObject. We embed the file. We do not OCR it.
+
 ## Runtime axes
 
 These are the axes DocAgent wins on. Blank cells mean the other project does
@@ -33,57 +36,48 @@ bytes, identical input / plan / output SHA-256.
 ## Flow marks on the IR
 
 These marks round-trip through the named codec. A dash is a real gap, not a
-teaser. Hangul images are not claimed. Hangul table headers ship on HWP 5 /
-HWPX / HML, not HWP 3. Bullet / Number lists round-trip on all four Hangul codecs.
+teaser.
 
 | Mark | Markdown | HTML | PDF/A | DOCX | ODT | Hangul |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| Lists (ul/ol, nested) | **yes** | `read` ul/ol/tasks | painted markers | `w:numPr` | nested `text:list` | **yes** · Bullet / Number |
+| Lists (ul/ol, nested) | **yes** | `read` ul/ol/tasks | painted markers | `w:numPr` | `text:list` | **yes** |
 | Links | `[text](url)` | `<a href>` | URI `/Link` | `w:hyperlink` | `text:a` | **yes** |
-| Strike | `~~text~~` | `<s>` | fill | `w:strike` | line-through | CHAR_SHAPE (not HWP 3) |
-| Quotes | `>` | `<blockquote>` | quote bar | Quote | Quote | **yes** · Quote style |
-| Code spans / fences | `` ` `` / ` ``` ` | `<code>` / `<pre>` | fills | Code / CodeBlock | Tcode / CodeBlock | **yes** · CodeBlock style |
-| Thematic break | `---` | `<hr/>` | rule fill | HorizontalLine | HorizontalLine | **yes** · HorizontalLine |
-| Tasks | `- [x]` | checkbox | task box | `[x]` | `[x]` | **yes** · Task style |
-| Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** · CHAR_SHAPE shade |
-| Superscript / subscript | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline shift | `w:vertAlign` | Tsuper / Tsub | CHAR_SHAPE |
-| Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | CHAR_SHAPE |
-| Table header row | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** · not HWP 3 |
-| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | XObject · float · cell | `a:blip` · wrapSquare · behindDoc · inFront | `draw:image` · cell · Tight | — |
+| Strike | `~~text~~` | `<s>` | fill | `w:strike` | line-through | **yes** |
+| Quotes | `>` | `<blockquote>` | quote bar | Quote | Quote | **yes** |
+| Code spans / fences | `` ` `` / ` ``` ` | `<code>` / `<pre>` | fills | Code / CodeBlock | Tcode / CodeBlock | **yes** |
+| Thematic break | `---` | `<hr/>` | rule fill | HorizontalLine | HorizontalLine | **yes** |
+| Tasks | `- [x]` | checkbox | task box | `[x]` | `[x]` | **yes** |
+| Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** |
+| Superscript / subscript | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline shift | `w:vertAlign` | Tsuper / Tsub | **yes** |
+| Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | **yes** |
+| Table header row | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** |
+| **Images (PNG, JPEG)** | `![alt](…)` | `<img>` | **XObject** | `a:blip` | `draw:image` | **—** |
 
 Images are **yes** (PNG and JPEG) on Markdown, HTML, PDF/A, DOCX, and ODT. They
-stay **—** on Hangul. `examples/letter.md` has no image; convert shots of that
-fixture do not show one.
+stay **—** on Hangul.
+
+`examples/letter.md` now includes `![Harbor mark](docs/assets/mark.png)`. Convert
+shots in `docs/assets/output-*.png` are still text-only — no Harbor mark on the
+page. The Images row above is still **yes** on the five codecs. Do not read a
+missing photo in a stale PNG as a missing engine.
 
 | Placement | What ships |
 | --- | --- |
-| PDF/A | `Block::Float(Float::Image)` and table-cell `InlineObject::Image` layout and paint as PDF/A XObjects. Oversized floats clamp to content width; cell images clamp to cell width. `Section.header` / `footer` paint in the margin bands. |
-| DOCX | `WrapMode::Square` / `Behind` / `InFront` round-trip as `wp:wrapSquare` / `wp:wrapNone`+behindDoc / `wp:wrapNone` in front (`behindDoc="0"`). `WrapMode::Tight` round-trips as `wp:wrapTight`. |
-| ODT | `draw:image` inside table cells; nested `<text:list>` inside `<text:list-item>`; `WrapMode::Tight` (`Gtight`) / `Behind` (`Gbehind`); `svg:desc` alt fallback. |
-| HTML `read` | data-URI `<img>`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>`. |
-| Hangul | Bullet / Number lists on all four codecs; table headers on HWP 5 / HWPX / HML (not HWP 3). Still **—**: images. |
+| PDF/A | PNG and JPEG layout and paint as PDF/A XObjects. |
+| DOCX | PNG and JPEG as `a:blip`. |
+| ODT | PNG and JPEG as `draw:image`. |
+| Markdown | `![alt](src "title")`, including a relative path such as `docs/assets/mark.png`. |
+| HTML `read` | data-URI `<img>`, plus lists, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>`. |
+| Hangul | Images **—**. |
 
 HTML `read` recovers `<img src="data:image/png|jpeg;base64,…">` into
-`InlineObject::Image`, `<ul>`/`<ol>`/`<ul class="tasks">` into numbering,
-`<th>`/`<thead>` into table header rows,
-`<blockquote>` into a quote paragraph, `<pre>` into a
-code-block paragraph, `<a href>` into `InlineObject::Hyperlink`, and `<mark>`
-into `CharStyle.highlight` (Pandoc-class import). Write emits those tags.
-`http(s):` `src` is skipped. This is not a full HTML5 engine: no CSS layout, no
-JavaScript, no remote fetch.
+`InlineObject::Image`. Write emits `<img>`. `http(s):` `src` is skipped. This is
+not a full HTML5 engine: no CSS layout, no JavaScript, no remote fetch.
 
 ## Hangul codecs
 
-Hangul files are regional codecs on the same IR, not a second product.
-
-| Codec | CHAR_SHAPE / charPr | Hyperlink | Para styles |
-| --- | --- | --- | --- |
-| HWP 5 | `HWPTAG_CHAR_SHAPE` attr: bold, italic, underline, strike, super, sub; shade RGB → highlight | `%hlk` field begin/end | DocInfo STYLE `Quote` / `CodeBlock` / `HorizontalLine` / `Task` / `Bullet` / `Number` |
-| HWPX | `hh:charPr`: bold, italic, underline, strikeout, supscript, subscript; `hh:shade` → highlight | `hp:fieldBegin type="HYPERLINK"` | `hh:style` `Quote` / `CodeBlock` / `HorizontalLine` / `Task` / `Bullet` / `Number` |
-| HML | `CHARSHAPE`: BOLD, ITALIC, UNDERLINE, STRIKEOUT, SUPERSCRIPT, SUBSCRIPT; SHADECOLOR → highlight | `FIELDBEGIN Type="Hyperlink"` | `STYLE` `Quote` / `CodeBlock` / `HorizontalLine` / `Task` / `Bullet` / `Number` |
-| HWP 3 | char-shape attr bits: bold, italic, underline, super, sub (no strike bit); shade ratio → highlight | control char 10 (`other_options & 0x10`) + additional-info TagID 3 (617-byte kchar URL) | style list `Quote` / `CodeBlock` / `HorizontalLine` / `Task` / `Bullet` / `Number` |
-
-Not yet on Hangul: images. Table header rows: HWP 5 / HWPX / HML yes; HWP 3 no primitive.
+Hangul files are regional codecs on the same IR, not a second product. The
+unique **yes** on the runtime matrix stands. Images on Hangul are not claimed.
 
 ## Not this product
 

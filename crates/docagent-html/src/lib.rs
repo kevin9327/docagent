@@ -935,7 +935,7 @@ fn image_from_attrs(attrs: &[(String, String)]) -> Option<ImageData> {
     if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("//") {
         return None;
     }
-    let (mime, bytes) = decode_data_uri(src)?;
+    let (mime, bytes) = decode_data_uri(src).or_else(|| read_relative_image(src))?;
     let (width, height) = raster_hu(&bytes);
     let alt = attr(attrs, "alt").filter(|s| !s.is_empty()).map(str::to_string);
     Some(ImageData {
@@ -946,6 +946,73 @@ fn image_from_attrs(attrs: &[(String, String)]) -> Option<ImageData> {
         alt_text: alt,
         wrap: WrapMode::Inline,
     })
+}
+
+fn is_remote_src(src: &str) -> bool {
+    let src = src.trim();
+    src.starts_with("http://")
+        || src.starts_with("https://")
+        || src.starts_with("//")
+        || src.starts_with("data:")
+}
+
+fn read_relative_image(src: &str) -> Option<(String, Vec<u8>)> {
+    if is_remote_src(src) {
+        return None;
+    }
+    let bytes = read_relative_bytes(src)?;
+    Some((mime_from_name(src), bytes))
+}
+
+fn mime_from_name(name: &str) -> String {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e)
+        .unwrap_or("")
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    }
+    .to_string()
+}
+
+fn read_relative_bytes(src: &str) -> Option<Vec<u8>> {
+    let src = src.trim();
+    if src.is_empty() {
+        return None;
+    }
+    let path = std::path::Path::new(src);
+    if path.is_absolute() {
+        return std::fs::read(path).ok();
+    }
+    let mut roots = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd);
+    }
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if !roots.iter().any(|r| r == &manifest) {
+        roots.push(manifest);
+    }
+    for root in roots {
+        let mut dir = root.as_path();
+        loop {
+            if let Ok(bytes) = std::fs::read(dir.join(path)) {
+                return Some(bytes);
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+    None
 }
 
 fn decode_data_uri(src: &str) -> Option<(String, Vec<u8>)> {
@@ -1217,6 +1284,9 @@ fn push_table(s: &mut String, t: &Table) {
 }
 
 fn push_img(s: &mut String, img: &ImageData) {
+    if img.bytes.is_empty() {
+        return;
+    }
     s.push_str("<img alt=\"");
     s.push_str(&escape_attr(img.alt_text.as_deref().unwrap_or("")));
     s.push_str("\" src=\"");
@@ -1756,8 +1826,13 @@ mod tests {
 
     #[test]
     fn images_emit_img() {
+        let png = fixture_png();
+        assert!(!png.is_empty());
         let img = fixture_image("mark");
+        assert_eq!(img.bytes, png);
         let src = image_src(&img);
+        assert!(src.starts_with("data:image/png;base64,"));
+        assert!(src.len() > "data:image/png;base64,".len());
         let mut doc = Document::new();
         let mut section = Section::default();
         let mut p = Paragraph::from_text("");
@@ -1768,15 +1843,20 @@ mod tests {
         section.body.push(Block::Paragraph(p));
         doc.sections.push(section);
         let html = to_html(&doc);
+        assert!(!html.contains("<img/>"), "{html}");
+        assert!(!html.contains(r#"src="""#), "{html}");
         let tag = format!(r#"<img alt="mark" src="{src}"/>"#);
         assert!(html.contains(&tag), "{html}");
         assert!(html.contains("img{max-width:100%"), "{html}");
-        let start = html.find(r#"src="data:image/png;base64,"#).expect("src");
-        let payload = &html[start + r#"src="data:image/png;base64,"#.len()..];
+        let marker = r#"src="data:image/png;base64,"#;
+        let start = html.find(marker).expect("data-uri img");
+        let payload = &html[start + marker.len()..];
         let end = payload.find('"').expect("src end");
+        assert!(end > 0, "empty data-uri is not a picture: {html}");
         let decoded = b64_decode(&payload[..end]).expect("b64");
         assert_eq!(decoded, img.bytes);
-        assert_eq!(decoded, fixture_png());
+        assert_eq!(decoded, png);
+        assert_eq!(decoded.as_slice(), include_bytes!("../../../docs/assets/mark.png"));
     }
 
     #[test]
@@ -1860,6 +1940,29 @@ mod tests {
             })
         });
         assert!(!has_img);
+    }
+
+    #[test]
+    fn read_relative_img_src() {
+        let png = fixture_png();
+        let html = br#"<p><img alt="mark" src="docs/assets/mark.png"/></p>"#;
+        let doc = read(html).expect("html");
+        let img = first_image(&doc);
+        assert_eq!(img.bytes, png);
+        assert!(!img.bytes.is_empty());
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.alt_text.as_deref(), Some("mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+        let (width, height) = raster_hu(&png);
+        assert_eq!((img.width, img.height), (width, height));
+        assert_ne!((img.width, img.height), (0, 0));
+        let out = to_html(&doc);
+        assert!(out.contains(r#"<img alt="mark" src="data:image/png;base64,"#), "{out}");
+        let start = out.find(r#"src="data:image/png;base64,"#).expect("src");
+        let payload = &out[start + r#"src="data:image/png;base64,"#.len()..];
+        let end = payload.find('"').expect("src end");
+        let decoded = b64_decode(&payload[..end]).expect("b64");
+        assert_eq!(decoded, png);
     }
 
     #[test]

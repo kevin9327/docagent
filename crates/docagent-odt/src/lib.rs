@@ -1832,6 +1832,137 @@ mod tests {
         assert_eq!(img.wrap, WrapMode::Inline);
     }
 
+    #[test]
+    fn letter_shape_roundtrip_keeps_png_bytes() {
+        let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "docs/assets/mark.png must be a PNG"
+        );
+
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut heading = Paragraph::from_text("Northwind Freight");
+        heading.outline_level = Some(1);
+        heading.runs[0].style.bold = true;
+        heading.runs[0].style.size = 1800;
+        section.body.push(Block::Paragraph(heading));
+
+        let mut quote = Paragraph::from_text("Replay is evidence. Same fonts, same bytes.");
+        quote.quote = true;
+        section.body.push(Block::Paragraph(quote));
+
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs.push(Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.to_vec(),
+                mime: "image/png".into(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH,
+                alt_text: Some("mark".into()),
+                wrap: WrapMode::Inline,
+            })),
+        });
+        section.body.push(Block::Paragraph(img_p));
+
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into(), "Proof".into()],
+            vec!["Input".into(), "letter.md".into(), "input SHA-256".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+
+        let mut bullet = Paragraph::from_text("Receiving dock is clear");
+        bullet.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut nested = Paragraph::from_text("Bay 4, H2O seals intact");
+        nested.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut numbered = Paragraph::from_text("Hash the input");
+        numbered.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(bullet));
+        section.body.push(Block::Paragraph(nested));
+        section.body.push(Block::Paragraph(numbered));
+        doc.sections.push(section);
+
+        let xml = content_xml(&doc);
+        assert!(xml.contains("<text:h"), "{xml}");
+        assert!(xml.contains(r#"text:style-name="Heading1""#), "{xml}");
+        assert!(xml.contains(r#"text:style-name="Quote""#), "{xml}");
+        assert!(xml.contains("<table:table>"), "{xml}");
+        assert!(xml.contains("table-header-rows"), "{xml}");
+        assert!(xml.contains("<text:list"), "{xml}");
+        assert!(xml.contains("Lbullet"), "{xml}");
+        assert!(xml.contains("Lnumber"), "{xml}");
+        assert!(xml.contains("<draw:image"), "{xml}");
+        assert!(xml.contains("Pictures/image1.png"), "{xml}");
+        assert!(xml.contains("draw:mime-type=\"image/png\""), "{xml}");
+        assert!(xml.contains("text:anchor-type=\"as-char\""), "{xml}");
+
+        let odt = write(&doc).unwrap();
+        assert!(sniff(&odt));
+        let mut zip = ZipArchive::new(Cursor::new(odt.clone())).unwrap();
+        {
+            let mut f = zip.by_name("Pictures/image1.png").unwrap();
+            let mut stored = Vec::new();
+            f.read_to_end(&mut stored).unwrap();
+            assert_eq!(stored.as_slice(), png);
+        }
+
+        let back = roundtrip(&doc).unwrap();
+        let body = &back.sections[0].body;
+        let Block::Paragraph(h) = &body[0] else {
+            panic!("heading {:?}", body);
+        };
+        assert_eq!(h.outline_level, Some(1));
+        assert_eq!(h.plain_text(), "Northwind Freight");
+
+        let Block::Paragraph(q) = &body[1] else {
+            panic!("quote {:?}", body);
+        };
+        assert!(q.quote);
+        assert!(q.plain_text().contains("Replay is evidence"));
+
+        assert!(body.iter().any(|b| matches!(b, Block::Table(_))));
+        let nums: Vec<_> = body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (n.format, n.level)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                (Some(NumberFormat::Bullet), 0),
+                (Some(NumberFormat::Bullet), 1),
+                (Some(NumberFormat::Decimal), 0),
+            ]
+        );
+
+        let img = first_image(&back);
+        assert_eq!(img.bytes.as_slice(), png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, HU_PER_INCH);
+        assert_eq!(img.height, HU_PER_INCH);
+        assert_eq!(img.alt_text.as_deref(), Some("mark"));
+    }
+
     /// 1×1 grayscale JPEG (Pillow quality=1). Magic is `FF D8 FF`.
     const JPEG_1X1: &[u8] = &[
         0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,

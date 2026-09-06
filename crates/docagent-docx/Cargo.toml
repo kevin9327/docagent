@@ -12,5 +12,9 @@ quick-xml.workspace = true
 thiserror.workspace = true
 zip.workspace = true
 
+[dev-dependencies]
+docagent-md.workspace = true
+zip.workspace = true
+
 [lints]
 workspace = true

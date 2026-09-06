@@ -584,6 +584,7 @@ dependencies = [
 name = "docagent-docx"
 version = "0.1.0"
 dependencies = [
+ "docagent-md",
  "docagent-model",
  "quick-xml",
  "thiserror 2.0.20",
@@ -688,6 +689,7 @@ dependencies = [
 name = "docagent-odt"
 version = "0.1.0"
 dependencies = [
+ "docagent-md",
  "docagent-model",
  "quick-xml",
  "thiserror 2.0.20",

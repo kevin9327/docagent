@@ -152,4 +152,35 @@ mod tests {
         let b = raster_pages(&blank);
         assert_ne!(a, b, "PNG must change pixels");
     }
+
+    #[test]
+    fn raster_png_uses_imagedata_width_height() {
+        const MARK: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/assets/mark.png"
+        ));
+        let page = Op::Page {
+            width: 59528,
+            height: 84189,
+        };
+        let at = |w, h| DisplayList {
+            ops: vec![
+                page.clone(),
+                Op::Image {
+                    x: 1000,
+                    y: 1000,
+                    w,
+                    h,
+                    bytes: MARK.to_vec(),
+                    mime: "image/png".into(),
+                },
+            ],
+        };
+        let a = raster_pages(&at(2400, 1600));
+        let b = raster_pages(&at(1600, 1600));
+        assert_ne!(
+            a, b,
+            "raster must honor ImageData width×height, not PNG pixels"
+        );
+    }
 }

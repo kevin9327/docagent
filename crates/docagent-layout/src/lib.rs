@@ -76,6 +76,15 @@ impl LineFrag {
             .max(self.baseline.saturating_add(120));
         Some((self.x, self.y, self.width, h, uri))
     }
+
+    /// Painted image box in the same top-left HWPUNIT space as `x`/`y`.
+    pub fn image_box(&self) -> Option<(Hu, Hu, Hu, Hu)> {
+        let img = self.image.as_ref()?;
+        if img.width <= 0 || img.height <= 0 {
+            return None;
+        }
+        Some((self.x, self.y, img.width, img.height))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,30 +146,32 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                 let mut block_bottom = y;
                 let mut first_line_y = y;
                 let mut saw_line = false;
-                for line in lines {
-                    if y + line.height > origin_y + content_h && !current.lines.is_empty() {
+                let mut i = 0;
+                while let Some((a, b, row_h)) = next_line_row(&lines, i) {
+                    i = b;
+                    if y + row_h > origin_y + content_h && !current.lines.is_empty() {
                         pages.push(std::mem::replace(
                             &mut current,
                             empty_page(page.width, page.height),
                         ));
                         y = origin_y + space_before;
                     }
-                    let mut placed = line;
-                    placed.x = origin_x.saturating_add(placed.x);
-                    placed.y = y;
                     if !saw_line {
                         first_line_y = y;
                         saw_line = true;
                     }
-                    if placed.width > 0 {
-                        text_left = Some(text_left.map_or(placed.x, |l| l.min(placed.x)));
-                        text_right = text_right.max(placed.x.saturating_add(placed.width));
+                    for line in &lines[a..b] {
+                        let placed = place_row_frag(line, origin_x, y);
+                        if placed.width > 0 {
+                            text_left = Some(text_left.map_or(placed.x, |l| l.min(placed.x)));
+                            text_right = text_right.max(placed.x.saturating_add(placed.width));
+                        }
+                        push_underlined_line(&mut current, placed);
                     }
-                    y += placed.height;
-                    if placed.height > 0 {
+                    y += row_h;
+                    if row_h > 0 {
                         block_bottom = y;
                     }
-                    push_underlined_line(&mut current, placed);
                 }
                 if let (Some(rule), Some(left)) = (rule, text_left) {
                     let (rx, rw) = if rule.span_content {
@@ -222,12 +233,14 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                             push_cell_strokes(&mut current.strokes, x, y, cw, row_h, stroke_w, stroke);
                         }
                         let mut ly = y + 80;
-                        for line in &cell.lines {
-                            let mut placed = line.clone();
-                            placed.x = x + 80 + line.x;
-                            placed.y = ly;
-                            ly += line.height;
-                            push_underlined_line(&mut current, placed);
+                        let mut li = 0;
+                        while let Some((a, b, row_h)) = next_line_row(&cell.lines, li) {
+                            li = b;
+                            for line in &cell.lines[a..b] {
+                                let placed = place_row_frag(line, x + 80, ly);
+                                push_underlined_line(&mut current, placed);
+                            }
+                            ly += row_h;
                         }
                         x += cw;
                     }
@@ -306,26 +319,28 @@ fn place_prepared_band(
                 let mut block_bottom = y;
                 let mut first_line_y = y;
                 let mut saw_line = false;
-                for line in lines {
+                let mut i = 0;
+                while let Some((a, b, row_h)) = next_line_row(lines, i) {
+                    i = b;
                     if y >= page_h {
                         break;
                     }
-                    let mut placed = line.clone();
-                    placed.x = origin_x.saturating_add(placed.x);
-                    placed.y = y;
                     if !saw_line {
                         first_line_y = y;
                         saw_line = true;
                     }
-                    if placed.width > 0 {
-                        text_left = Some(text_left.map_or(placed.x, |l| l.min(placed.x)));
-                        text_right = text_right.max(placed.x.saturating_add(placed.width));
+                    for line in &lines[a..b] {
+                        let placed = place_row_frag(line, origin_x, y);
+                        if placed.width > 0 {
+                            text_left = Some(text_left.map_or(placed.x, |l| l.min(placed.x)));
+                            text_right = text_right.max(placed.x.saturating_add(placed.width));
+                        }
+                        push_underlined_line(page, placed);
                     }
-                    y = y.saturating_add(placed.height);
-                    if placed.height > 0 {
+                    y = y.saturating_add(row_h);
+                    if row_h > 0 {
                         block_bottom = y;
                     }
-                    push_underlined_line(page, placed);
                 }
                 if let (Some(rule), Some(left)) = (rule.as_ref(), text_left) {
                     let (rx, rw) = if rule.span_content {
@@ -387,12 +402,14 @@ fn place_prepared_band(
                             push_cell_strokes(&mut page.strokes, x, y, cw, row_h, *stroke_w, *stroke);
                         }
                         let mut ly = y + 80;
-                        for line in &cell.lines {
-                            let mut placed = line.clone();
-                            placed.x = x + 80 + line.x;
-                            placed.y = ly;
-                            ly = ly.saturating_add(line.height);
-                            push_underlined_line(page, placed);
+                        let mut li = 0;
+                        while let Some((a, b, row_h)) = next_line_row(&cell.lines, li) {
+                            li = b;
+                            for line in &cell.lines[a..b] {
+                                let placed = place_row_frag(line, x + 80, ly);
+                                push_underlined_line(page, placed);
+                            }
+                            ly = ly.saturating_add(row_h);
                         }
                         x += cw;
                     }
@@ -411,6 +428,36 @@ fn empty_page(width: Hu, height: Hu) -> PageFrag {
         rects: Vec::new(),
         strokes: Vec::new(),
     }
+}
+
+/// Prepared rows store the line box on the last fragment (`height > 0`);
+/// earlier fragments keep `height == 0` so they share `y`.
+fn next_line_row(lines: &[LineFrag], start: usize) -> Option<(usize, usize, Hu)> {
+    if start >= lines.len() {
+        return None;
+    }
+    let mut end = start;
+    let mut row_h: Hu = 0;
+    while end < lines.len() {
+        let line = &lines[end];
+        let img_h = line.image.as_ref().map(|im| im.height).unwrap_or(0);
+        row_h = row_h.max(line.height).max(img_h);
+        end += 1;
+        if line.height > 0 {
+            break;
+        }
+    }
+    Some((start, end, row_h))
+}
+
+fn place_row_frag(line: &LineFrag, origin_x: Hu, y: Hu) -> LineFrag {
+    let mut placed = line.clone();
+    placed.x = origin_x.saturating_add(placed.x);
+    placed.y = y;
+    if let Some(img) = &placed.image {
+        placed.height = placed.height.max(img.height);
+    }
+    placed
 }
 
 fn push_underlined_line(page: &mut PageFrag, placed: LineFrag) {
@@ -1975,6 +2022,97 @@ mod tests {
         assert!(after.x >= img.x + img.width, "after x {}", after.x);
         assert_eq!(img.width, 1600);
         assert_eq!(img.image.as_ref().map(|i| i.height), Some(800));
+        assert_eq!(before.y, img.y);
+        assert_eq!(after.y, img.y);
+        assert!(img.height >= 800, "line height {}", img.height);
+    }
+
+    fn boxes_overlap(a: (Hu, Hu, Hu, Hu), b: (Hu, Hu, Hu, Hu)) -> bool {
+        let (ax, ay, aw, ah) = a;
+        let (bx, by, bw, bh) = b;
+        aw > 0
+            && ah > 0
+            && bw > 0
+            && bh > 0
+            && ax < bx.saturating_add(bw)
+            && ax.saturating_add(aw) > bx
+            && ay < by.saturating_add(bh)
+            && ay.saturating_add(ah) > by
+    }
+
+    fn letter_with_mark(width: Hu, height: Hu) -> Document {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut heading = Paragraph::from_text("Northwind Freight");
+        heading.outline_level = Some(1);
+        heading.runs[0].style.size = 1800;
+        heading.runs[0].style.bold = true;
+        section.body.push(Block::Paragraph(heading));
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(width, height)];
+        section.body.push(Block::Paragraph(img_p));
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            "The shipment left Busan on 4 September",
+        )));
+        doc.sections.push(section);
+        doc
+    }
+
+    #[test]
+    fn letter_inline_image_keeps_imagedata_size_without_overlapping_body() {
+        const W: Hu = 2400;
+        const H: Hu = 1600;
+        let tree = layout_document(&letter_with_mark(W, H), &FontSet::bundled());
+        let page = &tree.pages[0];
+        let img_line = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("letter image dropped");
+        let img = img_line.image.as_ref().expect("payload");
+        assert_eq!(img.width, W);
+        assert_eq!(img.height, H);
+        assert_eq!(img.bytes, MARK_PNG);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img_line.width, W);
+        assert!(
+            img_line.height >= H,
+            "line box {} shorter than ImageData height {H}",
+            img_line.height
+        );
+        let img_box = img_line.image_box().expect("image box");
+        assert_eq!(img_box, (img_line.x, img_line.y, W, H));
+        let body = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("shipment"))
+            .expect("body dropped");
+        assert!(
+            body.y >= img_line.y.saturating_add(H),
+            "body y {} overlaps image y {} height {H}",
+            body.y,
+            img_line.y
+        );
+        let body_box = (body.x, body.y, body.width.max(1), body.height.max(1));
+        assert!(
+            !boxes_overlap(img_box, body_box),
+            "image {img_box:?} overlaps body {body_box:?}"
+        );
+        let heading = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("Northwind"))
+            .expect("heading dropped");
+        let heading_box = (
+            heading.x,
+            heading.y,
+            heading.width.max(1),
+            heading.height.max(1),
+        );
+        assert!(
+            !boxes_overlap(img_box, heading_box),
+            "image {img_box:?} overlaps heading {heading_box:?}"
+        );
     }
 
     #[test]

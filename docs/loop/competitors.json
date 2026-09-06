@@ -1,32 +1,21 @@
 {
   "locked_at": "2026-09-06",
   "category": "Agent document runtime — flow documents only (not OCR suites, not office GUIs)",
-  "north_star": "A stranger opening github.com/kevin9327/docagent must immediately see what DocAgent does, with hero art, a capability matrix, and real outputs, at the visual density of MinerU/Docling/Pandoc. First screen: determinism + capsule + GPU-free. DocAgent wins the agent-runtime axes: Command/Query/Event, capsule hashes, integer layout, byte-identical reruns, GPU-free convert, Hangul as a regional codec.",
+  "north_star": "A stranger opening github.com/kevin9327/docagent must immediately see picture in, PDF/A out — hero art, a capability matrix, and real outputs, at the visual density of MinerU/Docling/Pandoc. First screen: PNG/JPEG in Markdown/HTML/DOCX/ODT become a PDF/A XObject. Capsule hashed. GPU-free. Not OCR. DocAgent wins the agent-runtime axes: Command/Query/Event, capsule hashes, integer layout, byte-identical reruns, GPU-free convert. Hangul is a regional codec, not the first-screen story.",
   "not_claimed": ["OCR", "VLM", "OmniDocBench"],
   "docagent_ships": {
     "runtime": ["Command/Query/Event", "capsule SHA-256 ×3", "byte-identical rerun", "integer layout 1/7200 in", "GPU-free"],
     "flow_marks": ["lists", "links", "strike", "quotes", "code spans", "fenced code", "thematic breaks", "tasks", "highlight", "underline", "superscript", "subscript", "table headers", "images (PNG, JPEG)"],
-    "hangul": [
-      "CHAR_SHAPE bold/italic/underline/super/sub on HWP5, HWPX hh:charPr, HML CHARSHAPE, HWP3 attr bits",
-      "strike on HWP5/HWPX/HML (HWP3 has no strike bit)",
-      "hyperlinks: HWP5 %hlk, HWPX fieldBegin HYPERLINK, HML FIELDBEGIN Hyperlink, HWP3 control-10 + TagID 3",
-      "Quote style on HWP5+HWPX+HML+HWP3",
-      "CodeBlock style on HWP5+HWPX+HML+HWP3",
-      "HorizontalLine thematic breaks on HWP5+HWPX+HML+HWP3",
-      "Task style + [x]/[ ] marker on HWP5+HWPX+HML+HWP3",
-      "CHAR_SHAPE shade highlight on HWP5+HWPX+HML+HWP3",
-      "table header rows on HWP5+HWPX+HML (HWP3 has no header primitive)",
-      "Bullet / Number para styles on HWP5+HWPX+HML+HWP3"
-    ],
+    "hangul": ["regional codecs on the same IR — unique yes on the matrix"],
     "hangul_not_yet": ["images"],
     "images": [
       "PNG and JPEG on Markdown, HTML, PDF/A, DOCX, ODT",
-      "PDF Block::Float(Float::Image) and table-cell InlineObject::Image as PDF/A XObject; oversized floats clamp to content width; cell images clamp to cell width",
-      "PDF Section.header / footer layout in margin bands; PDF/A embeds header/footer text",
-      "DOCX WrapMode::Square / Behind / InFront round-trip as wp:wrapSquare / wp:wrapNone+behindDoc / wp:wrapNone in front",
-      "ODT draw:image inside table cells; nested text:list inside text:list-item; WrapMode::Tight (Gtight); svg:desc alt fallback",
-      "HTML read of <img src=\"data:…\">, <ul>/<ol>/<ul class=\"tasks\">, <th>/<thead>, <blockquote>, <pre>, <a href>, <mark> (Pandoc-class import, not HTML5, no http src)",
-      "examples/letter.md fixture has no image — convert shots must not pretend otherwise"
+      "PDF/A paints them as XObjects — picture in, PDF/A out",
+      "Markdown ![alt](src), including relative docs/assets/mark.png",
+      "HTML <img> write and data-URI read (no http src, not HTML5)",
+      "DOCX a:blip, ODT draw:image",
+      "Hangul images: not yet",
+      "examples/letter.md now includes ![Harbor mark](docs/assets/mark.png); output-*.png frames are still text-only — a stale shot is not a missing Images row; GitHub-image gap stays open until demo rewrites those PNGs"
     ]
   },
   "repos": [

@@ -417,6 +417,9 @@ mod tests {
         assert_eq!(oa.capsule, ob.capsule);
         assert_eq!(oa.capsule.input_hash.len(), 64);
         assert_ne!(oa.capsule.input_hash, oa.capsule.output_hash);
+        let html = oa.html.as_ref().unwrap();
+        assert!(html.contains("<img"), "{html}");
+        assert!(html.contains("Harbor mark"), "{html}");
     }
 
     #[test]

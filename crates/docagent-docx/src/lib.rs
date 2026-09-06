@@ -327,6 +327,10 @@ fn jpeg_magic(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xFF, 0xD8, 0xFF])
 }
 
+fn png_magic(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0x89, b'P', b'N', b'G'])
+}
+
 fn is_jpeg(img: &ImageData) -> bool {
     img.mime.eq_ignore_ascii_case("image/jpeg")
         || img.mime.eq_ignore_ascii_case("image/jpg")
@@ -334,7 +338,9 @@ fn is_jpeg(img: &ImageData) -> bool {
 }
 
 fn ext_from_image(img: &ImageData) -> &'static str {
-    if is_jpeg(img) {
+    if png_magic(&img.bytes) {
+        "png"
+    } else if is_jpeg(img) {
         "jpeg"
     } else {
         ext_from_mime(&img.mime)
@@ -342,7 +348,9 @@ fn ext_from_image(img: &ImageData) -> &'static str {
 }
 
 fn content_type_for_image(img: &ImageData) -> &str {
-    if is_jpeg(img) {
+    if png_magic(&img.bytes) {
+        "image/png"
+    } else if is_jpeg(img) {
         "image/jpeg"
     } else {
         content_type_for_mime(&img.mime)
@@ -510,10 +518,7 @@ fn document_xml(doc: &Document) -> String {
                         r#"<w:p><w:pPr><w:pStyle w:val="HorizontalLine"/><w:pBdr><w:bottom w:val="single" w:sz="12" w:space="1" w:color="134E4A"/></w:pBdr></w:pPr></w:p>"#,
                     ),
                     Block::Float(Float::Image(img)) => {
-                        let rid = ctx.next_image_rid();
-                        s.push_str("<w:p>");
-                        s.push_str(&drawing_run_xml(img, rid));
-                        s.push_str("</w:p>");
+                        s.push_str(&float_image_p_xml(img, &mut ctx))
                     }
                     Block::Float(_) | Block::Break(_) => s.push_str("<w:p/>"),
                 }
@@ -558,6 +563,14 @@ fn half_points_to_hu(hp: i32) -> i32 {
 }
 
 const NUMBERING_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%2."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%3."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#;
+
+fn float_image_p_xml(img: &ImageData, ctx: &mut WriteCtx) -> String {
+    let rid = ctx.next_image_rid();
+    let mut s = String::from("<w:p>");
+    s.push_str(&drawing_run_xml(img, rid));
+    s.push_str("</w:p>");
+    s
+}
 
 fn drawing_run_xml(img: &ImageData, rid: u32) -> String {
     let cx = hu_to_emu(img.width);
@@ -757,9 +770,16 @@ fn tbl_xml(table: &Table, ctx: &mut WriteCtx) -> String {
             ));
             let mut wrote_p = false;
             for b in &cell.blocks {
-                if let Block::Paragraph(p) = b {
-                    s.push_str(&p_xml(p, ctx));
-                    wrote_p = true;
+                match b {
+                    Block::Paragraph(p) => {
+                        s.push_str(&p_xml(p, ctx));
+                        wrote_p = true;
+                    }
+                    Block::Float(Float::Image(img)) => {
+                        s.push_str(&float_image_p_xml(img, ctx));
+                        wrote_p = true;
+                    }
+                    _ => {}
                 }
             }
             if !wrote_p {
@@ -2238,6 +2258,7 @@ mod tests {
         assert!(rels.contains("media/image1.png"), "{rels}");
 
         let bytes = write(&doc).unwrap();
+        assert!(sniff(&bytes));
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
         let mut media = Vec::new();
         zip.by_name("word/media/image1.png")
@@ -2270,6 +2291,60 @@ mod tests {
         assert_eq!(img.width, 7200);
         assert_eq!(img.height, 3600);
         assert_eq!(img.alt_text.as_deref(), Some("DocAgent mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    #[test]
+    fn roundtrip_keeps_float_image_bytes() {
+        let png = mark_png();
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "fixture must be PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Float(Float::Image(ImageData {
+            bytes: png.clone(),
+            mime: "image/png".into(),
+            width: 7200,
+            height: 3600,
+            alt_text: Some("float mark".into()),
+            wrap: WrapMode::Inline,
+        })));
+        doc.sections.push(section);
+
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:drawing>"), "{xml}");
+        assert!(xml.contains("<a:blip r:embed="), "{xml}");
+        assert!(xml.contains(r#"cx="914400""#), "{xml}");
+        assert!(xml.contains(r#"cy="457200""#), "{xml}");
+        assert!(xml.contains(r#"descr="float mark""#), "{xml}");
+
+        let bytes = write(&doc).unwrap();
+        assert!(sniff(&bytes));
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let mut media = Vec::new();
+        zip.by_name("word/media/image1.png")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert_eq!(media, png);
+
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image run: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 7200);
+        assert_eq!(img.height, 3600);
+        assert_eq!(img.alt_text.as_deref(), Some("float mark"));
         assert_eq!(img.wrap, WrapMode::Inline);
     }
 
@@ -2613,6 +2688,59 @@ mod tests {
         assert_eq!(img.height, 3600);
         assert_eq!(img.alt_text.as_deref(), Some("square wrap"));
         assert_eq!(img.wrap, WrapMode::Square);
+    }
+
+    #[test]
+    fn write_sniffs_png_magic_without_mime() {
+        let png = mark_png();
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "fixture must be PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.clone(),
+                mime: String::new(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH,
+                alt_text: Some("sniffed png".into()),
+                wrap: WrapMode::Inline,
+            })),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<a:blip r:embed="), "{xml}");
+        let rels = document_rels(&doc);
+        assert!(rels.contains("media/image1.png"), "{rels}");
+        let types = content_types_xml(&collect_images(&doc));
+        assert!(types.contains(r#"Extension="png""#), "{types}");
+        assert!(types.contains("image/png"), "{types}");
+        let bytes = write(&doc).unwrap();
+        assert!(sniff(&bytes));
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let mut media = Vec::new();
+        zip.by_name("word/media/image1.png")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert_eq!(media, png);
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, png);
+        assert_eq!(img.mime, "image/png");
     }
 
     #[test]
