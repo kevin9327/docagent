@@ -82,9 +82,11 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut styles: HashMap<String, StyleBits> = HashMap::new();
     let mut span_bold = false;
     let mut span_italic = false;
+    let mut span_strike = false;
     let mut span_size: Option<i32> = None;
     let mut para_bold = false;
     let mut para_italic = false;
+    let mut para_strike = false;
     let mut para_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
@@ -111,6 +113,12 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         if let Some(s) = attr(&e, "font-style") {
                             style_bits.italic = s == "italic" || s == "oblique";
                         }
+                        if let Some(s) = attr(&e, "text-line-through-style") {
+                            style_bits.strike |= s != "none";
+                        }
+                        if let Some(s) = attr(&e, "text-line-through-type") {
+                            style_bits.strike |= s != "none";
+                        }
                         if let Some(sz) = attr(&e, "font-size").and_then(|v| parse_fo_size(&v)) {
                             style_bits.size = Some(sz);
                         }
@@ -129,9 +137,11 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             .unwrap_or_default();
                         para_bold = st.bold;
                         para_italic = st.italic;
+                        para_strike = st.strike;
                         para_size = st.size;
                         span_bold = para_bold;
                         span_italic = para_italic;
+                        span_strike = para_strike;
                         span_size = para_size;
                     }
                     "a" if in_p => {
@@ -140,6 +150,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             &mut run_text,
                             span_bold,
                             span_italic,
+                            span_strike,
                             span_size,
                             None,
                         );
@@ -151,6 +162,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             &mut run_text,
                             span_bold,
                             span_italic,
+                            span_strike,
                             span_size,
                             None,
                         );
@@ -158,10 +170,12 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         if let Some(st) = styles.get(&key).copied() {
                             span_bold = st.bold;
                             span_italic = st.italic;
+                            span_strike = st.strike;
                             span_size = st.size.or(para_size);
                         } else {
                             span_bold = para_bold;
                             span_italic = para_italic;
+                            span_strike = para_strike;
                             span_size = para_size;
                         }
                     }
@@ -201,11 +215,13 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             &mut run_text,
                             span_bold,
                             span_italic,
+                            span_strike,
                             span_size,
                             None,
                         );
                         span_bold = para_bold;
                         span_italic = para_italic;
+                        span_strike = para_strike;
                         span_size = para_size;
                     }
                     "a" if in_p => {
@@ -214,6 +230,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             &mut run_text,
                             span_bold,
                             span_italic,
+                            span_strike,
                             span_size,
                             a_href.as_deref(),
                         );
@@ -226,6 +243,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             &mut run_text,
                             span_bold,
                             span_italic,
+                            span_strike,
                             span_size,
                             a_href.take().as_deref(),
                         );
@@ -318,6 +336,7 @@ struct ListCtx {
 struct StyleBits {
     bold: bool,
     italic: bool,
+    strike: bool,
     size: Option<i32>,
 }
 
@@ -342,6 +361,7 @@ fn flush_odt_run(
     text: &mut String,
     bold: bool,
     italic: bool,
+    strike: bool,
     size: Option<i32>,
     href: Option<&str>,
 ) {
@@ -355,6 +375,7 @@ fn flush_odt_run(
     };
     run.style.bold = bold;
     run.style.italic = italic;
+    run.style.strike = strike;
     if let Some(sz) = size {
         run.style.size = sz;
     }
@@ -400,23 +421,16 @@ fn odt_runs(p: &Paragraph) -> String {
                     continue;
                 }
                 let escaped = xml_escape(t);
-                match (run.style.bold, run.style.italic) {
-                    (true, true) => {
-                        s.push_str(r#"<text:span text:style-name="Tbi">"#);
-                        s.push_str(&escaped);
-                        s.push_str("</text:span>");
-                    }
-                    (true, false) => {
-                        s.push_str(r#"<text:span text:style-name="Tbold">"#);
-                        s.push_str(&escaped);
-                        s.push_str("</text:span>");
-                    }
-                    (false, true) => {
-                        s.push_str(r#"<text:span text:style-name="Titalic">"#);
-                        s.push_str(&escaped);
-                        s.push_str("</text:span>");
-                    }
-                    (false, false) => s.push_str(&escaped),
+                if let Some(style) =
+                    odt_span_style(run.style.bold, run.style.italic, run.style.strike)
+                {
+                    s.push_str(r#"<text:span text:style-name=""#);
+                    s.push_str(style);
+                    s.push_str(r#"">"#);
+                    s.push_str(&escaped);
+                    s.push_str("</text:span>");
+                } else {
+                    s.push_str(&escaped);
                 }
             }
             RunContent::Inline(_) => {}
@@ -521,8 +535,21 @@ fn content_xml(doc: &Document) -> String {
         }
     }
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
     )
+}
+
+fn odt_span_style(bold: bool, italic: bool, strike: bool) -> Option<&'static str> {
+    match (bold, italic, strike) {
+        (false, false, false) => None,
+        (true, false, false) => Some("Tbold"),
+        (false, true, false) => Some("Titalic"),
+        (true, true, false) => Some("Tbi"),
+        (false, false, true) => Some("Tstrike"),
+        (true, false, true) => Some("Tbstrike"),
+        (false, true, true) => Some("Tistrike"),
+        (true, true, true) => Some("Tbistrike"),
+    }
 }
 
 fn xml_escape(s: &str) -> String {
@@ -565,6 +592,31 @@ mod tests {
         }));
         assert!(p.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_strikethrough() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut strike = Run::text("guess");
+        strike.style.strike = true;
+        p.runs.push(strike);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("Tstrike"), "{xml}");
+        assert!(xml.contains("text-line-through-style=\"solid\""), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("guess"))
+        }));
+        assert!(p.runs.iter().any(|r| {
+            !r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("plain"))
         }));
     }
 

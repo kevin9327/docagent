@@ -89,15 +89,15 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 
 | Hash | SHA-256 (both runs) |
 | --- | --- |
-| input | `64f94fb0ffac49588de2ff9153943bd020205d1a846c06731a9e60d63efea29f` |
+| input | `7a1679e9e300ed49159025e7c8aabc0544a504655303f5ac778b6e34d7279526` |
 | plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
-| output | `cc198ebbf428700151bd4c84d16b44c87fbaa5d30a20204e0c95d60b90d8722f` |
+| output | `35799beb3bf3c0d9d610b060476801610f2001031c31983dacc3b552356f4caa` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this. We do not ship OmniDocBench numbers.
 
 ## What you get
 
-These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) (`/Link` URI) · [HTML](docs/assets/letter.html) (`<a href>`) · [DOCX](docs/assets/letter.docx) (`Heading1` / `w:numPr` / `w:hyperlink`) · [ODT](docs/assets/letter.odt) (`text:h` / `text:list` / `text:a`) · [Markdown](docs/assets/letter.md) (GFM `| --- |` / `[text](url)`) · [capsule JSON](docs/assets/letter-capsule.json).
+These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) (`/Link` URI + strike fill) · [HTML](docs/assets/letter.html) (`<a href>` / `<s>`) · [DOCX](docs/assets/letter.docx) (`Heading1` / `w:numPr` / `w:hyperlink` / `w:strike`) · [ODT](docs/assets/letter.odt) (`text:h` / `text:list` / `text:a` / `text-line-through`) · [Markdown](docs/assets/letter.md) (GFM `| --- |` / `[text](url)` / `~~strike~~`) · [capsule JSON](docs/assets/letter-capsule.json).
 
 ```markdown
 | **Hop** | **File** | **Proof** |
@@ -110,12 +110,12 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. Heading rules, list markers, and hyperlink underlines are painted fills, not glyphs. Links are URI <code>/Link</code> annotations (click the last line). Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. Heading rules, list markers, hyperlink underlines, and strikethrough are painted fills, not glyphs. Links are URI <code>/Link</code> annotations (click the last line). Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
 </p>
-<p align="center"><sub>HTML from the same IR. Headings, tables with <strong>header</strong> cells, nested lists, <strong>bold</strong>, <em>italic</em>, and <a href="https://github.com/kevin9327/docagent">links</a>.</sub></p>
+<p align="center"><sub>HTML from the same IR. Headings, tables with <strong>header</strong> cells, nested lists, <strong>bold</strong>, <em>italic</em>, <s>strikethrough</s>, and <a href="https://github.com/kevin9327/docagent">links</a>.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
@@ -136,10 +136,10 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | --- | --- |
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
-| **PDF/A** | Archival print. Heading rules, list markers, hyperlink underlines, and table fills are `FillRect`s. Links are URI `/Link` annotations. Two runs, same fonts, same bytes. |
-| **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Lists as `w:numPr` and `text:list`. Links as `w:hyperlink` and `text:a`. Runs keep `w:b`/`w:i` in body and table cells. |
-| **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. Links write `[text](url)`. |
-| **HTML** | Semantic HTML an agent can read back. Table cells keep `<strong>`/`<em>`. Links are `<a href>`. |
+| **PDF/A** | Archival print. Heading rules, list markers, hyperlink underlines, strikethrough, and table fills are `FillRect`s. Links are URI `/Link` annotations. Two runs, same fonts, same bytes. |
+| **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Lists as `w:numPr` and `text:list`. Links as `w:hyperlink` and `text:a`. Runs keep `w:b`/`w:i`/`w:strike` and `text-line-through` in body and table cells. |
+| **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. Links write `[text](url)`. Strikethrough writes `~~text~~`. |
+| **HTML** | Semantic HTML an agent can read back. Table cells keep `<strong>`/`<em>`. Links are `<a href>`. Strikethrough is `<s>`. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
 | **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. |
 
@@ -168,7 +168,7 @@ DocAgent does not claim MinerU's VLM scores. MinerU does not ship a replayable c
 | VLM / OCR (not our job) | | **yes** | **yes** | | **yes** | **yes** | | | | |
 
 **North star:** an agent drops `examples/letter.md` (or DOCX/ODT) and gets PDF/A + HTML + Markdown + DOCX + ODT whose
-bytes match the next run, with three hashes in the capsule. Heading 1/2 and hyperlinks survive the Word and LibreOffice files.
+bytes match the next run, with three hashes in the capsule. Heading 1/2, hyperlinks, and strikethrough survive the Word and LibreOffice files.
 That is the merge gate.
 Hangul LineSeg vs rhwp is a regional CI track, not this page.
 

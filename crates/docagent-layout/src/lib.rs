@@ -43,6 +43,7 @@ pub struct LineFrag {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub strike: bool,
     /// External URI for this run, if it is a hyperlink.
     pub href: Option<String>,
 }
@@ -247,6 +248,18 @@ fn push_underlined_line(page: &mut PageFrag, placed: LineFrag) {
             fill: [19, 78, 74, 255],
         });
     }
+    if placed.strike && placed.width > 0 {
+        page.strokes.push(RectFrag {
+            x: placed.x,
+            y: placed
+                .y
+                .saturating_add(placed.baseline)
+                .saturating_sub(placed.font_size / 3),
+            width: placed.width,
+            height: 80,
+            fill: [19, 78, 74, 255],
+        });
+    }
     page.lines.push(placed);
 }
 
@@ -412,6 +425,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             bold: false,
             italic: false,
             underline: false,
+            strike: false,
             href: None,
         });
         if bullet {
@@ -440,13 +454,14 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 bold: false,
                 italic: false,
                 underline: false,
+                strike: false,
                 href: None,
             });
             x += marker_w;
         }
-        for (rs, re, bold, italic, underline, href) in &spans {
-            let s = (*rs).max(a);
-            let e = (*re).min(b);
+        for span in &spans {
+            let s = span.start.max(a);
+            let e = span.end.min(b);
             if s >= e {
                 continue;
             }
@@ -460,10 +475,11 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 baseline,
                 text: slice,
                 font_size: size,
-                bold: *bold,
-                italic: *italic,
-                underline: *underline,
-                href: href.clone(),
+                bold: span.bold,
+                italic: span.italic,
+                underline: span.underline,
+                strike: span.strike,
+                href: span.href.clone(),
             });
             x += w;
         }
@@ -487,6 +503,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 bold: false,
                 italic: false,
                 underline: false,
+                strike: false,
                 href: None,
             });
         }
@@ -506,7 +523,17 @@ fn bullet_fill(x: Hu, baseline: Hu, size: Hu) -> RectFrag {
     }
 }
 
-fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool, bool, Option<String>)> {
+struct RunSpan {
+    start: usize,
+    end: usize,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    strike: bool,
+    href: Option<String>,
+}
+
+fn run_spans(p: &Paragraph) -> Vec<RunSpan> {
     let mut i = 0usize;
     let mut out = Vec::new();
     for run in &p.runs {
@@ -524,7 +551,15 @@ fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool, bool, Option<Strin
             _ => None,
         };
         let underline = run.style.underline != docagent_model::Underline::None || href.is_some();
-        out.push((i, i + n, run.style.bold, run.style.italic, underline, href));
+        out.push(RunSpan {
+            start: i,
+            end: i + n,
+            bold: run.style.bold,
+            italic: run.style.italic,
+            underline,
+            strike: run.style.strike,
+            href,
+        });
         i += n;
     }
     out
@@ -900,6 +935,41 @@ mod tests {
                 .iter()
                 .any(|s| s.fill == [19, 78, 74, 255] && s.height == 80 && s.width > 80),
             "hyperlink underline missing: {:?}",
+            page.strokes
+        );
+    }
+
+    #[test]
+    fn strikethrough_emits_midline_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut strike = docagent_model::Run::text("guess");
+        strike.style.strike = true;
+        p.runs.push(strike);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let line = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("guess"))
+            .expect("struck run");
+        assert!(line.strike);
+        assert!(
+            page.lines
+                .iter()
+                .any(|l| l.text.contains("plain") && !l.strike)
+        );
+        assert!(
+            page.strokes.iter().any(|s| {
+                s.fill == [19, 78, 74, 255]
+                    && s.height == 80
+                    && s.width > 80
+                    && s.y < line.y.saturating_add(line.baseline)
+            }),
+            "strikethrough fill missing: {:?}",
             page.strokes
         );
     }

@@ -371,6 +371,41 @@ mod tests {
     }
 
     #[test]
+    fn strikethrough_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("guess");
+        p.runs[0].style.strike = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *h == 80 && *w > 80
+                )
+            }),
+            "strikethrough must paint a fill"
+        );
+        let struck = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("guess")));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(struck, plain_pdf, "strikethrough must change PDF bytes");
+        assert!(claims_pdfa(&struck));
+    }
+
+    #[test]
     fn synthetic_bold_changes_pdf_bytes() {
         fn pdf_for(bold: bool) -> Vec<u8> {
             let mut doc = Document::new();

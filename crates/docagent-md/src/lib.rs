@@ -112,33 +112,41 @@ fn parse_runs(text: &str) -> Vec<Run> {
     let mut buf = String::new();
     let mut bold = false;
     let mut italic = false;
+    let mut strike = false;
     let mut i = 0;
-    let flush = |runs: &mut Vec<Run>, buf: &mut String, bold: bool, italic: bool| {
+    let flush = |runs: &mut Vec<Run>, buf: &mut String, bold: bool, italic: bool, strike: bool| {
         if buf.is_empty() {
             return;
         }
         let mut run = Run::text(std::mem::take(buf));
         run.style.bold = bold;
         run.style.italic = italic;
+        run.style.strike = strike;
         runs.push(run);
     };
     while i < chars.len() {
         if chars[i] == '['
             && let Some((display, target, next)) = parse_md_link(&chars, i)
         {
-            flush(&mut runs, &mut buf, bold, italic);
+            flush(&mut runs, &mut buf, bold, italic, strike);
             runs.push(Run::hyperlink(display, target));
             i = next;
             continue;
         }
+        if chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
+            flush(&mut runs, &mut buf, bold, italic, strike);
+            strike = !strike;
+            i += 2;
+            continue;
+        }
         if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
-            flush(&mut runs, &mut buf, bold, italic);
+            flush(&mut runs, &mut buf, bold, italic, strike);
             bold = !bold;
             i += 2;
             continue;
         }
         if chars[i] == '*' || chars[i] == '_' {
-            flush(&mut runs, &mut buf, bold, italic);
+            flush(&mut runs, &mut buf, bold, italic, strike);
             italic = !italic;
             i += 1;
             continue;
@@ -146,7 +154,7 @@ fn parse_runs(text: &str) -> Vec<Run> {
         buf.push(chars[i]);
         i += 1;
     }
-    flush(&mut runs, &mut buf, bold, italic);
+    flush(&mut runs, &mut buf, bold, italic, strike);
     runs
 }
 
@@ -334,20 +342,24 @@ fn write_runs(p: &Paragraph) -> String {
                 if t.is_empty() {
                     continue;
                 }
-                if run.style.bold && run.style.italic {
-                    s.push_str("***");
-                    s.push_str(t);
-                    s.push_str("***");
-                } else if run.style.bold {
+                if run.style.bold {
                     s.push_str("**");
-                    s.push_str(t);
+                }
+                if run.style.italic {
+                    s.push('_');
+                }
+                if run.style.strike {
+                    s.push_str("~~");
+                }
+                s.push_str(t);
+                if run.style.strike {
+                    s.push_str("~~");
+                }
+                if run.style.italic {
+                    s.push('_');
+                }
+                if run.style.bold {
                     s.push_str("**");
-                } else if run.style.italic {
-                    s.push('_');
-                    s.push_str(t);
-                    s.push('_');
-                } else {
-                    s.push_str(t);
                 }
             }
             RunContent::Inline(_) => {}
@@ -509,6 +521,24 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn strikethrough_roundtrips() {
+        let src = b"Agents ~~guess~~.\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("guess"))
+        }));
+        assert!(p.runs.iter().any(|r| {
+            !r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("Agents"))
+        }));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("~~guess~~"), "{back}");
+        assert!(!back.contains("~~Agents"), "{back}");
     }
 
     #[test]

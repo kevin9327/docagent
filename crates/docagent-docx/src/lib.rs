@@ -269,13 +269,16 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                 s.push_str("<w:r>");
                 let sz = hu_to_half_points(run.style.size);
                 let default_sz = hu_to_half_points(DEFAULT_FONT_SIZE_HU);
-                if run.style.bold || run.style.italic || sz != default_sz {
+                if run.style.bold || run.style.italic || run.style.strike || sz != default_sz {
                     s.push_str("<w:rPr>");
                     if run.style.bold {
                         s.push_str("<w:b/>");
                     }
                     if run.style.italic {
                         s.push_str("<w:i/>");
+                    }
+                    if run.style.strike {
+                        s.push_str("<w:strike/>");
                     }
                     if sz != default_sz {
                         s.push_str(&format!(r#"<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>"#));
@@ -352,6 +355,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut in_tbl = false;
     let mut run_bold = false;
     let mut run_italic = false;
+    let mut run_strike = false;
     let mut run_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
@@ -395,6 +399,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     "rPr" if in_run => in_rpr = true,
                     "b" if in_rpr => run_bold = ooxml_on(&e),
                     "i" if in_rpr => run_italic = ooxml_on(&e),
+                    "strike" if in_rpr => run_strike = ooxml_on(&e),
                     "sz" if in_rpr => {
                         if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<i32>().ok()) {
                             run_size = Some(half_points_to_hu(v));
@@ -408,6 +413,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         in_run = true;
                         run_bold = false;
                         run_italic = false;
+                        run_strike = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -418,6 +424,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         para_ilvl = 0;
                         run_bold = false;
                         run_italic = false;
+                        run_strike = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -482,12 +489,14 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                             &mut run_text,
                             run_bold,
                             run_italic,
+                            run_strike,
                             run_size,
                             hyperlink_target.as_deref(),
                         );
                         in_run = false;
                         run_bold = false;
                         run_italic = false;
+                        run_strike = false;
                         run_size = None;
                     }
                     "hyperlink" => {
@@ -499,6 +508,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                             &mut run_text,
                             run_bold,
                             run_italic,
+                            run_strike,
                             run_size,
                             hyperlink_target.as_deref(),
                         );
@@ -566,6 +576,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
         &mut run_text,
         run_bold,
         run_italic,
+        run_strike,
         run_size,
         hyperlink_target.as_deref(),
     );
@@ -598,6 +609,7 @@ fn flush_run(
     text: &mut String,
     bold: bool,
     italic: bool,
+    strike: bool,
     size: Option<i32>,
     href: Option<&str>,
 ) {
@@ -611,6 +623,7 @@ fn flush_run(
     };
     run.style.bold = bold;
     run.style.italic = italic;
+    run.style.strike = strike;
     if let Some(sz) = size {
         run.style.size = sz;
     }
@@ -802,6 +815,30 @@ mod tests {
         }));
         assert!(p.runs.iter().any(|r| {
             r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_strikethrough() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut strike = Run::text("guess");
+        strike.style.strike = true;
+        p.runs.push(strike);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:strike/>"), "docx must emit w:strike: {xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("guess"))
+        }));
+        assert!(p.runs.iter().any(|r| {
+            !r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("plain"))
         }));
     }
 
