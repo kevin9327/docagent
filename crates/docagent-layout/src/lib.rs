@@ -572,15 +572,25 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 continue;
             }
             let slice: String = chars.get(s..e).unwrap_or(&[]).iter().collect();
-            let w: i32 = shaped.advances.get(s..e).unwrap_or(&[]).iter().sum();
+            let (w, run_size, run_baseline) = if span.superscript {
+                let rs = (size.saturating_mul(2) / 3).max(1);
+                (
+                    shape(fonts, &slice, rs).width,
+                    rs,
+                    baseline.saturating_sub(size / 3),
+                )
+            } else {
+                let w: i32 = shaped.advances.get(s..e).unwrap_or(&[]).iter().sum();
+                (w, size, baseline)
+            };
             row.push(LineFrag {
                 x,
                 y: 0,
                 width: w,
                 height: 0,
-                baseline,
+                baseline: run_baseline,
                 text: slice,
-                font_size: size,
+                font_size: run_size,
                 bold: span.bold,
                 italic: span.italic,
                 underline: span.underline,
@@ -712,6 +722,7 @@ struct RunSpan {
     strike: bool,
     code: bool,
     highlight: bool,
+    superscript: bool,
     href: Option<String>,
 }
 
@@ -742,6 +753,7 @@ fn run_spans(p: &Paragraph) -> Vec<RunSpan> {
             strike: run.style.strike,
             code: run.style.code,
             highlight: run.style.highlight.is_some(),
+            superscript: run.style.superscript,
             href,
         });
         i += n;
@@ -1127,6 +1139,37 @@ mod tests {
             .collect();
         assert!(!joined.contains('•'), "{joined}");
         assert!(joined.contains("Replay the convert"), "{joined}");
+    }
+
+    #[test]
+    fn superscripts_shrink_and_raise() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("PDF/");
+        let mut sup = docagent_model::Run::text("A");
+        sup.style.superscript = true;
+        p.runs.push(sup);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let base = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("PDF"))
+            .expect("base");
+        let raised = page
+            .lines
+            .iter()
+            .find(|l| l.text == "A")
+            .expect("super");
+        assert!(raised.font_size < base.font_size, "super size {} vs {}", raised.font_size, base.font_size);
+        assert!(
+            raised.y + raised.baseline < base.y + base.baseline,
+            "super baseline {} vs {}",
+            raised.y + raised.baseline,
+            base.y + base.baseline
+        );
     }
 
     #[test]

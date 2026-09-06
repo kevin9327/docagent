@@ -170,6 +170,7 @@ struct InlineMarks {
     code: bool,
     mark: bool,
     under: bool,
+    super_: bool,
 }
 
 fn parse_runs(text: &str) -> Vec<Run> {
@@ -193,6 +194,7 @@ fn parse_runs(text: &str) -> Vec<Run> {
         if marks.under {
             run.style.underline = docagent_model::Underline::Single;
         }
+        run.style.superscript = marks.super_;
         runs.push(run);
     };
     while i < chars.len() {
@@ -232,6 +234,12 @@ fn parse_runs(text: &str) -> Vec<Run> {
             flush(&mut runs, &mut buf, marks);
             marks.under = !marks.under;
             i += 2;
+            continue;
+        }
+        if !marks.code && chars[i] == '^' {
+            flush(&mut runs, &mut buf, marks);
+            marks.super_ = !marks.super_;
+            i += 1;
             continue;
         }
         if !marks.code && (chars[i] == '*' || chars[i] == '_') {
@@ -488,12 +496,18 @@ fn write_runs(p: &Paragraph) -> String {
                 if run.style.highlight.is_some() {
                     s.push_str("==");
                 }
+                if run.style.superscript {
+                    s.push('^');
+                }
                 if run.style.code {
                     s.push('`');
                 }
                 s.push_str(t);
                 if run.style.code {
                     s.push('`');
+                }
+                if run.style.superscript {
+                    s.push('^');
                 }
                 if run.style.highlight.is_some() {
                     s.push_str("==");
@@ -670,6 +684,21 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn superscripts_roundtrip() {
+        let src = b"the PDF/^A^ bytes match\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.superscript && matches!(&r.content, RunContent::Text(t) if t == "A")
+        }));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("PDF/^A^"), "{back}");
+        assert!(!back.contains("^the"), "{back}");
     }
 
     #[test]

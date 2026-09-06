@@ -89,15 +89,15 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 
 | Hash | SHA-256 (both runs) |
 | --- | --- |
-| input | `fc05a776bdbb0032bf9f30793238977d5b357ca9b4c777429c19e3c9aa0570d0` |
+| input | `66fc8acacb0a2231ab4fd16812bc822e9d88a47f239b0d5ce9099462238e0444` |
 | plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
-| output | `0c4e99dd5b810ec13631ac472ac79b85108a106c2a8f44759404eb1ead8973f5` |
+| output | `c25dd17979888427f4572e1bb08397d0527cc7e8d485d05676fd65e2a7dd82d7` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this. We do not ship OmniDocBench numbers.
 
 ## What you get
 
-These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) (`/Link` URI + strike fill + quote bar + code fill + fence fill + rule + task box + highlight fill + underline fill) · [HTML](docs/assets/letter.html) (`<a href>` / `<s>` / `<blockquote>` / `<code>` / `<pre>` / `<hr/>` / checkbox / `<mark>` / `<u>`) · [DOCX](docs/assets/letter.docx) (`Heading1` / `Quote` / `Code` / `CodeBlock` / `HorizontalLine` / `[x]` / `w:highlight` / `w:u`) · [ODT](docs/assets/letter.odt) (`text:h` / `Quote` / `Tcode` / `Tmark` / `Tunder` / `CodeBlock` / `[x]`) · [Markdown](docs/assets/letter.md) (GFM `| --- |` / `` `code` `` / ` ```fence``` ` / `- [x]` / `---` / `==mark==` / `__underline__`) · [capsule JSON](docs/assets/letter-capsule.json).
+These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) (`/Link` URI + strike fill + quote bar + code fill + fence fill + rule + task box + highlight fill + underline fill + superscript) · [HTML](docs/assets/letter.html) (`<a href>` / `<s>` / `<blockquote>` / `<code>` / `<pre>` / `<hr/>` / checkbox / `<mark>` / `<u>` / `<sup>`) · [DOCX](docs/assets/letter.docx) (`Heading1` / `Quote` / `Code` / `CodeBlock` / `HorizontalLine` / `[x]` / `w:highlight` / `w:u` / `w:vertAlign`) · [ODT](docs/assets/letter.odt) (`text:h` / `Quote` / `Tcode` / `Tmark` / `Tunder` / `Tsuper` / `CodeBlock` / `[x]`) · [Markdown](docs/assets/letter.md) (GFM `| --- |` / `` `code` `` / ` ```fence``` ` / `- [x]` / `---` / `==mark==` / `__underline__` / `^super^`) · [capsule JSON](docs/assets/letter-capsule.json).
 
 ```markdown
 | **Hop** | **File** | **Proof** |
@@ -110,12 +110,12 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. Heading rules, list markers, font-sized task boxes, hyperlink underlines, plain underlines, strikethrough, quote bars, code-span and fenced-block backgrounds, highlight marks, and thematic rules are painted fills, not glyphs. Links are URI <code>/Link</code> annotations (click the last line). Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. Heading rules, list markers, font-sized task boxes, hyperlink underlines, plain underlines, strikethrough, quote bars, code-span and fenced-block backgrounds, highlight marks, and thematic rules are painted fills, not glyphs. Superscripts are a smaller face on a raised baseline (see PDF/<sup>A</sup>). Links are URI <code>/Link</code> annotations (click the last line). Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
 </p>
-<p align="center"><sub>HTML from the same IR. Headings, quotes, tables with <strong>header</strong> cells, nested lists, task checkboxes, <strong>bold</strong>, <em>italic</em>, <s>strikethrough</s>, <code>code</code>, fenced <code>&lt;pre&gt;</code>, a thematic <code>&lt;hr/&gt;</code>, <mark>highlight</mark>, <u>underline</u>, and <a href="https://github.com/kevin9327/docagent">links</a>.</sub></p>
+<p align="center"><sub>HTML from the same IR. Headings, quotes, tables with <strong>header</strong> cells, nested lists, task checkboxes, <strong>bold</strong>, <em>italic</em>, <s>strikethrough</s>, <code>code</code>, fenced <code>&lt;pre&gt;</code>, a thematic <code>&lt;hr/&gt;</code>, <mark>highlight</mark>, <u>underline</u>, PDF/<sup>A</sup>, and <a href="https://github.com/kevin9327/docagent">links</a>.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
@@ -137,9 +137,9 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
 | **PDF/A** | Archival print. Heading rules, list markers, font-sized task boxes, hyperlink underlines, plain underlines, strikethrough, quote bars, code-span and fenced-block backgrounds, highlight marks, thematic rules, and table fills are `FillRect`s. Links are URI `/Link` annotations. Two runs, same fonts, same bytes. |
-| **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Quotes as `w:pStyle Quote` + `text:p` Quote with a left border. Fenced code as `CodeBlock` with a teal shade. Highlights as `w:highlight yellow` and `Tmark` `#fde68a`. Underlines as `w:u` and `Tunder`. Thematic breaks as `HorizontalLine` with a bottom border. Lists as `w:numPr` and `text:list`. Tasks keep `[x]` / `[ ]` markers. Links as `w:hyperlink` and `text:a`. Runs keep `w:b`/`w:i`/`w:strike` and `text-line-through` in body and table cells. |
-| **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. Links write `[text](url)`. Strikethrough writes `~~text~~`. Quotes write `> text`. Code writes `` `text` ``. Fences write ` ``` `. Highlights write `==text==`. Underlines write `__text__`. Tasks write `- [x]` / `- [ ]`. Thematic breaks write `---`. |
-| **HTML** | Semantic HTML an agent can read back. Quotes are `<blockquote>`. Fenced code is `<pre><code>`. Tasks are disabled checkboxes. Table cells keep `<strong>`/`<em>`. Links are `<a href>`. Strikethrough is `<s>`. Code is `<code>`. Highlights are `<mark>`. Underlines are `<u>`. Thematic breaks are `<hr/>`. |
+| **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Quotes as `w:pStyle Quote` + `text:p` Quote with a left border. Fenced code as `CodeBlock` with a teal shade. Highlights as `w:highlight yellow` and `Tmark` `#fde68a`. Underlines as `w:u` and `Tunder`. Superscripts as `w:vertAlign superscript` and `Tsuper`. Thematic breaks as `HorizontalLine` with a bottom border. Lists as `w:numPr` and `text:list`. Tasks keep `[x]` / `[ ]` markers. Links as `w:hyperlink` and `text:a`. Runs keep `w:b`/`w:i`/`w:strike` and `text-line-through` in body and table cells. |
+| **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. Links write `[text](url)`. Strikethrough writes `~~text~~`. Quotes write `> text`. Code writes `` `text` ``. Fences write ` ``` `. Highlights write `==text==`. Underlines write `__text__`. Superscripts write `^text^`. Tasks write `- [x]` / `- [ ]`. Thematic breaks write `---`. |
+| **HTML** | Semantic HTML an agent can read back. Quotes are `<blockquote>`. Fenced code is `<pre><code>`. Tasks are disabled checkboxes. Table cells keep `<strong>`/`<em>`. Links are `<a href>`. Strikethrough is `<s>`. Code is `<code>`. Highlights are `<mark>`. Underlines are `<u>`. Superscripts are `<sup>`. Thematic breaks are `<hr/>`. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
 | **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. |
 
@@ -168,7 +168,7 @@ DocAgent does not claim MinerU's VLM scores. MinerU does not ship a replayable c
 | VLM / OCR (not our job) | | **yes** | **yes** | | **yes** | **yes** | | | | |
 
 **North star:** an agent drops `examples/letter.md` (or DOCX/ODT) and gets PDF/A + HTML + Markdown + DOCX + ODT whose
-bytes match the next run, with three hashes in the capsule. Heading 1/2, quotes, code spans, fenced blocks, task lists, hyperlinks, strikethrough, highlight marks, and underlines survive the Word and LibreOffice files.
+bytes match the next run, with three hashes in the capsule. Heading 1/2, quotes, code spans, fenced blocks, task lists, hyperlinks, strikethrough, highlight marks, underlines, and superscripts survive the Word and LibreOffice files.
 That is the merge gate.
 Hangul LineSeg vs rhwp is a regional CI track, not this page.
 

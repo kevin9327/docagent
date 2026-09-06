@@ -338,6 +338,57 @@ mod tests {
     }
 
     #[test]
+    fn superscript_shrinks_text() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("PDF/");
+        let mut sup = docagent_model::Run::text("A");
+        sup.style.superscript = true;
+        p.runs.push(sup);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let base = list.ops.iter().find_map(|op| match op {
+            Op::Text { text, size, .. } if text.contains("PDF") => Some(*size),
+            _ => None,
+        });
+        let raised = list.ops.iter().find_map(|op| match op {
+            Op::Text { text, size, y, .. } if text == "A" => Some((*size, *y)),
+            _ => None,
+        });
+        let Some(base) = base else {
+            panic!("base text missing: {:?}", list.ops);
+        };
+        let Some((rs, ry)) = raised else {
+            panic!("super text missing: {:?}", list.ops);
+        };
+        assert!(rs < base, "super size {rs} vs {base}");
+        let base_y = list.ops.iter().find_map(|op| match op {
+            Op::Text { text, y, .. } if text.contains("PDF") => Some(*y),
+            _ => None,
+        });
+        assert!(
+            ry < base_y.unwrap_or(ry),
+            "super y {ry} vs {:?}",
+            base_y
+        );
+        let marked = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("PDF/A")));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(marked, plain_pdf, "superscript must change PDF bytes");
+        assert!(claims_pdfa(&marked));
+    }
+
+    #[test]
     fn underline_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();

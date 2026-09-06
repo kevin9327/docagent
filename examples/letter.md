@@ -6,7 +6,7 @@
 
 To: operations desk, Duisburg terminal.
 
-The shipment left Busan on 4 September and is booked on the 11 September rail window. This is a flow document: one convert, ==three hashes==, **GPU-free**. Run `prove` twice with the same fonts and the PDF/A bytes match _byte-for-byte_. Agents ~~guess~~.
+The shipment left Busan on 4 September and is booked on the 11 September rail window. This is a flow document: one convert, ==three hashes==, **GPU-free**. Run `prove` twice with the same fonts and the PDF/^A^ bytes match _byte-for-byte_. Agents ~~guess~~.
 
 > Replay is evidence. Same fonts, same bytes.
 
@@ -18,7 +18,7 @@ docagent prove examples/letter.md
 | --- | --- | --- |
 | Input | letter.md | input SHA-256 |
 | Plan | layout i32 @ 1/7200 in | plan SHA-256 |
-| Output | PDF/A · HTML · ODT | output SHA-256 |
+| Output | PDF/^A^ · HTML · ODT | output SHA-256 |
 
 ---
 
@@ -33,8 +33,8 @@ Agent replay:
 
 1. Hash the input
 2. Run Convert
-   - PDF/A
+   - PDF/^A^
    - HTML
 3. Compare the capsule
 
-[DocAgent](https://github.com/kevin9327/docagent) runtime — DOCX · ODT · Markdown · HTML · PDF/A
+[DocAgent](https://github.com/kevin9327/docagent) runtime — DOCX · ODT · Markdown · HTML · PDF/^A^

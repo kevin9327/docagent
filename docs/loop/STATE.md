@@ -1,26 +1,26 @@
 # DocAgent #1 loop state
 
-Last cycle: 30 (2026-09-06) — font-sized task/bullet markers
+Last cycle: 31 (2026-09-06) — superscripts as a smaller raised face
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- List markers were 200 HWPUNIT (~2pt) and read as dots on the GitHub PDF screenshot.
-- `bullet_disc` is now 0.75em (min 400 HU). Task boxes keep a hollow frame plus a checked inner fill. Advance is disc + 240 HU so text does not overlap.
-- Fixture text unchanged. PDF/HTML shots now show readable checkboxes and discs.
+- `CharStyle.superscript` lays out at 2/3 size on a baseline raised by 1/3 em.
+- Markdown reads/writes `^text^`. HTML emits `<sup>`. DOCX keeps `w:vertAlign superscript`. ODT keeps `Tsuper` `style:text-position="super 58%"`.
+- Fixture: `PDF/^A^` in the body, table, nested list, and closer so the GitHub PDF/HTML shots show a raised A.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `fc05a776bdbb0032bf9f30793238977d5b357ca9b4c777429c19e3c9aa0570d0`
+- input  `66fc8acacb0a2231ab4fd16812bc822e9d88a47f239b0d5ce9099462238e0444`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `0c4e99dd5b810ec13631ac472ac79b85108a106c2a8f44759404eb1ead8973f5`
+- output `c25dd17979888427f4572e1bb08397d0527cc7e8d485d05676fd65e2a7dd82d7`
 
-Plan hash matches cycle 21–29. Input hash matches cycle 29 (fixture text unchanged). Output hash changed with the larger marker fills.
+Plan hash matches cycle 21–30. Input and output hashes changed with the fixture and smaller raised glyphs.
 
 ## Next
 
-1. Hangul codec hyperlinks / strikethrough / quotes / code / breaks / tasks / highlights / underlines, or inline images.
+1. Hangul codec hyperlinks / strikethrough / quotes / code / breaks / tasks / highlights / underlines / superscripts, or inline images.
 2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule
