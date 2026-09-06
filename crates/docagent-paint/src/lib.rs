@@ -24,6 +24,8 @@ pub enum Op {
         size: i32,
         text: String,
         color: [u8; 4],
+        bold: bool,
+        italic: bool,
     },
 }
 
@@ -77,6 +79,8 @@ pub fn paint(tree: &FragmentTree) -> DisplayList {
                 size: line.font_size,
                 text: line.text.clone(),
                 color: [0, 0, 0, 255],
+                bold: line.bold,
+                italic: line.italic,
             });
         }
     }
@@ -103,5 +107,25 @@ mod tests {
         let bytes = list.to_bytes().unwrap();
         let back = DisplayList::from_bytes(&bytes).unwrap();
         assert_eq!(list, back);
+    }
+
+    #[test]
+    fn paint_forwards_bold_on_text_ops() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut bold = docagent_model::Run::text("GPU-free");
+        bold.style.bold = true;
+        p.runs.push(bold);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let list = paint(&tree);
+        assert!(list.ops.iter().any(|op| {
+            matches!(op, Op::Text { text, bold: true, .. } if text.contains("GPU-free"))
+        }));
+        assert!(list.ops.iter().any(|op| {
+            matches!(op, Op::Text { text, bold: false, .. } if text.contains("plain"))
+        }));
     }
 }

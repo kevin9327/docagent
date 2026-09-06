@@ -112,6 +112,51 @@ def trio(pdf: Image.Image, html: Image.Image, cap: Image.Image) -> Image.Image:
     return canvas
 
 
+def write_prove_html() -> Path:
+    prove = json.loads((ROOT / "letter-prove.json").read_text(encoding="utf-8"))
+    r1, r2 = prove["run1"], prove["run2"]
+    html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><title>prove</title>
+<style>
+body{{margin:0;background:#071018;color:#e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,sans-serif}}
+main{{padding:28px 32px 32px}}
+.kicker{{color:#5eead4;letter-spacing:.18em;font-size:12px;font-weight:700}}
+h1{{font-size:22px;margin:10px 0 6px;color:#f8fafc}}
+.sub{{color:#94a3b8;font-size:14px;margin:0 0 18px}}
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}
+.card{{background:#0b1c24;border:1px solid #134e4a;border-radius:12px;padding:16px 18px}}
+.card h2{{margin:0 0 12px;font-size:14px;color:#5eead4;letter-spacing:.12em}}
+.row{{display:grid;grid-template-columns:92px 1fr;gap:8px;padding:8px 0;border-bottom:1px solid #1e293b;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px}}
+.key{{color:#94a3b8}}
+.val{{color:#99f6e4;word-break:break-all}}
+.badge{{display:inline-block;margin-top:16px;background:#134e4a;color:#99f6e4;padding:6px 12px;border-radius:999px;font-size:13px;font-weight:700}}
+</style></head>
+<body><main>
+<div class="kicker">PROVE · TWO CONVERTS</div>
+<h1>examples/letter.md → PDF/A + HTML</h1>
+<p class="sub">Same input, same fonts, same plan. Engine {r1.get("engine_version", "0.1.0")}. Not a mock.</p>
+<div class="grid">
+<article class="card">
+<h2>RUN 1</h2>
+<div class="row"><div class="key">input</div><div class="val">{r1["input_hash"]}</div></div>
+<div class="row"><div class="key">plan</div><div class="val">{r1["plan_hash"]}</div></div>
+<div class="row"><div class="key">output</div><div class="val">{r1["output_hash"]}</div></div>
+</article>
+<article class="card">
+<h2>RUN 2</h2>
+<div class="row"><div class="key">input</div><div class="val">{r2["input_hash"]}</div></div>
+<div class="row"><div class="key">plan</div><div class="val">{r2["plan_hash"]}</div></div>
+<div class="row"><div class="key">output</div><div class="val">{r2["output_hash"]}</div></div>
+</article>
+</div>
+<div class="badge">identical: true · pdf_bytes_equal · html_bytes_equal</div>
+</main></body></html>
+"""
+    path = ROOT / "_prove_preview.html"
+    path.write_text(html, encoding="utf-8")
+    return path
+
+
 def write_capsule_html() -> Path:
     cap = json.loads((ROOT / "letter-capsule.json").read_text(encoding="utf-8"))
     html = f"""<!DOCTYPE html>
@@ -167,7 +212,13 @@ def main() -> None:
     cap_framed.save(ROOT / "output-capsule.png")
     trio(pdf_framed, html_framed, cap_framed).save(ROOT / "output-trio.png")
 
-    for p in (html_raw, cap_raw, cap_html):
+    prove_html = write_prove_html()
+    chrome_shot(prove_html, ROOT / "output-rerun.png", 1400, 560)
+    crop_whitespace(Image.open(ROOT / "output-rerun.png").convert("RGB"), TEAL, 36).save(
+        ROOT / "output-rerun.png"
+    )
+
+    for p in (html_raw, cap_raw, cap_html, prove_html):
         p.unlink(missing_ok=True)
 
 

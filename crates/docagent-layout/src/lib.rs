@@ -7,8 +7,8 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, BorderStyle, Document, Hu, LineSpacing, NumberFormat, Paragraph, Section,
-    Table, DEFAULT_FONT_SIZE_HU,
+    Alignment, Block, BorderStyle, Document, Hu, LineSpacing, NumberFormat, Paragraph, RunContent,
+    Section, Table, DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
 
@@ -40,6 +40,8 @@ pub struct LineFrag {
     pub baseline: Hu,
     pub text: String,
     pub font_size: Hu,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,10 +142,12 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                         if stroke_w > 0 {
                             push_cell_strokes(&mut current.strokes, x, y, cw, row_h, stroke_w, stroke);
                         }
+                        let mut ly = y + 80;
                         for line in &cell.lines {
                             let mut placed = line.clone();
-                            placed.x = x + 80;
-                            placed.y += y + 80;
+                            placed.x = x + 80 + line.x;
+                            placed.y = ly;
+                            ly += line.height;
                             current.lines.push(placed);
                         }
                         x += cw;
@@ -259,6 +263,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
         LineSpacing::AtLeast(hu) => line_height(fonts, size, 100).max(hu),
         LineSpacing::Percent(_) => line_height(fonts, size, spacing_pct),
     };
+    let baseline = (lh * 4) / 5;
     let marker = list_marker(p);
     let marker_w = marker
         .as_deref()
@@ -267,47 +272,102 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> Vec<LineFrag> 
     let usable = (width - p.indent_left - p.indent_right - marker_w).max(1);
     let shaped = shape(fonts, &text, size);
     let ranges = break_lines(text.clone(), shaped.advances.clone(), usable);
+    let spans = run_spans(p);
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
     if ranges.is_empty() {
-        return vec![LineFrag {
+        out.push(LineFrag {
             x: p.indent_left,
             y: 0,
             width: 0,
             height: lh,
-            baseline: (lh * 4) / 5,
+            baseline,
             text: marker.unwrap_or_default(),
             font_size: size,
-        }];
+            bold: false,
+            italic: false,
+        });
+        return out;
     }
-    let chars: Vec<char> = text.chars().collect();
-    ranges
-        .into_iter()
-        .enumerate()
-        .map(|(i, (a, b))| {
-            let slice: String = chars.get(a..b).unwrap_or(&[]).iter().collect();
-            let w: i32 = shaped.advances.get(a..b).unwrap_or(&[]).iter().sum();
-            let extra_indent = if i == 0 { p.indent_first } else { 0 };
-            let (text_out, x_off, extra_w) = if i == 0 {
-                if let Some(m) = marker.as_deref() {
-                    (format!("{m}{slice}"), 0, marker_w)
-                } else {
-                    (slice, 0, 0)
-                }
-            } else {
-                (slice, marker_w, 0)
-            };
-            let x = p.indent_left + extra_indent + x_off;
-            let aligned_x = align_x(x, w + extra_w, usable + marker_w, p.alignment);
-            LineFrag {
-                x: aligned_x,
-                y: 0,
-                width: w + extra_w,
-                height: lh,
-                baseline: (lh * 4) / 5,
-                text: text_out,
-                font_size: size,
+    for (li, (a, b)) in ranges.into_iter().enumerate() {
+        let extra_indent = if li == 0 { p.indent_first } else { 0 };
+        let mut x = p.indent_left + extra_indent + if li == 0 { 0 } else { marker_w };
+        let mut row: Vec<LineFrag> = Vec::new();
+        if li == 0 {
+            if let Some(m) = marker.as_deref() {
+                row.push(LineFrag {
+                    x,
+                    y: 0,
+                    width: marker_w,
+                    height: 0,
+                    baseline,
+                    text: m.to_string(),
+                    font_size: size,
+                    bold: false,
+                    italic: false,
+                });
+                x += marker_w;
             }
-        })
-        .collect()
+        }
+        for (rs, re, bold, italic) in &spans {
+            let s = (*rs).max(a);
+            let e = (*re).min(b);
+            if s >= e {
+                continue;
+            }
+            let slice: String = chars.get(s..e).unwrap_or(&[]).iter().collect();
+            let w: i32 = shaped.advances.get(s..e).unwrap_or(&[]).iter().sum();
+            row.push(LineFrag {
+                x,
+                y: 0,
+                width: w,
+                height: 0,
+                baseline,
+                text: slice,
+                font_size: size,
+                bold: *bold,
+                italic: *italic,
+            });
+            x += w;
+        }
+        let total_w = row.iter().map(|f| f.width).sum::<i32>();
+        let origin = p.indent_left + extra_indent;
+        let shift = align_x(origin, total_w, usable + marker_w, p.alignment) - origin;
+        for f in &mut row {
+            f.x += shift;
+        }
+        if let Some(last) = row.last_mut() {
+            last.height = lh;
+        } else {
+            row.push(LineFrag {
+                x: p.indent_left,
+                y: 0,
+                width: 0,
+                height: lh,
+                baseline,
+                text: String::new(),
+                font_size: size,
+                bold: false,
+                italic: false,
+            });
+        }
+        out.extend(row);
+    }
+    out
+}
+
+fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool)> {
+    let mut i = 0usize;
+    let mut out = Vec::new();
+    for run in &p.runs {
+        let RunContent::Text(t) = &run.content else {
+            continue;
+        };
+        let n = t.chars().count();
+        out.push((i, i + n, run.style.bold, run.style.italic));
+        i += n;
+    }
+    out
 }
 
 fn list_marker(p: &Paragraph) -> Option<String> {
@@ -598,9 +658,13 @@ mod tests {
         section.body.push(Block::Paragraph(p));
         doc.sections.push(section);
         let tree = layout_document(&doc, &FontSet::bundled());
-        let text = &tree.pages[0].lines[0].text;
-        assert!(text.starts_with('•'), "{text}");
-        assert!(text.contains("Receiving dock is clear"), "{text}");
+        let joined: String = tree.pages[0]
+            .lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect();
+        assert!(joined.starts_with('•'), "{joined}");
+        assert!(joined.contains("Receiving dock is clear"), "{joined}");
     }
 
     #[test]
@@ -617,9 +681,13 @@ mod tests {
         section.body.push(Block::Paragraph(p));
         doc.sections.push(section);
         let tree = layout_document(&doc, &FontSet::bundled());
-        let text = &tree.pages[0].lines[0].text;
-        assert!(text.starts_with("3. "), "{text}");
-        assert!(text.contains("Hash the input"), "{text}");
+        let joined: String = tree.pages[0]
+            .lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect();
+        assert!(joined.starts_with("3. "), "{joined}");
+        assert!(joined.contains("Hash the input"), "{joined}");
     }
 
     #[test]
@@ -646,8 +714,43 @@ mod tests {
         section.body.push(Block::Paragraph(b));
         doc.sections.push(section);
         let tree = layout_document(&doc, &FontSet::bundled());
-        let xs: Vec<_> = tree.pages[0].lines.iter().map(|l| l.x).collect();
-        assert!(xs.len() >= 2);
-        assert!(xs[1] > xs[0], "{xs:?}");
+        let parent = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.text.contains("dock"))
+            .map(|l| l.x)
+            .unwrap();
+        let nested = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.text.contains("bay"))
+            .map(|l| l.x)
+            .unwrap();
+        assert!(nested > parent, "parent={parent} nested={nested}");
+    }
+
+    #[test]
+    fn bold_runs_mark_line_frags() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut bold = docagent_model::Run::text("GPU-free");
+        bold.style.bold = true;
+        p.runs.push(bold);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let bold_frag = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.text.contains("GPU-free"))
+            .expect("bold span");
+        assert!(bold_frag.bold);
+        let plain = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.text.contains("plain"))
+            .expect("plain span");
+        assert!(!plain.bold);
     }
 }

@@ -98,6 +98,8 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                             size,
                             text,
                             color: _,
+                            bold,
+                            italic: _,
                         } => {
                             let mapped = docagent_font::retain_mapped_chars(fonts, text);
                             if mapped.is_empty() {
@@ -110,14 +112,28 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                             }));
                             surface.set_stroke(None);
                             let pt = (*size as f32 / HU_PER_PT).max(1.0);
+                            let px = *x as f32 / HU_PER_PT;
+                            let py = *y as f32 / HU_PER_PT;
                             surface.draw_text(
-                                Point::from_xy(*x as f32 / HU_PER_PT, *y as f32 / HU_PER_PT),
+                                Point::from_xy(px, py),
                                 font.clone(),
                                 pt,
                                 &mapped,
                                 false,
                                 TextDirection::Auto,
                             );
+                            if *bold {
+                                // Synthetic bold: second fill offset ~3% of em.
+                                let dx = (pt * 0.03).max(0.2);
+                                surface.draw_text(
+                                    Point::from_xy(px + dx, py),
+                                    font.clone(),
+                                    pt,
+                                    &mapped,
+                                    false,
+                                    TextDirection::Auto,
+                                );
+                            }
                         }
                         Op::Page { .. } => {}
                     }
@@ -171,6 +187,7 @@ pub fn claims_pdfa(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use docagent_font::FontSet;
     use docagent_layout::layout_document;
     use docagent_model::{Block, Document, Paragraph, Section};
     use docagent_paint::paint;
@@ -210,5 +227,27 @@ mod tests {
         assert!(pdf.starts_with(b"%PDF"));
         assert!(claims_pdfa(&pdf));
         assert!(pdf.len() > 1000);
+    }
+
+    #[test]
+    fn synthetic_bold_changes_pdf_bytes() {
+        fn pdf_for(bold: bool) -> Vec<u8> {
+            let mut doc = Document::new();
+            let mut section = Section::default();
+            let mut p = Paragraph::from_text("GPU-free");
+            p.runs[0].style.bold = bold;
+            section.body.push(Block::Paragraph(p));
+            doc.sections.push(section);
+            let tree = layout_document(&doc, &FontSet::bundled());
+            let list = paint(&tree);
+            assert!(list.ops.iter().any(|op| {
+                matches!(op, Op::Text { text, bold: b, .. } if text.contains("GPU-free") && *b == bold)
+            }));
+            to_pdfa(&list, &FontSet::bundled()).expect("pdf")
+        }
+        let plain = pdf_for(false);
+        let heavy = pdf_for(true);
+        assert_ne!(plain, heavy, "synthetic bold must change PDF bytes");
+        assert!(heavy.len() >= plain.len());
     }
 }
