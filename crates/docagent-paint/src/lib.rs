@@ -27,6 +27,14 @@ pub enum Op {
         bold: bool,
         italic: bool,
     },
+    /// Clickable URI. Coordinates are the same HWPUNIT space as `FillRect`.
+    Link {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        uri: String,
+    },
 }
 
 #[derive(Archive, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -82,6 +90,15 @@ pub fn paint(tree: &FragmentTree) -> DisplayList {
                 bold: line.bold,
                 italic: line.italic,
             });
+            if let Some((x, y, w, h, uri)) = line.link_hit() {
+                ops.push(Op::Link {
+                    x,
+                    y,
+                    w,
+                    h,
+                    uri: uri.to_string(),
+                });
+            }
         }
     }
     DisplayList { ops }
@@ -147,5 +164,30 @@ mod tests {
         assert!(list.ops.iter().any(|op| {
             matches!(op, Op::Text { text, italic: false, .. } if text.contains("plain"))
         }));
+    }
+
+    #[test]
+    fn paint_forwards_link_ops() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Link { uri, w, h, .. }
+                        if uri == "https://github.com/kevin9327/docagent" && *w > 0 && *h > 0
+                )
+            }),
+            "link op missing: {:?}",
+            list.ops
+        );
     }
 }

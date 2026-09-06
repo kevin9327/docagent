@@ -4,6 +4,8 @@
 
 use docagent_font::FontSet;
 use docagent_paint::{DisplayList, Op};
+use krilla::action::LinkAction;
+use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::color::rgb;
 use krilla::configure::{Archival, ConfigurationBuilder, Validator};
 use krilla::geom::{PathBuilder, Point, Rect, Transform};
@@ -74,6 +76,7 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                 .unwrap_or(page_size);
             let mut page =
                 document.start_page_with(PageSettings::from_wh(w, h).ok_or("page size")?);
+            let mut links = Vec::new();
             {
                 let mut surface = page.surface();
                 for op in &ops {
@@ -151,10 +154,32 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                                 surface.pop();
                             }
                         }
+                        Op::Link { x, y, w, h, uri } => {
+                            if *w > 0 && *h > 0 && !uri.is_empty() {
+                                links.push((*x, *y, *w, *h, uri.clone()));
+                            }
+                        }
                         Op::Page { .. } => {}
                     }
                 }
                 surface.finish();
+            }
+            for (x, y, w, h, uri) in links {
+                let Some(rect) = Rect::from_xywh(
+                    x as f32 / HU_PER_PT,
+                    y as f32 / HU_PER_PT,
+                    (w as f32 / HU_PER_PT).max(0.05),
+                    (h as f32 / HU_PER_PT).max(0.05),
+                ) else {
+                    continue;
+                };
+                page.add_annotation(Annotation::new_link(
+                    LinkAnnotation::new(
+                        rect,
+                        Target::Action(LinkAction::new(uri.clone()).into()),
+                    ),
+                    Some(uri),
+                ));
             }
             page.finish();
         }
@@ -336,6 +361,13 @@ mod tests {
         );
         let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
         assert!(claims_pdfa(&pdf));
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(s.contains("/URI"), "PDF /URI action missing");
+        assert!(
+            s.contains("https://github.com/kevin9327/docagent"),
+            "PDF URI target missing"
+        );
+        assert!(s.contains("/Link"), "PDF /Link subtype missing");
     }
 
     #[test]

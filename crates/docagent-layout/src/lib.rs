@@ -43,6 +43,24 @@ pub struct LineFrag {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    /// External URI for this run, if it is a hyperlink.
+    pub href: Option<String>,
+}
+
+impl LineFrag {
+    /// Hit box plus URI for a PDF `/Link` annotation. Height covers glyphs
+    /// even when this fragment is not the last on the line (`height` is 0).
+    pub fn link_hit(&self) -> Option<(Hu, Hu, Hu, Hu, &str)> {
+        let uri = self.href.as_deref().filter(|u| !u.is_empty())?;
+        if self.width <= 0 {
+            return None;
+        }
+        let h = self
+            .height
+            .max(self.font_size)
+            .max(self.baseline.saturating_add(120));
+        Some((self.x, self.y, self.width, h, uri))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -394,6 +412,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             bold: false,
             italic: false,
             underline: false,
+            href: None,
         });
         if bullet {
             fills.push(bullet_fill(p.indent_left, baseline, size));
@@ -421,10 +440,11 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 bold: false,
                 italic: false,
                 underline: false,
+                href: None,
             });
             x += marker_w;
         }
-        for (rs, re, bold, italic, underline) in &spans {
+        for (rs, re, bold, italic, underline, href) in &spans {
             let s = (*rs).max(a);
             let e = (*re).min(b);
             if s >= e {
@@ -443,6 +463,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 bold: *bold,
                 italic: *italic,
                 underline: *underline,
+                href: href.clone(),
             });
             x += w;
         }
@@ -466,6 +487,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 bold: false,
                 italic: false,
                 underline: false,
+                href: None,
             });
         }
         out.extend(row);
@@ -484,7 +506,7 @@ fn bullet_fill(x: Hu, baseline: Hu, size: Hu) -> RectFrag {
     }
 }
 
-fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool, bool)> {
+fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool, bool, Option<String>)> {
     let mut i = 0usize;
     let mut out = Vec::new();
     for run in &p.runs {
@@ -493,12 +515,16 @@ fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool, bool)> {
             continue;
         }
         let n = t.chars().count();
-        let underline = run.style.underline != docagent_model::Underline::None
-            || matches!(
-                &run.content,
-                RunContent::Inline(docagent_model::InlineObject::Hyperlink { .. })
-            );
-        out.push((i, i + n, run.style.bold, run.style.italic, underline));
+        let href = match &run.content {
+            RunContent::Inline(docagent_model::InlineObject::Hyperlink { target, .. })
+                if !target.is_empty() =>
+            {
+                Some(target.clone())
+            }
+            _ => None,
+        };
+        let underline = run.style.underline != docagent_model::Underline::None || href.is_some();
+        out.push((i, i + n, run.style.bold, run.style.italic, underline, href));
         i += n;
     }
     out
@@ -861,6 +887,14 @@ mod tests {
         let tree = layout_document(&doc, &FontSet::bundled());
         let page = &tree.pages[0];
         assert!(page.lines.iter().any(|l| l.text.contains("DocAgent") && l.underline));
+        assert!(
+            page.lines.iter().any(|l| {
+                l.href.as_deref() == Some("https://github.com/kevin9327/docagent")
+                    && l.link_hit().is_some()
+            }),
+            "hyperlink href missing: {:?}",
+            page.lines
+        );
         assert!(
             page.strokes
                 .iter()

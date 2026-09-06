@@ -41,10 +41,11 @@ pub fn raster_pages(list: &DisplayList) -> Vec<Vec<u8>> {
                     }
                 }
             }
-            Op::Text { .. } => {
+            Op::Text { .. } | Op::Link { .. } => {
                 // Glyph outlines are painted by the PDF backend; the CPU
                 // pixmap keeps filled rects plus a stable hash of text ops
-                // so visual regression stays byte-comparable.
+                // so visual regression stays byte-comparable. Link hit boxes
+                // are PDF annotations, not pixels.
             }
         }
     }
