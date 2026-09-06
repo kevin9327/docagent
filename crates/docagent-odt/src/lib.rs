@@ -2104,6 +2104,90 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_keeps_behind_wrap() {
+        let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "docs/assets/mark.png must be a PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs.push(Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.to_vec(),
+                mime: "image/png".into(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH / 2,
+                alt_text: Some("behind wrap".into()),
+                wrap: WrapMode::Behind,
+            })),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+
+        let xml = content_xml(&doc);
+        assert!(xml.contains("text:anchor-type=\"paragraph\""), "{xml}");
+        assert!(!xml.contains("text:anchor-type=\"as-char\""), "{xml}");
+        assert!(xml.contains("draw:style-name=\"Gbehind\""), "{xml}");
+        assert!(
+            xml.contains(
+                "style:name=\"Gbehind\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"run-through\" style:run-through=\"background\"/>"
+            ),
+            "{xml}"
+        );
+        assert!(xml.contains("<draw:image"), "{xml}");
+        assert!(xml.contains("Pictures/image1.png"), "{xml}");
+        assert!(xml.contains("draw:mime-type=\"image/png\""), "{xml}");
+        assert!(xml.contains("<svg:title>behind wrap</svg:title>"), "{xml}");
+        assert!(xml.contains("svg:width=\"1in\""), "{xml}");
+        assert!(xml.contains("svg:height=\"0.5000in\""), "{xml}");
+
+        let odt = write(&doc).unwrap();
+        assert!(sniff(&odt));
+        let mut zip = ZipArchive::new(Cursor::new(odt.clone())).unwrap();
+        let mut names = Vec::new();
+        for i in 0..zip.len() {
+            names.push(zip.by_index(i).unwrap().name().replace('\\', "/"));
+        }
+        assert!(
+            names.iter().any(|n| n == "Pictures/image1.png"),
+            "{names:?}"
+        );
+        {
+            let mut f = zip.by_name("Pictures/image1.png").unwrap();
+            let mut stored = Vec::new();
+            f.read_to_end(&mut stored).unwrap();
+            assert_eq!(stored.as_slice(), png);
+        }
+        {
+            let mut f = zip.by_name("META-INF/manifest.xml").unwrap();
+            let mut manifest = String::new();
+            f.read_to_string(&mut manifest).unwrap();
+            assert!(manifest.contains("Pictures/image1.png"), "{manifest}");
+            assert!(manifest.contains("image/png"), "{manifest}");
+        }
+
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image run: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes.as_slice(), png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, HU_PER_INCH);
+        assert_eq!(img.height, HU_PER_INCH / 2);
+        assert_eq!(img.alt_text.as_deref(), Some("behind wrap"));
+        assert_eq!(img.wrap, WrapMode::Behind);
+    }
+
+    #[test]
     fn roundtrip_keeps_cell_image() {
         let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
         assert!(

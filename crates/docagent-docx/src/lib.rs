@@ -2523,6 +2523,67 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_keeps_tight_wrap() {
+        let png = mark_png();
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "fixture must be PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.clone(),
+                mime: "image/png".into(),
+                width: 7200,
+                height: 3600,
+                alt_text: Some("tight wrap".into()),
+                wrap: WrapMode::Tight,
+            })),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<wp:wrapTight"), "{xml}");
+        assert!(xml.contains("<wp:anchor"), "{xml}");
+        assert!(!xml.contains("<wp:inline"), "{xml}");
+        assert!(xml.contains(r#"behindDoc="0""#), "{xml}");
+        assert!(xml.contains("<a:blip r:embed="), "{xml}");
+        assert!(xml.contains(r#"cx="914400""#), "{xml}");
+        assert!(xml.contains(r#"cy="457200""#), "{xml}");
+        assert!(xml.contains(r#"descr="tight wrap""#), "{xml}");
+
+        let bytes = write(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let mut media = Vec::new();
+        zip.by_name("word/media/image1.png")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert_eq!(media, png);
+
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image run: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 7200);
+        assert_eq!(img.height, 3600);
+        assert_eq!(img.alt_text.as_deref(), Some("tight wrap"));
+        assert_eq!(img.wrap, WrapMode::Tight);
+    }
+
+    #[test]
     fn reads_python_docx_style_wrap_square() {
         let png = mark_png();
         let types = br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;

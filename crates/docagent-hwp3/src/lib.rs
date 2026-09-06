@@ -33,6 +33,7 @@ const HYPERTEXT_OPTION: u16 = 0x10;
 const HYPERLINK_INFO_ID: u32 = 3;
 const HYPERLINK_ENTRY_LEN: usize = 617;
 const HYPERLINK_URL_LEN: usize = 256;
+const LIST_LEVEL_INDENT_HU: i32 = 1400;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -165,34 +166,84 @@ fn skip_font_lists(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
     Ok(())
 }
 
-fn read_styles(cur: &mut Cursor<&[u8]>) -> Result<Vec<String>, Error> {
+struct Hwp3NamedStyle {
+    name: String,
+    indent_left: i32,
+}
+
+fn read_styles(cur: &mut Cursor<&[u8]>) -> Result<Vec<Hwp3NamedStyle>, Error> {
     let n = read_u16(cur)?;
     let mut names = Vec::with_capacity(n as usize);
     for _ in 0..n {
         let mut name_buf = [0u8; 20];
         cur.read_exact(&mut name_buf)?;
-        names.push(decode_hwp3_kchar(&name_buf));
-        skip_bytes(cur, CHAR_SHAPE_LEN + PARA_SHAPE_LEN)?;
+        let name = decode_hwp3_kchar(&name_buf);
+        skip_bytes(cur, CHAR_SHAPE_LEN)?;
+        let left = read_u16(cur)?;
+        skip_bytes(cur, PARA_SHAPE_LEN.saturating_sub(2))?;
+        names.push(Hwp3NamedStyle {
+            name,
+            indent_left: hwp3_unit_to_hu(left),
+        });
     }
     Ok(names)
 }
 
+fn style_name_base(name: &str) -> &str {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        n
+    } else {
+        &n[..n.len() - digits]
+    }
+}
+
+fn style_name_level(name: &str) -> u8 {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        0
+    } else {
+        n[n.len() - digits..].parse().unwrap_or(0)
+    }
+}
+
+fn list_level_from_indent(indent: i32) -> u8 {
+    if indent < 700 {
+        0
+    } else {
+        let n = indent / LIST_LEVEL_INDENT_HU;
+        u8::try_from(n.clamp(0, i32::from(u8::MAX))).unwrap_or(u8::MAX)
+    }
+}
+
+fn recovered_list_level(style_name: Option<&str>, indent: i32) -> u8 {
+    let from_name = style_name.map(style_name_level).unwrap_or(0);
+    if from_name > 0 {
+        from_name
+    } else {
+        list_level_from_indent(indent)
+    }
+}
+
 fn style_kind(name: &str) -> Option<StyleKind> {
     let n = name.trim();
-    if n.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
+    let base = style_name_base(n);
+    if base.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
         Some(StyleKind::Quote)
-    } else if n.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
+    } else if base.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
         Some(StyleKind::CodeBlock)
-    } else if n.eq_ignore_ascii_case("HorizontalLine")
+    } else if base.eq_ignore_ascii_case("HorizontalLine")
         || n.contains("가로선")
         || n.contains("구분선")
     {
         Some(StyleKind::Thematic)
-    } else if n.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
+    } else if base.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
         Some(StyleKind::Task)
-    } else if n.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
+    } else if base.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
         Some(StyleKind::Bullet)
-    } else if n.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
+    } else if base.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
         Some(StyleKind::Number)
     } else {
         None
@@ -234,8 +285,7 @@ fn strip_decimal_prefix(text: &str) -> Option<(u32, String)> {
     Some((n, text[i + 2..].to_string()))
 }
 
-fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>) {
-    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>, level: u8) {
     let mut checked = false;
     let mut is_task = kind == Some(StyleKind::Task);
     if let Some(run) = p.runs.first_mut()
@@ -312,7 +362,7 @@ fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>) {
 fn read_paragraphs(
     cur: &mut Cursor<&[u8]>,
     diagnostics: &mut Vec<Diagnostic>,
-    styles: &[String],
+    styles: &[Hwp3NamedStyle],
 ) -> Vec<Block> {
     let mut out = Vec::new();
     loop {
@@ -393,10 +443,11 @@ fn read_paragraphs(
             &per_char,
             styles,
         );
-        let kind = styles
-            .get(style_index)
-            .map(|s| s.as_str())
-            .and_then(style_kind);
+        let style = styles.get(style_index);
+        let kind = style.map(|s| s.name.as_str()).and_then(style_kind);
+        let level = style
+            .map(|s| recovered_list_level(Some(s.name.as_str()), s.indent_left))
+            .unwrap_or(0);
         if kind == Some(StyleKind::Thematic) {
             out.push(Block::Break(BreakKind::Thematic));
         } else if !text.trim().is_empty() {
@@ -405,21 +456,21 @@ fn read_paragraphs(
             para.layout_hints = hints;
             para.quote = kind == Some(StyleKind::Quote);
             para.code_block = kind == Some(StyleKind::CodeBlock);
-            apply_list_paragraph(&mut para, kind);
+            apply_list_paragraph(&mut para, kind, level);
             out.push(Block::Paragraph(para));
         } else if !hints.is_empty() {
             let mut para = Paragraph::from_text("");
             para.layout_hints = hints;
             para.quote = kind == Some(StyleKind::Quote);
             para.code_block = kind == Some(StyleKind::CodeBlock);
-            apply_list_paragraph(&mut para, kind);
+            apply_list_paragraph(&mut para, kind, level);
             out.push(Block::Paragraph(para));
         } else if matches!(
             kind,
             Some(StyleKind::Task | StyleKind::Bullet | StyleKind::Number)
         ) {
             let mut para = Paragraph::from_text("");
-            apply_list_paragraph(&mut para, kind);
+            apply_list_paragraph(&mut para, kind, level);
             out.push(Block::Paragraph(para));
         }
         out.extend(nested);
@@ -433,7 +484,7 @@ fn read_para_chars(
     diagnostics: &mut Vec<Diagnostic>,
     default_style: &CharStyle,
     per_char: &[CharStyle],
-    named_styles: &[String],
+    named_styles: &[Hwp3NamedStyle],
 ) -> (String, Vec<Block>, Vec<CharStyle>, Vec<Option<usize>>) {
     let mut text = String::new();
     let mut nested = Vec::new();
@@ -557,7 +608,7 @@ fn skip_control(
     cur: &mut Cursor<&[u8]>,
     ch: u16,
     diagnostics: &mut Vec<Diagnostic>,
-    styles: &[String],
+    styles: &[Hwp3NamedStyle],
 ) -> Result<(u32, Vec<Block>, Option<String>), Error> {
     match ch {
         9 | 18..=21 => {
@@ -606,7 +657,7 @@ fn skip_object(
     cur: &mut Cursor<&[u8]>,
     ch: u16,
     diagnostics: &mut Vec<Diagnostic>,
-    styles: &[String],
+    styles: &[Hwp3NamedStyle],
 ) -> Result<(u32, Vec<Block>, Option<String>), Error> {
     let header_val1 = read_u32(cur)?;
     let _close = read_u16(cur)?;
@@ -851,7 +902,7 @@ fn write_bytes(doc: &Document) -> Vec<u8> {
     for _ in 0..7 {
         out.extend_from_slice(&0u16.to_le_bytes());
     }
-    out.extend_from_slice(&7u16.to_le_bytes());
+    out.extend_from_slice(&10u16.to_le_bytes());
     out.extend_from_slice(&encode_hwp3_style("Normal", 0, 0, 0));
     out.extend_from_slice(&encode_hwp3_style("Quote", 350, 0, 1));
     out.extend_from_slice(&encode_hwp3_style("CodeBlock", 0, 40, 0));
@@ -859,6 +910,10 @@ fn write_bytes(doc: &Document) -> Vec<u8> {
     out.extend_from_slice(&encode_hwp3_style("Task", 0, 0, 0));
     out.extend_from_slice(&encode_hwp3_style("Bullet", 0, 0, 0));
     out.extend_from_slice(&encode_hwp3_style("Number", 0, 0, 0));
+    let nested = hu_to_hwp3_unit(LIST_LEVEL_INDENT_HU);
+    out.extend_from_slice(&encode_hwp3_style("Task1", nested, 0, 0));
+    out.extend_from_slice(&encode_hwp3_style("Bullet1", nested, 0, 0));
+    out.extend_from_slice(&encode_hwp3_style("Number1", nested, 0, 0));
     let mut urls = Vec::new();
     if let Some(section) = doc.sections.first() {
         for block in &section.body {
@@ -890,10 +945,29 @@ fn para_style_id(p: &Paragraph) -> u8 {
     } else if p.quote {
         1
     } else {
+        let nested = p.numbering.as_ref().is_some_and(|n| n.level > 0);
         match p.numbering.as_ref().and_then(|n| n.format) {
-            Some(NumberFormat::Task) => 4,
-            Some(NumberFormat::Bullet) => 5,
-            Some(NumberFormat::Decimal) => 6,
+            Some(NumberFormat::Task) => {
+                if nested {
+                    7
+                } else {
+                    4
+                }
+            }
+            Some(NumberFormat::Bullet) => {
+                if nested {
+                    8
+                } else {
+                    5
+                }
+            }
+            Some(NumberFormat::Decimal) => {
+                if nested {
+                    9
+                } else {
+                    6
+                }
+            }
             _ => 0,
         }
     }
@@ -1510,6 +1584,68 @@ mod tests {
             Some((Some(NumberFormat::Decimal), 0, Some(1)))
         );
         assert_eq!(p.plain_text(), "Hash the input");
+    }
+
+    #[test]
+    fn roundtrip_keeps_nested_bullet_level() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut outer = Paragraph::from_text("Receiving dock is clear");
+        outer.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut inner = Paragraph::from_text("Bay 4, not bay 2");
+        inner.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut first = Paragraph::from_text("Hash the input");
+        first.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let mut nested = Paragraph::from_text("Run Convert");
+        nested.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 1,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(outer));
+        section.body.push(Block::Paragraph(inner));
+        section.body.push(Block::Paragraph(first));
+        section.body.push(Block::Paragraph(nested));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        assert!(
+            bytes.windows(b"Bullet1".len()).any(|w| w == b"Bullet1"),
+            "style list Bullet1"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        let nums: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                (Some(NumberFormat::Bullet), 0, None),
+                (Some(NumberFormat::Bullet), 1, None),
+                (Some(NumberFormat::Decimal), 0, Some(1)),
+                (Some(NumberFormat::Decimal), 1, Some(1)),
+            ]
+        );
     }
 
     #[test]

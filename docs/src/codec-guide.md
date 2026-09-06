@@ -10,9 +10,9 @@ codecs next to DOCX. For RTF or another format:
    `proptest`. Map `CharStyle` (bold, italic, underline, strike, code, highlight,
    super/sub), `InlineObject::Hyperlink`, and `InlineObject::Image` (`image/png`,
    `image/jpeg`) when the format has those primitives. If the format has wrapping
-   or table cells, map `WrapMode::Square` / `Behind` and cell-level images the way
-   DOCX (`wp:wrapSquare`, `behindDoc`) and ODT (cell `draw:image`, nested
-   `text:list`) already do.
+   or table cells, map `WrapMode::Square` / `Behind` / `InFront` / `Tight` and
+   cell-level images the way DOCX (`wp:wrapSquare`, `behindDoc`, `wp:wrapNone` in
+   front) and ODT (cell `draw:image`, nested `text:list`, `Gtight`) already do.
 4. Do not put a format identifier on the IR. Format-specific values become explicit
    `Option` fields.
 5. Promote the crate to a workspace member only after parse-loss 0 on the

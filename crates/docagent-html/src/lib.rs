@@ -1946,6 +1946,123 @@ mod tests {
     }
 
     #[test]
+    fn read_roundtrips_strike() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("guess");
+        p.runs[0].style.strike = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<s>guess</s>"), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.runs.iter().any(|r| {
+            r.style.strike && matches!(&r.content, RunContent::Text(t) if t == "guess")
+        }));
+    }
+
+    #[test]
+    fn read_roundtrips_underline() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("09:00 local");
+        p.runs[0].style.underline = docagent_model::Underline::Single;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<u>09:00 local</u>"), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.runs.iter().any(|r| {
+            r.style.underline == docagent_model::Underline::Single
+                && matches!(&r.content, RunContent::Text(t) if t == "09:00 local")
+        }));
+    }
+
+    #[test]
+    fn read_roundtrips_superscript() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("A");
+        p.runs[0].style.superscript = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<sup>A</sup>"), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.runs.iter().any(|r| {
+            r.style.superscript && matches!(&r.content, RunContent::Text(t) if t == "A")
+        }));
+    }
+
+    #[test]
+    fn read_roundtrips_subscript() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("2");
+        p.runs[0].style.subscript = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<sub>2</sub>"), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.runs.iter().any(|r| {
+            r.style.subscript && matches!(&r.content, RunContent::Text(t) if t == "2")
+        }));
+    }
+
+    #[test]
+    fn read_roundtrips_header_footer() {
+        let mut doc = Document::new();
+        let mut section = Section {
+            header: Some(header_footer(vec![Block::Paragraph(Paragraph::from_text(
+                "Harbor",
+            ))])),
+            footer: Some(header_footer(vec![Block::Paragraph(Paragraph::from_text(
+                "Page",
+            ))])),
+            ..Section::default()
+        };
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("body")));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<header><p>Harbor</p></header>"), "{html}");
+        assert!(html.contains("<footer><p>Page</p></footer>"), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let section = &back.sections[0];
+        let header = section.header.as_ref().expect("header");
+        let footer = section.footer.as_ref().expect("footer");
+        assert_eq!(
+            header
+                .blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::Paragraph(p) => Some(p.plain_text()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            ["Harbor"]
+        );
+        assert_eq!(
+            footer
+                .blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::Paragraph(p) => Some(p.plain_text()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            ["Page"]
+        );
+        assert_eq!(first_para(&back).plain_text(), "body");
+    }
+
+    #[test]
     fn read_roundtrips_ul() {
         let mut doc = Document::new();
         let mut section = Section::default();

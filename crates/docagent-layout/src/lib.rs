@@ -1257,6 +1257,16 @@ mod tests {
         }
     }
 
+    fn hf_image(width: Hu, height: Hu) -> HeaderFooter {
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![mark_run(width, height)];
+        HeaderFooter {
+            blocks: vec![Block::Paragraph(p)],
+            different_first: None,
+            different_odd_even: None,
+        }
+    }
+
     #[test]
     fn layout_uses_integer_hwpunit_only() {
         let mut doc = Document::new();
@@ -2203,5 +2213,81 @@ mod tests {
             page.lines.iter().any(|l| l.text.contains("body line")),
             "body dropped"
         );
+    }
+
+    #[test]
+    fn section_header_image_appears_in_band() {
+        let mut doc = Document::new();
+        let mut section = Section {
+            header: Some(hf_image(1600, 1600)),
+            ..Section::default()
+        };
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("body line")));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let frag = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("header image missing");
+        assert!(frag.y >= 0, "header image y {} off page", frag.y);
+        assert!(
+            frag.y < DEFAULT_MARGIN_HU,
+            "header image y {} not in top margin",
+            frag.y
+        );
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.width, 1600);
+        assert_eq!(img.height, 1600);
+        assert_eq!(img.bytes, MARK_PNG);
+        assert_eq!(img.mime, "image/png");
+        assert!(
+            page.lines.iter().any(|l| l.text.contains("body line")),
+            "body dropped"
+        );
+    }
+
+    #[test]
+    fn section_header_image_clamps_to_content_width() {
+        let mut doc = Document::new();
+        let mut section = Section {
+            header: Some(hf_image(50_000, 10_000)),
+            ..Section::default()
+        };
+        let content_w = section.page.content_width();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("body line")));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let frag = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("header image missing");
+        assert!(
+            frag.y < DEFAULT_MARGIN_HU,
+            "header image y {} not in top margin",
+            frag.y
+        );
+        assert!(
+            frag.width <= content_w,
+            "frag.width {} exceeds content width {}",
+            frag.width,
+            content_w
+        );
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.width, frag.width);
+        assert!(img.width <= content_w);
+        assert_eq!(
+            img.height,
+            (i64::from(10_000) * i64::from(img.width) / 50_000) as i32
+        );
+        assert!(img.height > 0);
+        assert_eq!(img.bytes, MARK_PNG);
     }
 }

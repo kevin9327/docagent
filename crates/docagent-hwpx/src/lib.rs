@@ -22,6 +22,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 const NS_SECTION: &str = "http://www.hancom.co.kr/hwpml/2011/section";
 const NS_PARA: &str = "http://www.hancom.co.kr/hwpml/2011/paragraph";
+const LIST_LEVEL_INDENT_HU: i32 = 1400;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -58,12 +59,13 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
         return Err(Error::NotHwpx);
     }
     let mut zip = ZipArchive::new(Cursor::new(bytes.to_vec()))?;
-    let (chars, named_styles) = if let Ok(mut f) = zip.by_name("Contents/header.xml") {
+    let (chars, named_styles, para_indents) = if let Ok(mut f) = zip.by_name("Contents/header.xml")
+    {
         let mut xml = String::new();
         f.read_to_string(&mut xml).ok();
         parse_header_meta(&xml)
     } else {
-        (HashMap::new(), HashMap::new())
+        (HashMap::new(), HashMap::new(), HashMap::new())
     };
     let mut sections = Vec::new();
     let names: Vec<String> = {
@@ -81,7 +83,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             let mut f = zip.by_name(&name)?;
             let mut xml = String::new();
             f.read_to_string(&mut xml)?;
-            sections.push(parse_section_xml(&xml, &chars, &named_styles)?);
+            sections.push(parse_section_xml(&xml, &chars, &named_styles, &para_indents)?);
         }
     }
     if sections.is_empty() {
@@ -181,10 +183,10 @@ fn header_xml(styles: &[CharStyle]) -> String {
     }
     s.push_str("</hh:charProperties>");
     s.push_str(
-        r#"<hh:paraProperties itemCnt="7"><hh:paraPr id="0"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="1"><hh:margin left="1400"/><hh:border borderFillIDRef="1" offsetLeft="400"/></hh:paraPr><hh:paraPr id="2"><hh:border borderFillIDRef="2"/></hh:paraPr><hh:paraPr id="3"><hh:border borderFillIDRef="3" offsetBottom="200"/></hh:paraPr><hh:paraPr id="4"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="5"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="6"><hh:border borderFillIDRef="0"/></hh:paraPr></hh:paraProperties>"#,
+        r#"<hh:paraProperties itemCnt="10"><hh:paraPr id="0"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="1"><hh:margin left="1400"/><hh:border borderFillIDRef="1" offsetLeft="400"/></hh:paraPr><hh:paraPr id="2"><hh:border borderFillIDRef="2"/></hh:paraPr><hh:paraPr id="3"><hh:border borderFillIDRef="3" offsetBottom="200"/></hh:paraPr><hh:paraPr id="4"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="5"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="6"><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="7"><hh:margin left="1400"/><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="8"><hh:margin left="1400"/><hh:border borderFillIDRef="0"/></hh:paraPr><hh:paraPr id="9"><hh:margin left="1400"/><hh:border borderFillIDRef="0"/></hh:paraPr></hh:paraProperties>"#,
     );
     s.push_str(
-        r#"<hh:styles itemCnt="7"><hh:style id="0" type="PARA" name="Normal" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="1" type="PARA" name="Quote" engName="Quote" paraPrIDRef="1" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="2" type="PARA" name="CodeBlock" engName="CodeBlock" paraPrIDRef="2" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="3" type="PARA" name="HorizontalLine" engName="HorizontalLine" paraPrIDRef="3" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="4" type="PARA" name="Task" engName="Task" paraPrIDRef="4" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="5" type="PARA" name="Bullet" engName="Bullet" paraPrIDRef="5" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="6" type="PARA" name="Number" engName="Number" paraPrIDRef="6" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles></hh:head>"#,
+        r#"<hh:styles itemCnt="10"><hh:style id="0" type="PARA" name="Normal" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="1" type="PARA" name="Quote" engName="Quote" paraPrIDRef="1" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="2" type="PARA" name="CodeBlock" engName="CodeBlock" paraPrIDRef="2" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="3" type="PARA" name="HorizontalLine" engName="HorizontalLine" paraPrIDRef="3" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="4" type="PARA" name="Task" engName="Task" paraPrIDRef="4" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="5" type="PARA" name="Bullet" engName="Bullet" paraPrIDRef="5" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="6" type="PARA" name="Number" engName="Number" paraPrIDRef="6" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="7" type="PARA" name="Task1" engName="Task1" paraPrIDRef="7" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="8" type="PARA" name="Bullet1" engName="Bullet1" paraPrIDRef="8" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="9" type="PARA" name="Number1" engName="Number1" paraPrIDRef="9" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles></hh:head>"#,
     );
     s
 }
@@ -300,10 +302,29 @@ fn para_style_id(p: &Paragraph) -> u32 {
     } else if p.quote {
         1
     } else {
+        let nested = p.numbering.as_ref().is_some_and(|n| n.level > 0);
         match p.numbering.as_ref().and_then(|n| n.format) {
-            Some(NumberFormat::Task) => 4,
-            Some(NumberFormat::Bullet) => 5,
-            Some(NumberFormat::Decimal) => 6,
+            Some(NumberFormat::Task) => {
+                if nested {
+                    7
+                } else {
+                    4
+                }
+            }
+            Some(NumberFormat::Bullet) => {
+                if nested {
+                    8
+                } else {
+                    5
+                }
+            }
+            Some(NumberFormat::Decimal) => {
+                if nested {
+                    9
+                } else {
+                    6
+                }
+            }
             _ => 0,
         }
     }
@@ -334,8 +355,7 @@ fn strip_decimal_prefix(text: &str) -> Option<(u32, String)> {
     Some((n, text[i + 2..].to_string()))
 }
 
-fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>) {
-    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>, level: u8) {
     let mut checked = false;
     let mut is_task = kind == Some(StyleKind::Task);
     if let Some(run) = p.runs.first_mut()
@@ -517,22 +537,44 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn parse_header_meta(xml: &str) -> (HashMap<u32, CharStyle>, HashMap<u32, String>) {
+fn parse_header_meta(
+    xml: &str,
+) -> (
+    HashMap<u32, CharStyle>,
+    HashMap<u32, String>,
+    HashMap<u32, i32>,
+) {
     let chars = parse_header_chars(xml);
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     reader.config_mut().expand_empty_elements = true;
     let mut buf = Vec::new();
     let mut named = HashMap::new();
+    let mut indents = HashMap::new();
+    let mut cur_para_pr: Option<u32> = None;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if local_name(&e) == "style"
+                let name = local_name(&e);
+                if name == "style"
                     && let Some(id) = attr_u32(&e, "id")
                 {
                     let eng = attr_string(&e, "engName").unwrap_or_default();
-                    let name = attr_string(&e, "name").unwrap_or_default();
-                    named.insert(id, if eng.is_empty() { name } else { eng });
+                    let local = attr_string(&e, "name").unwrap_or_default();
+                    named.insert(id, if eng.is_empty() { local } else { eng });
+                }
+                if name == "paraPr" {
+                    cur_para_pr = attr_u32(&e, "id");
+                }
+                if name == "margin"
+                    && let (Some(id), Some(left)) = (cur_para_pr, attr_i32(&e, "left"))
+                {
+                    indents.insert(id, left);
+                }
+            }
+            Ok(Event::End(e)) => {
+                if local_name_from_end(&e) == "paraPr" {
+                    cur_para_pr = None;
                 }
             }
             Ok(Event::Eof) => break,
@@ -541,7 +583,11 @@ fn parse_header_meta(xml: &str) -> (HashMap<u32, CharStyle>, HashMap<u32, String
         }
         buf.clear();
     }
-    (chars, named)
+    (chars, named, indents)
+}
+
+fn local_name_from_end(e: &quick_xml::events::BytesEnd<'_>) -> String {
+    String::from_utf8_lossy(e.local_name().as_ref()).into_owned()
 }
 
 fn parse_header_chars(xml: &str) -> HashMap<u32, CharStyle> {
@@ -616,6 +662,7 @@ fn parse_section_xml(
     xml: &str,
     chars: &HashMap<u32, CharStyle>,
     named_styles: &HashMap<u32, String>,
+    para_indents: &HashMap<u32, i32>,
 ) -> Result<Section, Error> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
@@ -644,6 +691,7 @@ fn parse_section_xml(
     let mut string_param_name = String::new();
     let mut param_text = String::new();
     let mut para_kind: Option<StyleKind> = None;
+    let mut para_level: u8 = 0;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -652,10 +700,13 @@ fn parse_section_xml(
                 match name.as_str() {
                     "t" => in_t = true,
                     "p" if !in_table => {
-                        para_kind = attr_u32(&e, "styleIDRef")
-                            .and_then(|id| named_styles.get(&id).cloned())
-                            .as_deref()
-                            .and_then(style_kind);
+                        let name = attr_u32(&e, "styleIDRef")
+                            .and_then(|id| named_styles.get(&id).cloned());
+                        para_kind = name.as_deref().and_then(style_kind);
+                        let indent = attr_u32(&e, "paraPrIDRef")
+                            .and_then(|id| para_indents.get(&id).copied())
+                            .unwrap_or(0);
+                        para_level = recovered_list_level(name.as_deref(), indent);
                     }
                     "run" if !in_table => {
                         in_run = true;
@@ -702,7 +753,7 @@ fn parse_section_xml(
                             &run_style,
                             pending_href.as_deref(),
                         );
-                        flush_para(&mut body, &mut para_runs, &mut hints, &mut para_kind);
+                        flush_para(&mut body, &mut para_runs, &mut hints, &mut para_kind, &mut para_level);
                         in_table = true;
                         tbl_repeat_header = attr_on(&e, "repeatHeader");
                     }
@@ -787,7 +838,7 @@ fn parse_section_xml(
                             &run_style,
                             pending_href.as_deref(),
                         );
-                        flush_para(&mut body, &mut para_runs, &mut hints, &mut para_kind);
+                        flush_para(&mut body, &mut para_runs, &mut hints, &mut para_kind, &mut para_level);
                         pending_href = None;
                     }
                     "tc" if in_table => {
@@ -857,7 +908,7 @@ fn parse_section_xml(
         &run_style,
         pending_href.as_deref(),
     );
-    flush_para(&mut body, &mut para_runs, &mut hints, &mut para_kind);
+    flush_para(&mut body, &mut para_runs, &mut hints, &mut para_kind, &mut para_level);
     section.body = body;
     Ok(section)
 }
@@ -889,22 +940,61 @@ enum StyleKind {
     Number,
 }
 
+fn style_name_base(name: &str) -> &str {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        n
+    } else {
+        &n[..n.len() - digits]
+    }
+}
+
+fn style_name_level(name: &str) -> u8 {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        0
+    } else {
+        n[n.len() - digits..].parse().unwrap_or(0)
+    }
+}
+
+fn list_level_from_indent(indent: i32) -> u8 {
+    if indent < 700 {
+        0
+    } else {
+        let n = indent / LIST_LEVEL_INDENT_HU;
+        u8::try_from(n.clamp(0, i32::from(u8::MAX))).unwrap_or(u8::MAX)
+    }
+}
+
+fn recovered_list_level(style_name: Option<&str>, indent: i32) -> u8 {
+    let from_name = style_name.map(style_name_level).unwrap_or(0);
+    if from_name > 0 {
+        from_name
+    } else {
+        list_level_from_indent(indent)
+    }
+}
+
 fn style_kind(name: &str) -> Option<StyleKind> {
     let n = name.trim();
-    if n.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
+    let base = style_name_base(n);
+    if base.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
         Some(StyleKind::Quote)
-    } else if n.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
+    } else if base.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
         Some(StyleKind::CodeBlock)
-    } else if n.eq_ignore_ascii_case("HorizontalLine")
+    } else if base.eq_ignore_ascii_case("HorizontalLine")
         || n.contains("가로선")
         || n.contains("구분선")
     {
         Some(StyleKind::Thematic)
-    } else if n.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
+    } else if base.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
         Some(StyleKind::Task)
-    } else if n.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
+    } else if base.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
         Some(StyleKind::Bullet)
-    } else if n.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
+    } else if base.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
         Some(StyleKind::Number)
     } else {
         None
@@ -916,8 +1006,10 @@ fn flush_para(
     runs: &mut Vec<Run>,
     hints: &mut Vec<LayoutHint>,
     kind: &mut Option<StyleKind>,
+    level: &mut u8,
 ) {
     let kind = kind.take();
+    let level = std::mem::take(level);
     if kind == Some(StyleKind::Thematic) {
         runs.clear();
         hints.clear();
@@ -932,7 +1024,7 @@ fn flush_para(
     p.layout_hints = std::mem::take(hints);
     p.quote = kind == Some(StyleKind::Quote);
     p.code_block = kind == Some(StyleKind::CodeBlock);
-    apply_list_paragraph(&mut p, kind);
+    apply_list_paragraph(&mut p, kind, level);
     body.push(Block::Paragraph(p));
 }
 
@@ -1317,5 +1409,68 @@ mod tests {
             Some((Some(NumberFormat::Decimal), 0, Some(1)))
         );
         assert_eq!(p.plain_text(), "Hash the input");
+    }
+
+    #[test]
+    fn roundtrip_keeps_nested_bullet_level() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut outer = Paragraph::from_text("Receiving dock is clear");
+        outer.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut inner = Paragraph::from_text("Bay 4, not bay 2");
+        inner.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let xml = para_xml(1, &inner, &[CharStyle::default()]);
+        assert!(xml.contains(r#"styleIDRef="8""#), "{xml}");
+        assert!(xml.contains(r#"paraPrIDRef="8""#), "{xml}");
+        let mut first = Paragraph::from_text("Hash the input");
+        first.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let mut nested = Paragraph::from_text("Run Convert");
+        nested.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 1,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(outer));
+        section.body.push(Block::Paragraph(inner));
+        section.body.push(Block::Paragraph(first));
+        section.body.push(Block::Paragraph(nested));
+        doc.sections.push(section);
+        let header = header_xml(&collect_char_styles(&doc));
+        assert!(header.contains(r#"engName="Bullet1""#), "{header}");
+        assert!(header.contains(r#"<hh:paraPr id="8"><hh:margin left="1400"/>"#), "{header}");
+        let back = roundtrip(&doc).unwrap();
+        let nums: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                (Some(NumberFormat::Bullet), 0, None),
+                (Some(NumberFormat::Bullet), 1, None),
+                (Some(NumberFormat::Decimal), 0, Some(1)),
+                (Some(NumberFormat::Decimal), 1, Some(1)),
+            ]
+        );
     }
 }

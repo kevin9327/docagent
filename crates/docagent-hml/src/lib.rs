@@ -12,6 +12,8 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use thiserror::Error;
 
+const LIST_LEVEL_INDENT_HU: i32 = 1400;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("not HML/HWPML")]
@@ -145,10 +147,10 @@ fn charshape_head(styles: &[CharStyle]) -> String {
     }
     s.push_str("</CHARSHAPELIST>");
     s.push_str(
-        r#"<PARASHAPELIST Count="7"><PARASHAPE Id="0"/><PARASHAPE Id="1"><PARAMARGIN Left="1400"/><PARABORDER BorderFill="1" Left="1"/></PARASHAPE><PARASHAPE Id="2"><PARABORDER BorderFill="2" Fill="1"/></PARASHAPE><PARASHAPE Id="3"><PARABORDER BorderFill="3" Bottom="1"/></PARASHAPE><PARASHAPE Id="4"/><PARASHAPE Id="5"/><PARASHAPE Id="6"/></PARASHAPELIST>"#,
+        r#"<PARASHAPELIST Count="10"><PARASHAPE Id="0"/><PARASHAPE Id="1"><PARAMARGIN Left="1400"/><PARABORDER BorderFill="1" Left="1"/></PARASHAPE><PARASHAPE Id="2"><PARABORDER BorderFill="2" Fill="1"/></PARASHAPE><PARASHAPE Id="3"><PARABORDER BorderFill="3" Bottom="1"/></PARASHAPE><PARASHAPE Id="4"/><PARASHAPE Id="5"/><PARASHAPE Id="6"/><PARASHAPE Id="7"><PARAMARGIN Left="1400"/></PARASHAPE><PARASHAPE Id="8"><PARAMARGIN Left="1400"/></PARASHAPE><PARASHAPE Id="9"><PARAMARGIN Left="1400"/></PARASHAPE></PARASHAPELIST>"#,
     );
     s.push_str(
-        r#"<STYLELIST Count="7"><STYLE Id="0" Name="Normal" EngName="Normal" Type="Para" ParaShape="0"/><STYLE Id="1" Name="Quote" EngName="Quote" Type="Para" ParaShape="1"/><STYLE Id="2" Name="CodeBlock" EngName="CodeBlock" Type="Para" ParaShape="2"/><STYLE Id="3" Name="HorizontalLine" EngName="HorizontalLine" Type="Para" ParaShape="3"/><STYLE Id="4" Name="Task" EngName="Task" Type="Para" ParaShape="4"/><STYLE Id="5" Name="Bullet" EngName="Bullet" Type="Para" ParaShape="5"/><STYLE Id="6" Name="Number" EngName="Number" Type="Para" ParaShape="6"/></STYLELIST></MAPPINGTABLE></HEAD>"#,
+        r#"<STYLELIST Count="10"><STYLE Id="0" Name="Normal" EngName="Normal" Type="Para" ParaShape="0"/><STYLE Id="1" Name="Quote" EngName="Quote" Type="Para" ParaShape="1"/><STYLE Id="2" Name="CodeBlock" EngName="CodeBlock" Type="Para" ParaShape="2"/><STYLE Id="3" Name="HorizontalLine" EngName="HorizontalLine" Type="Para" ParaShape="3"/><STYLE Id="4" Name="Task" EngName="Task" Type="Para" ParaShape="4"/><STYLE Id="5" Name="Bullet" EngName="Bullet" Type="Para" ParaShape="5"/><STYLE Id="6" Name="Number" EngName="Number" Type="Para" ParaShape="6"/><STYLE Id="7" Name="Task1" EngName="Task1" Type="Para" ParaShape="7"/><STYLE Id="8" Name="Bullet1" EngName="Bullet1" Type="Para" ParaShape="8"/><STYLE Id="9" Name="Number1" EngName="Number1" Type="Para" ParaShape="9"/></STYLELIST></MAPPINGTABLE></HEAD>"#,
     );
     s
 }
@@ -182,10 +184,29 @@ fn para_style_id(p: &Paragraph) -> u32 {
     } else if p.quote {
         1
     } else {
+        let nested = p.numbering.as_ref().is_some_and(|n| n.level > 0);
         match p.numbering.as_ref().and_then(|n| n.format) {
-            Some(NumberFormat::Task) => 4,
-            Some(NumberFormat::Bullet) => 5,
-            Some(NumberFormat::Decimal) => 6,
+            Some(NumberFormat::Task) => {
+                if nested {
+                    7
+                } else {
+                    4
+                }
+            }
+            Some(NumberFormat::Bullet) => {
+                if nested {
+                    8
+                } else {
+                    5
+                }
+            }
+            Some(NumberFormat::Decimal) => {
+                if nested {
+                    9
+                } else {
+                    6
+                }
+            }
             _ => 0,
         }
     }
@@ -216,8 +237,7 @@ fn strip_decimal_prefix(text: &str) -> Option<(u32, String)> {
     Some((n, text[i + 2..].to_string()))
 }
 
-fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>) {
-    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>, level: u8) {
     let mut checked = false;
     let mut is_task = kind == Some(StyleKind::Task);
     if let Some(run) = p.runs.first_mut()
@@ -418,7 +438,10 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
     let mut string_param_name = String::new();
     let mut param_text = String::new();
     let mut named_styles: HashMap<u32, String> = HashMap::new();
+    let mut para_indents: HashMap<u32, i32> = HashMap::new();
+    let mut cur_para_shape: Option<u32> = None;
     let mut para_kind: Option<StyleKind> = None;
+    let mut para_level: u8 = 0;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -460,11 +483,22 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                             named_styles.insert(id, if eng.is_empty() { name } else { eng });
                         }
                     }
+                    "PARASHAPE" => {
+                        cur_para_shape = attr_u32(&e, "Id");
+                    }
+                    "PARAMARGIN" => {
+                        if let (Some(id), Some(left)) = (cur_para_shape, attr_i32(&e, "Left")) {
+                            para_indents.insert(id, left);
+                        }
+                    }
                     "P" if !in_table => {
-                        para_kind = attr_u32(&e, "Style")
-                            .and_then(|id| named_styles.get(&id).cloned())
-                            .as_deref()
-                            .and_then(style_kind);
+                        let name = attr_u32(&e, "Style")
+                            .and_then(|id| named_styles.get(&id).cloned());
+                        para_kind = name.as_deref().and_then(style_kind);
+                        let indent = attr_u32(&e, "ParaShape")
+                            .and_then(|id| para_indents.get(&id).copied())
+                            .unwrap_or(0);
+                        para_level = recovered_list_level(name.as_deref(), indent);
                     }
                     "BOLD" if in_charshape => char_style.bold = true,
                     "ITALIC" if in_charshape => char_style.italic = true,
@@ -506,7 +540,7 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                             &run_style,
                             pending_href.as_deref(),
                         );
-                        flush_p(&mut body, &mut para_runs, &mut para_kind);
+                        flush_p(&mut body, &mut para_runs, &mut para_kind, &mut para_level);
                         pending_href = None;
                         in_table = true;
                         tbl_repeat_header = attr_on(&e, "RepeatHeader") || attr_on(&e, "Header");
@@ -534,6 +568,9 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                         }
                         in_charshape = false;
                     }
+                    "PARASHAPE" => {
+                        cur_para_shape = None;
+                    }
                     "TEXT" | "CHAR" => {
                         flush_run(
                             &mut para_runs,
@@ -559,7 +596,7 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                             &run_style,
                             pending_href.as_deref(),
                         );
-                        flush_p(&mut body, &mut para_runs, &mut para_kind);
+                        flush_p(&mut body, &mut para_runs, &mut para_kind, &mut para_level);
                         pending_href = None;
                     }
                     "TD" if in_table => {
@@ -629,7 +666,7 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
         &run_style,
         pending_href.as_deref(),
     );
-    flush_p(&mut body, &mut para_runs, &mut para_kind);
+    flush_p(&mut body, &mut para_runs, &mut para_kind, &mut para_level);
     if have_section || !body.is_empty() {
         section.body = body;
         doc.sections.push(section);
@@ -667,30 +704,75 @@ enum StyleKind {
     Number,
 }
 
+fn style_name_base(name: &str) -> &str {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        n
+    } else {
+        &n[..n.len() - digits]
+    }
+}
+
+fn style_name_level(name: &str) -> u8 {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        0
+    } else {
+        n[n.len() - digits..].parse().unwrap_or(0)
+    }
+}
+
+fn list_level_from_indent(indent: i32) -> u8 {
+    if indent < 700 {
+        0
+    } else {
+        let n = indent / LIST_LEVEL_INDENT_HU;
+        u8::try_from(n.clamp(0, i32::from(u8::MAX))).unwrap_or(u8::MAX)
+    }
+}
+
+fn recovered_list_level(style_name: Option<&str>, indent: i32) -> u8 {
+    let from_name = style_name.map(style_name_level).unwrap_or(0);
+    if from_name > 0 {
+        from_name
+    } else {
+        list_level_from_indent(indent)
+    }
+}
+
 fn style_kind(name: &str) -> Option<StyleKind> {
     let n = name.trim();
-    if n.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
+    let base = style_name_base(n);
+    if base.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
         Some(StyleKind::Quote)
-    } else if n.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
+    } else if base.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
         Some(StyleKind::CodeBlock)
-    } else if n.eq_ignore_ascii_case("HorizontalLine")
+    } else if base.eq_ignore_ascii_case("HorizontalLine")
         || n.contains("가로선")
         || n.contains("구분선")
     {
         Some(StyleKind::Thematic)
-    } else if n.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
+    } else if base.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
         Some(StyleKind::Task)
-    } else if n.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
+    } else if base.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
         Some(StyleKind::Bullet)
-    } else if n.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
+    } else if base.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
         Some(StyleKind::Number)
     } else {
         None
     }
 }
 
-fn flush_p(body: &mut Vec<Block>, runs: &mut Vec<Run>, kind: &mut Option<StyleKind>) {
+fn flush_p(
+    body: &mut Vec<Block>,
+    runs: &mut Vec<Run>,
+    kind: &mut Option<StyleKind>,
+    level: &mut u8,
+) {
     let kind = kind.take();
+    let level = std::mem::take(level);
     if kind == Some(StyleKind::Thematic) {
         runs.clear();
         body.push(Block::Break(BreakKind::Thematic));
@@ -703,7 +785,7 @@ fn flush_p(body: &mut Vec<Block>, runs: &mut Vec<Run>, kind: &mut Option<StyleKi
     p.runs = std::mem::take(runs);
     p.quote = kind == Some(StyleKind::Quote);
     p.code_block = kind == Some(StyleKind::CodeBlock);
-    apply_list_paragraph(&mut p, kind);
+    apply_list_paragraph(&mut p, kind, level);
     body.push(Block::Paragraph(p));
 }
 
@@ -1008,6 +1090,69 @@ mod tests {
             Some((Some(NumberFormat::Decimal), 0, Some(1)))
         );
         assert_eq!(p.plain_text(), "Hash the input");
+    }
+
+    #[test]
+    fn roundtrip_keeps_nested_bullet_level() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut outer = Paragraph::from_text("Receiving dock is clear");
+        outer.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut inner = Paragraph::from_text("Bay 4, not bay 2");
+        inner.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let xml = p_xml(&inner, &[CharStyle::default()]);
+        assert!(xml.contains(r#"Style="8""#), "{xml}");
+        assert!(xml.contains(r#"ParaShape="8""#), "{xml}");
+        let mut first = Paragraph::from_text("Hash the input");
+        first.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let mut nested = Paragraph::from_text("Run Convert");
+        nested.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 1,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(outer));
+        section.body.push(Block::Paragraph(inner));
+        section.body.push(Block::Paragraph(first));
+        section.body.push(Block::Paragraph(nested));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains(r#"EngName="Bullet1""#), "{xml}");
+        assert!(xml.contains(r#"<PARASHAPE Id="8"><PARAMARGIN Left="1400"/>"#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let nums: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                (Some(NumberFormat::Bullet), 0, None),
+                (Some(NumberFormat::Bullet), 1, None),
+                (Some(NumberFormat::Decimal), 0, Some(1)),
+                (Some(NumberFormat::Decimal), 1, Some(1)),
+            ]
+        );
     }
 
     #[test]

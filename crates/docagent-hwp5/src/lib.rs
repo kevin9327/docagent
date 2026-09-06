@@ -48,6 +48,8 @@ const CTRL_TABLE: u32 = u32::from_be_bytes(*b"tbl ");
 const CTRL_SECTION: u32 = u32::from_be_bytes(*b"secd");
 const CTRL_HYPERLINK: u32 = u32::from_be_bytes(*b"%hlk");
 const FILE_SIGNATURE: &[u8] = b"HWP Document File";
+const LIST_LEVEL_INDENT_HU: i32 = 1400;
+const LIST_STYLE_COUNT: u32 = 10;
 /// Spec 표 76 bit 2: 제목 줄 자동 반복.
 const TABLE_ATTR_REPEAT_HEADER: u32 = 1 << 2;
 /// LIST_HEADER cell property bit 18 (HWP 5.0 표 82 undocumented): 제목 행 셀.
@@ -302,22 +304,61 @@ enum StyleKind {
     Number,
 }
 
+fn style_name_base(name: &str) -> &str {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        n
+    } else {
+        &n[..n.len() - digits]
+    }
+}
+
+fn style_name_level(name: &str) -> u8 {
+    let n = name.trim();
+    let digits = n.bytes().rev().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits == n.len() {
+        0
+    } else {
+        n[n.len() - digits..].parse().unwrap_or(0)
+    }
+}
+
+fn list_level_from_indent(indent: i32) -> u8 {
+    if indent < 700 {
+        0
+    } else {
+        let n = indent / LIST_LEVEL_INDENT_HU;
+        u8::try_from(n.clamp(0, i32::from(u8::MAX))).unwrap_or(u8::MAX)
+    }
+}
+
+fn recovered_list_level(style_name: Option<&str>, indent: i32) -> u8 {
+    let from_name = style_name.map(style_name_level).unwrap_or(0);
+    if from_name > 0 {
+        from_name
+    } else {
+        list_level_from_indent(indent)
+    }
+}
+
 fn style_kind(name: &str) -> Option<StyleKind> {
     let n = name.trim();
-    if n.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
+    let base = style_name_base(n);
+    if base.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
         Some(StyleKind::Quote)
-    } else if n.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
+    } else if base.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
         Some(StyleKind::CodeBlock)
-    } else if n.eq_ignore_ascii_case("HorizontalLine")
+    } else if base.eq_ignore_ascii_case("HorizontalLine")
         || n.contains("가로선")
         || n.contains("구분선")
     {
         Some(StyleKind::Thematic)
-    } else if n.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
+    } else if base.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
         Some(StyleKind::Task)
-    } else if n.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
+    } else if base.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
         Some(StyleKind::Bullet)
-    } else if n.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
+    } else if base.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
         Some(StyleKind::Number)
     } else {
         None
@@ -349,8 +390,7 @@ fn strip_decimal_prefix(text: &str) -> Option<(u32, String)> {
     Some((n, text[i + 2..].to_string()))
 }
 
-fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>) {
-    let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
+fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>, level: u8) {
     let mut checked = false;
     let mut is_task = kind == Some(StyleKind::Task);
     if let Some(run) = p.runs.first_mut()
@@ -930,7 +970,14 @@ fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize, catalog: &StyleC
         kind => {
             para.quote = kind == Some(StyleKind::Quote);
             para.code_block = kind == Some(StyleKind::CodeBlock);
-            apply_list_paragraph(&mut para, kind);
+            let style_id = recs[start]
+                .payload
+                .get(10)
+                .copied()
+                .unwrap_or(0) as usize;
+            let name = catalog.styles.get(style_id).map(String::as_str);
+            let level = recovered_list_level(name, para.indent_left);
+            apply_list_paragraph(&mut para, kind, level);
             Block::Paragraph(para)
         }
     }
@@ -1363,8 +1410,8 @@ fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
     map[12..16].copy_from_slice(&n.to_le_bytes());
     map[32..36].copy_from_slice(&4u32.to_le_bytes());
     map[36..40].copy_from_slice(&n.to_le_bytes());
-    map[52..56].copy_from_slice(&7u32.to_le_bytes());
-    map[56..60].copy_from_slice(&7u32.to_le_bytes());
+    map[52..56].copy_from_slice(&LIST_STYLE_COUNT.to_le_bytes());
+    map[56..60].copy_from_slice(&LIST_STYLE_COUNT.to_le_bytes());
     write_record(&mut out, HWPTAG_ID_MAPPINGS, 0, &map);
     write_record(
         &mut out,
@@ -1435,6 +1482,24 @@ fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
         0,
         &encode_para_shape(0, 0, 0, 0),
     );
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(LIST_LEVEL_INDENT_HU, 0, 0, 0),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(LIST_LEVEL_INDENT_HU, 0, 0, 0),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(LIST_LEVEL_INDENT_HU, 0, 0, 0),
+    );
     for (i, name) in [
         "Normal",
         "Quote",
@@ -1443,6 +1508,9 @@ fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
         "Task",
         "Bullet",
         "Number",
+        "Task1",
+        "Bullet1",
+        "Number1",
     ]
     .iter()
     .enumerate()
@@ -1563,10 +1631,29 @@ fn para_style_id(p: &Paragraph) -> u16 {
     } else if p.quote {
         1
     } else {
+        let nested = p.numbering.as_ref().is_some_and(|n| n.level > 0);
         match p.numbering.as_ref().and_then(|n| n.format) {
-            Some(NumberFormat::Task) => 4,
-            Some(NumberFormat::Bullet) => 5,
-            Some(NumberFormat::Decimal) => 6,
+            Some(NumberFormat::Task) => {
+                if nested {
+                    7
+                } else {
+                    4
+                }
+            }
+            Some(NumberFormat::Bullet) => {
+                if nested {
+                    8
+                } else {
+                    5
+                }
+            }
+            Some(NumberFormat::Decimal) => {
+                if nested {
+                    9
+                } else {
+                    6
+                }
+            }
             _ => 0,
         }
     }
@@ -2273,5 +2360,71 @@ mod tests {
             Some((Some(NumberFormat::Decimal), 0, Some(1)))
         );
         assert_eq!(p.plain_text(), "Hash the input");
+    }
+
+    #[test]
+    fn roundtrip_keeps_nested_bullet_level() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut outer = Paragraph::from_text("Receiving dock is clear");
+        outer.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut inner = Paragraph::from_text("Bay 4, not bay 2");
+        inner.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 1,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let mut first = Paragraph::from_text("Hash the input");
+        first.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let mut nested = Paragraph::from_text("Run Convert");
+        nested.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 1,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        section.body.push(Block::Paragraph(outer));
+        section.body.push(Block::Paragraph(inner));
+        section.body.push(Block::Paragraph(first));
+        section.body.push(Block::Paragraph(nested));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        let nested_name: Vec<u8> = "Bullet1"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(
+            bytes.windows(nested_name.len()).any(|w| w == nested_name),
+            "DocInfo STYLE Bullet1"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        let nums: Vec<_> = back.sections[0]
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            nums,
+            [
+                (Some(NumberFormat::Bullet), 0, None),
+                (Some(NumberFormat::Bullet), 1, None),
+                (Some(NumberFormat::Decimal), 0, Some(1)),
+                (Some(NumberFormat::Decimal), 1, Some(1)),
+            ]
+        );
     }
 }

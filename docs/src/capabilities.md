@@ -48,8 +48,8 @@ HWPX / HML, not HWP 3. Bullet / Number lists round-trip on all four Hangul codec
 | Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** · CHAR_SHAPE shade |
 | Superscript / subscript | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline shift | `w:vertAlign` | Tsuper / Tsub | CHAR_SHAPE |
 | Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | CHAR_SHAPE |
-| Table header row | GFM `\| --- \|` | `<th>` | header fill | `w:tblHeader` | `THcell` | **yes** · not HWP 3 |
-| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | XObject · float · cell | `a:blip` · wrapSquare · behindDoc | `draw:image` · cell | — |
+| Table header row | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** · not HWP 3 |
+| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | XObject · float · cell | `a:blip` · wrapSquare · behindDoc · inFront | `draw:image` · cell · Tight | — |
 
 Images are **yes** (PNG and JPEG) on Markdown, HTML, PDF/A, DOCX, and ODT. They
 stay **—** on Hangul. `examples/letter.md` has no image; convert shots of that
@@ -58,8 +58,8 @@ fixture do not show one.
 | Placement | What ships |
 | --- | --- |
 | PDF/A | `Block::Float(Float::Image)` and table-cell `InlineObject::Image` layout and paint as PDF/A XObjects. Oversized floats clamp to content width; cell images clamp to cell width. `Section.header` / `footer` paint in the margin bands. |
-| DOCX | `WrapMode::Square` / `Behind` / `InFront` round-trip as `wp:wrapSquare` / `wp:wrapNone`+behindDoc / `wp:wrapNone` in front. |
-| ODT | `draw:image` inside table cells; nested `<text:list>` inside `<text:list-item>`; `WrapMode::Tight`; `svg:desc` alt fallback. |
+| DOCX | `WrapMode::Square` / `Behind` / `InFront` round-trip as `wp:wrapSquare` / `wp:wrapNone`+behindDoc / `wp:wrapNone` in front (`behindDoc="0"`). `WrapMode::Tight` round-trips as `wp:wrapTight`. |
+| ODT | `draw:image` inside table cells; nested `<text:list>` inside `<text:list-item>`; `WrapMode::Tight` (`Gtight`) / `Behind` (`Gbehind`); `svg:desc` alt fallback. |
 | HTML `read` | data-URI `<img>`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>`. |
 | Hangul | Bullet / Number lists on all four codecs; table headers on HWP 5 / HWPX / HML (not HWP 3). Still **—**: images. |
 

@@ -22,9 +22,10 @@
     "images": [
       "PNG and JPEG on Markdown, HTML, PDF/A, DOCX, ODT",
       "PDF Block::Float(Float::Image) and table-cell InlineObject::Image as PDF/A XObject; oversized floats clamp to content width; cell images clamp to cell width",
-      "DOCX WrapMode::Square / Behind round-trip as wp:wrapSquare / wp:wrapNone+behindDoc",
-      "ODT draw:image inside table cells; nested text:list inside text:list-item; svg:desc alt fallback",
-      "HTML read of <img src=\"data:…\">, <ul>/<ol>/<ul class=\"tasks\">, <blockquote>, <pre>, <a href>, <mark> (Pandoc-class import, not HTML5, no http src)",
+      "PDF Section.header / footer layout in margin bands; PDF/A embeds header/footer text",
+      "DOCX WrapMode::Square / Behind / InFront round-trip as wp:wrapSquare / wp:wrapNone+behindDoc / wp:wrapNone in front",
+      "ODT draw:image inside table cells; nested text:list inside text:list-item; WrapMode::Tight (Gtight); svg:desc alt fallback",
+      "HTML read of <img src=\"data:…\">, <ul>/<ol>/<ul class=\"tasks\">, <th>/<thead>, <blockquote>, <pre>, <a href>, <mark> (Pandoc-class import, not HTML5, no http src)",
       "examples/letter.md fixture has no image — convert shots must not pretend otherwise"
     ]
   },

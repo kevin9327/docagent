@@ -24,7 +24,8 @@ Hops prove **plain text** presence. Lists, links, strike, quotes, code, thematic
 breaks, tasks, highlight, super/sub, table headers, and PNG / JPEG images
 (Markdown / HTML / PDF/A / DOCX / ODT) are codec-level round-trips (see
 [What ships](capabilities.md)), not this hop count. PDF float and cell XObjects,
-DOCX `wp:wrapSquare` / `behindDoc`, ODT nested `text:list` and cell `draw:image`
+PDF page header/footer text, DOCX `wp:wrapSquare` / `behindDoc` / in-front,
+ODT nested `text:list`, cell `draw:image`, and Tight wrap (`Gtight`)
 are also codec-level, not hop counts.
 HTML `read` recovers `<img src="data:…">`, `<ul>`/`<ol>`/`<ul class="tasks">`,
 `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, and `<mark>`; that is not a hop count and

@@ -1176,4 +1176,89 @@ mod tests {
         assert!(pdf.starts_with(b"%PDF"));
         assert!(claims_pdfa(&pdf), "pdfa identifier missing");
     }
+
+    #[test]
+    fn section_footer_embeds_in_pdfa() {
+        let mut doc = Document::new();
+        let mut section = Section {
+            footer: Some(docagent_model::HeaderFooter {
+                blocks: vec![Block::Paragraph(Paragraph::from_text("FOOT"))],
+                different_first: None,
+                different_odd_even: None,
+            }),
+            ..Section::default()
+        };
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("body")));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops
+                .iter()
+                .any(|op| matches!(op, Op::Text { text, .. } if text.contains("FOOT"))),
+            "paint must emit footer text"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+    }
+
+    fn doc_with_header_mark() -> Document {
+        let mut doc = Document::new();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run {
+            style: docagent_model::CharStyle::default(),
+            content: docagent_model::RunContent::Inline(docagent_model::InlineObject::Image(
+                docagent_model::ImageData {
+                    bytes: MARK_PNG.to_vec(),
+                    mime: "image/png".into(),
+                    width: 1600,
+                    height: 1600,
+                    alt_text: Some("mark".into()),
+                    wrap: docagent_model::WrapMode::Inline,
+                },
+            )),
+        }];
+        let mut section = Section {
+            header: Some(docagent_model::HeaderFooter {
+                blocks: vec![Block::Paragraph(p)],
+                different_first: None,
+                different_odd_even: None,
+            }),
+            ..Section::default()
+        };
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("body")));
+        doc.sections.push(section);
+        doc
+    }
+
+    #[test]
+    fn section_header_image_embeds_in_pdfa() {
+        let list = paint(&layout_document(
+            &doc_with_header_mark(),
+            &FontSet::bundled(),
+        ));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Image { w, h, bytes, mime, .. }
+                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                )
+            }),
+            "paint must forward header PNG bytes"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(
+            s.contains("/Image"),
+            "PDF image XObject missing: {}",
+            s.chars().take(400).collect::<String>()
+        );
+    }
 }
