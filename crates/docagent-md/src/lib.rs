@@ -184,8 +184,22 @@ fn flush_table(section: &mut Section, rows: &mut Vec<Vec<String>>) {
         return;
     }
     let mut table = Table::from_cells(std::mem::take(rows));
-    if let Some(first) = table.rows.first_mut() {
-        first.header = true;
+    for (ri, row) in table.rows.iter_mut().enumerate() {
+        let header = ri == 0;
+        row.header = header;
+        for cell in &mut row.cells {
+            for b in &mut cell.blocks {
+                if let Block::Paragraph(p) = b {
+                    let text = p.plain_text();
+                    *p = paragraph_from_inlines(&text);
+                    if header {
+                        for run in &mut p.runs {
+                            run.style.bold = true;
+                        }
+                    }
+                }
+            }
+        }
     }
     table.header_row_count = 1;
     let w = docagent_model::HU_PER_POINT;
@@ -234,7 +248,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                                 c.blocks
                                     .iter()
                                     .filter_map(|b| match b {
-                                        Block::Paragraph(p) => Some(p.plain_text()),
+                                        Block::Paragraph(p) => Some(write_runs(p)),
                                         _ => None,
                                     })
                                     .collect::<Vec<_>>()
@@ -298,6 +312,34 @@ mod tests {
         let again = read(&back).unwrap();
         assert!(again.plain_text().contains("Title"));
         assert!(again.plain_text().contains("a"));
+    }
+
+    #[test]
+    fn table_cells_keep_emphasis() {
+        let src = b"| Hop | File |\n| **GPU-free** | _byte-for-byte_ |\n";
+        let doc = read(src).unwrap();
+        let Block::Table(t) = &doc.sections[0].body[0] else {
+            panic!("table");
+        };
+        let Block::Paragraph(h) = &t.rows[0].cells[0].blocks[0] else {
+            panic!("header");
+        };
+        assert!(h.runs.iter().any(|r| r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("Hop"))));
+        let Block::Paragraph(p) = &t.rows[1].cells[0].blocks[0] else {
+            panic!("bold cell");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        let Block::Paragraph(p) = &t.rows[1].cells[1].blocks[0] else {
+            panic!("italic cell");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
+        }));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("**GPU-free**"), "{back}");
+        assert!(back.contains("_byte-for-byte_"), "{back}");
     }
 
     #[test]

@@ -171,7 +171,7 @@ fn push_table(s: &mut String, t: &Table) {
             s.push_str(&format!("<{tag}>"));
             for b in &cell.blocks {
                 if let Block::Paragraph(p) = b {
-                    s.push_str(&escape(&p.plain_text()));
+                    push_runs(s, p);
                 }
             }
             s.push_str(&format!("</{tag}>"));
@@ -324,5 +324,23 @@ mod tests {
         let html = to_html(&doc);
         assert!(html.contains("<strong>two</strong>"), "{html}");
         assert!(html.contains("<em>four</em>"), "{html}");
+    }
+
+    #[test]
+    fn table_cells_emit_strong_and_em() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["plain".into()]]);
+        let mut p = Paragraph::from_text("");
+        let mut bold = docagent_model::Run::text("GPU-free");
+        bold.style.bold = true;
+        let mut italic = docagent_model::Run::text(" byte-for-byte");
+        italic.style.italic = true;
+        p.runs = vec![bold, italic];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<td><strong>GPU-free</strong><em> byte-for-byte</em></td>"), "{html}");
     }
 }

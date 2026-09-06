@@ -91,7 +91,7 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 | --- | --- |
 | input | `5f33b7f2389a3c4a4f53b638808a8e958305cc8f8a77b976d03f3d41f3d4a85f` |
 | plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
-| output | `0fc6d675b4c5a6c773d3da390d7c7e206d0369e232db662fa293c3c415908ccf` |
+| output | `c9eec11811ab1d07c37395732088c6d1f8c46f319a641572cf1af05ea230ee4c` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this. We do not ship OmniDocBench numbers.
 
@@ -107,7 +107,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
 </p>
-<p align="center"><sub>HTML from the same IR. Headings, tables, nested lists, <strong>bold</strong> and <em>italic</em>.</sub></p>
+<p align="center"><sub>HTML from the same IR. Headings, tables with <strong>header</strong> cells, nested lists, <strong>bold</strong> and <em>italic</em>.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
@@ -130,7 +130,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
 | **PDF/A** | Archival print. Heading rules and table fills are `FillRect`s. Two runs, same fonts, same bytes. |
 | **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Runs keep `w:b`/`w:i` in body and table cells. |
-| **HTML** | Semantic HTML an agent can read back. |
+| **HTML** | Semantic HTML an agent can read back. Table cells keep `<strong>`/`<em>`. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
 | **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. |
 
