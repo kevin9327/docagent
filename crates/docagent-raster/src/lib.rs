@@ -153,12 +153,34 @@ mod tests {
         assert_ne!(a, b, "PNG must change pixels");
     }
 
+    fn png_ihdr_px(bytes: &[u8]) -> (u32, u32) {
+        const SIG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert!(
+            bytes.len() >= 24 && bytes.starts_with(SIG) && &bytes[12..16] == b"IHDR",
+            "mark.png missing IHDR"
+        );
+        let w = u32::from_be_bytes(bytes[16..20].try_into().expect("ihdr width"));
+        let h = u32::from_be_bytes(bytes[20..24].try_into().expect("ihdr height"));
+        assert!(w > 0 && h > 0, "empty PNG");
+        (w, h)
+    }
+
+    fn px_to_hu_96(px: u32) -> i32 {
+        // 7200 HU/in ÷ 96 px/in; raster crate has no model dependency.
+        i32::try_from(i64::from(px).saturating_mul(7200) / 96).unwrap_or(i32::MAX)
+    }
+
     #[test]
     fn raster_png_uses_imagedata_width_height() {
         const MARK: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../docs/assets/mark.png"
         ));
+        assert_eq!(png_ihdr_px(MARK), (16, 16), "fixture is 16×16 px");
+        let (w, h) = {
+            let (px_w, px_h) = png_ihdr_px(MARK);
+            (px_to_hu_96(px_w), px_to_hu_96(px_h))
+        };
         let page = Op::Page {
             width: 59528,
             height: 84189,
@@ -176,8 +198,8 @@ mod tests {
                 },
             ],
         };
-        let a = raster_pages(&at(2400, 1600));
-        let b = raster_pages(&at(1600, 1600));
+        let a = raster_pages(&at(w, h));
+        let b = raster_pages(&at(w.saturating_mul(2), h.saturating_mul(2)));
         assert_ne!(
             a, b,
             "raster must honor ImageData width×height, not PNG pixels"

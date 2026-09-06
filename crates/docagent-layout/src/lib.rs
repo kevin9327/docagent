@@ -9,13 +9,31 @@ use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
     Alignment, Block, BorderStyle, BreakKind, Document, Float, HeaderFooter, Hu, Hu64,
     InlineObject, LineSpacing, NumberFormat, Paragraph, RunContent, Section, Table,
-    DEFAULT_FONT_SIZE_HU,
+    DEFAULT_FONT_SIZE_HU, HU_PER_INCH, HU_PER_POINT,
 };
 use rayon::prelude::*;
 
 /// Minimum leftover in a table row before the next row starts.
 /// Hangul 5.0 spec §4.3 table cell: content + padding; no sample-tuned slack.
 pub const MIN_ROW_REMAINDER_HU: Hu = 0;
+
+/// Smallest on-page image edge (24pt). 16px at 96dpi is 12pt.
+pub const MIN_IMAGE_EDGE_HU: Hu = 24 * HU_PER_POINT;
+const _: () = assert!(MIN_IMAGE_EDGE_HU >= HU_PER_INCH / 4);
+
+/// Raise `width`×`height` so both edges are at least [`MIN_IMAGE_EDGE_HU`].
+pub fn min_on_page_size(width: Hu, height: Hu) -> (Hu, Hu) {
+    let short = width.min(height);
+    if short >= MIN_IMAGE_EDGE_HU || short <= 0 {
+        return (width.max(0), height.max(0));
+    }
+    let w = (Hu64::from(width) * Hu64::from(MIN_IMAGE_EDGE_HU) / Hu64::from(short)).max(1);
+    let h = (Hu64::from(height) * Hu64::from(MIN_IMAGE_EDGE_HU) / Hu64::from(short)).max(1);
+    (
+        i32::try_from(w).unwrap_or(i32::MAX),
+        i32::try_from(h).unwrap_or(i32::MAX),
+    )
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FragmentTree {
@@ -638,7 +656,7 @@ fn prepare_float_image(img: &docagent_model::ImageData, max_w: Hu) -> Prepared {
         width: img.width,
         height: img.height,
     };
-    clamp_inline_image(&mut image, max_w);
+    fit_inline_image(&mut image, max_w);
     Prepared::Lines {
         lines: vec![LineFrag {
             x: 0,
@@ -741,7 +759,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     let usable = (width - p.indent_left - quote_pad - p.indent_right - marker_w).max(1);
     for span in &mut spans {
         if let Some(img) = span.image.as_mut() {
-            clamp_inline_image(img, usable);
+            fit_inline_image(img, usable);
         }
     }
     let mut shaped = shape(fonts, &text, size);
@@ -850,7 +868,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             }
             if let Some(img) = &span.image {
                 let mut img = img.clone();
-                clamp_inline_image(&mut img, (row_right - x).max(1));
+                fit_inline_image(&mut img, (row_right - x).max(1));
                 let w = img.width;
                 row.push(LineFrag {
                     x,
@@ -1042,6 +1060,13 @@ struct RunSpan {
     subscript: bool,
     href: Option<String>,
     image: Option<InlineImage>,
+}
+
+fn fit_inline_image(img: &mut InlineImage, max_w: Hu) {
+    let (w, h) = min_on_page_size(img.width, img.height);
+    img.width = w;
+    img.height = h;
+    clamp_inline_image(img, max_w);
 }
 
 fn clamp_inline_image(img: &mut InlineImage, max_w: Hu) {
@@ -1950,6 +1975,28 @@ mod tests {
         "/../../docs/assets/mark.png"
     ));
 
+    fn png_ihdr_px(bytes: &[u8]) -> (u32, u32) {
+        const SIG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert!(
+            bytes.len() >= 24 && bytes.starts_with(SIG) && &bytes[12..16] == b"IHDR",
+            "mark.png missing IHDR"
+        );
+        let w = u32::from_be_bytes(bytes[16..20].try_into().expect("ihdr width"));
+        let h = u32::from_be_bytes(bytes[20..24].try_into().expect("ihdr height"));
+        assert!(w > 0 && h > 0, "empty PNG");
+        (w, h)
+    }
+
+    fn px_to_hu_96(px: u32) -> Hu {
+        i32::try_from(i64::from(px).saturating_mul(i64::from(docagent_model::HU_PER_INCH)) / 96)
+            .unwrap_or(i32::MAX)
+    }
+
+    fn mark_png_hu() -> (Hu, Hu) {
+        let (w, h) = png_ihdr_px(MARK_PNG);
+        (px_to_hu_96(w), px_to_hu_96(h))
+    }
+
     fn mark_run(width: Hu, height: Hu) -> docagent_model::Run {
         docagent_model::Run {
             style: docagent_model::CharStyle::default(),
@@ -1979,11 +2026,12 @@ mod tests {
             .iter()
             .find(|l| l.image.is_some())
             .expect("image run skipped");
-        assert_eq!(frag.width, 1600);
-        assert!(frag.height >= 1600, "line height {}", frag.height);
+        let (ew, eh) = min_on_page_size(1600, 1600);
+        assert_eq!(frag.width, ew);
+        assert!(frag.height >= eh, "line height {}", frag.height);
         let img = frag.image.as_ref().expect("payload");
-        assert_eq!(img.width, 1600);
-        assert_eq!(img.height, 1600);
+        assert_eq!(img.width, ew);
+        assert_eq!(img.height, eh);
         assert_eq!(img.mime, "image/png");
         assert_eq!(img.bytes, MARK_PNG);
         assert!(frag.text.is_empty());
@@ -2018,13 +2066,14 @@ mod tests {
             .iter()
             .find(|l| l.text.contains("after"))
             .expect("after");
+        let (ew, eh) = min_on_page_size(1600, 800);
         assert!(img.x >= before.x + before.width, "image x {}", img.x);
         assert!(after.x >= img.x + img.width, "after x {}", after.x);
-        assert_eq!(img.width, 1600);
-        assert_eq!(img.image.as_ref().map(|i| i.height), Some(800));
+        assert_eq!(img.width, ew);
+        assert_eq!(img.image.as_ref().map(|i| i.height), Some(eh));
         assert_eq!(before.y, img.y);
         assert_eq!(after.y, img.y);
-        assert!(img.height >= 800, "line height {}", img.height);
+        assert!(img.height >= eh, "line height {}", img.height);
     }
 
     fn boxes_overlap(a: (Hu, Hu, Hu, Hu), b: (Hu, Hu, Hu, Hu)) -> bool {
@@ -2059,10 +2108,30 @@ mod tests {
     }
 
     #[test]
-    fn letter_inline_image_keeps_imagedata_size_without_overlapping_body() {
-        const W: Hu = 2400;
-        const H: Hu = 1600;
-        let tree = layout_document(&letter_with_mark(W, H), &FontSet::bundled());
+    fn min_on_page_size_raises_sub_24pt_box() {
+        assert_eq!(
+            min_on_page_size(1200, 1200),
+            (MIN_IMAGE_EDGE_HU, MIN_IMAGE_EDGE_HU)
+        );
+        assert_eq!(min_on_page_size(2400, 2400), (2400, 2400));
+        assert_eq!(min_on_page_size(4800, 2400), (4800, 2400));
+    }
+
+    #[test]
+    fn letter_mark_png_uses_minimum_on_page_size_without_overlapping_body() {
+        assert_eq!(png_ihdr_px(MARK_PNG), (16, 16), "fixture is 16×16 px");
+        let (w, h) = mark_png_hu();
+        assert_eq!((w, h), (px_to_hu_96(16), px_to_hu_96(16)));
+        assert!(
+            w < MIN_IMAGE_EDGE_HU && h < MIN_IMAGE_EDGE_HU,
+            "16px at 96dpi must be below the 24pt floor ({w}×{h})"
+        );
+        let (ew, eh) = min_on_page_size(w, h);
+        assert!(ew >= MIN_IMAGE_EDGE_HU);
+        assert!(eh >= MIN_IMAGE_EDGE_HU);
+        assert!(ew >= docagent_model::HU_PER_INCH / 4);
+        assert!(eh >= docagent_model::HU_PER_INCH / 4);
+        let tree = layout_document(&letter_with_mark(w, h), &FontSet::bundled());
         let page = &tree.pages[0];
         let img_line = page
             .lines
@@ -2070,26 +2139,26 @@ mod tests {
             .find(|l| l.image.is_some())
             .expect("letter image dropped");
         let img = img_line.image.as_ref().expect("payload");
-        assert_eq!(img.width, W);
-        assert_eq!(img.height, H);
+        assert_eq!(img.width, ew);
+        assert_eq!(img.height, eh);
         assert_eq!(img.bytes, MARK_PNG);
         assert_eq!(img.mime, "image/png");
-        assert_eq!(img_line.width, W);
+        assert_eq!(img_line.width, ew);
         assert!(
-            img_line.height >= H,
-            "line box {} shorter than ImageData height {H}",
+            img_line.height >= eh,
+            "line box {} shorter than on-page height {eh}",
             img_line.height
         );
         let img_box = img_line.image_box().expect("image box");
-        assert_eq!(img_box, (img_line.x, img_line.y, W, H));
+        assert_eq!(img_box, (img_line.x, img_line.y, ew, eh));
         let body = page
             .lines
             .iter()
             .find(|l| l.text.contains("shipment"))
             .expect("body dropped");
         assert!(
-            body.y >= img_line.y.saturating_add(H),
-            "body y {} overlaps image y {} height {H}",
+            body.y >= img_line.y.saturating_add(eh),
+            "body y {} overlaps image y {} height {eh}",
             body.y,
             img_line.y
         );
@@ -2174,13 +2243,14 @@ mod tests {
             .iter()
             .find(|l| l.image.is_some())
             .expect("float image dropped");
-        assert_eq!(frag.width, 1600);
-        assert!(frag.height >= 1600, "line height {}", frag.height);
+        let (ew, eh) = min_on_page_size(1600, 1600);
+        assert_eq!(frag.width, ew);
+        assert!(frag.height >= eh, "line height {}", frag.height);
         let img = frag.image.as_ref().expect("payload");
         assert_eq!(img.bytes, MARK_PNG);
         assert_eq!(img.mime, "image/png");
-        assert_eq!(img.width, 1600);
-        assert_eq!(img.height, 1600);
+        assert_eq!(img.width, ew);
+        assert_eq!(img.height, eh);
         assert!(frag.text.is_empty());
     }
 
@@ -2235,13 +2305,14 @@ mod tests {
             .iter()
             .find(|l| l.image.is_some())
             .expect("cell image dropped");
-        assert_eq!(frag.width, 1600);
-        assert!(frag.height >= 1600, "line height {}", frag.height);
+        let (ew, eh) = min_on_page_size(1600, 1600);
+        assert_eq!(frag.width, ew);
+        assert!(frag.height >= eh, "line height {}", frag.height);
         let img = frag.image.as_ref().expect("payload");
         assert_eq!(img.bytes, MARK_PNG);
         assert_eq!(img.mime, "image/png");
-        assert_eq!(img.width, 1600);
-        assert_eq!(img.height, 1600);
+        assert_eq!(img.width, ew);
+        assert_eq!(img.height, eh);
         assert!(frag.text.is_empty());
     }
 
@@ -2378,8 +2449,9 @@ mod tests {
             frag.y
         );
         let img = frag.image.as_ref().expect("payload");
-        assert_eq!(img.width, 1600);
-        assert_eq!(img.height, 1600);
+        let (ew, eh) = min_on_page_size(1600, 1600);
+        assert_eq!(img.width, ew);
+        assert_eq!(img.height, eh);
         assert_eq!(img.bytes, MARK_PNG);
         assert_eq!(img.mime, "image/png");
         assert!(

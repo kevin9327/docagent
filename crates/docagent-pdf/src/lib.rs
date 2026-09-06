@@ -909,6 +909,28 @@ mod tests {
         "/../../docs/assets/mark.png"
     ));
 
+    fn png_ihdr_px(bytes: &[u8]) -> (u32, u32) {
+        const SIG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert!(
+            bytes.len() >= 24 && bytes.starts_with(SIG) && &bytes[12..16] == b"IHDR",
+            "mark.png missing IHDR"
+        );
+        let w = u32::from_be_bytes(bytes[16..20].try_into().expect("ihdr width"));
+        let h = u32::from_be_bytes(bytes[20..24].try_into().expect("ihdr height"));
+        assert!(w > 0 && h > 0, "empty PNG");
+        (w, h)
+    }
+
+    fn px_to_hu_96(px: u32) -> i32 {
+        i32::try_from(i64::from(px).saturating_mul(i64::from(docagent_model::HU_PER_INCH)) / 96)
+            .unwrap_or(i32::MAX)
+    }
+
+    fn mark_png_hu() -> (i32, i32) {
+        let (w, h) = png_ihdr_px(MARK_PNG);
+        (px_to_hu_96(w), px_to_hu_96(h))
+    }
+
     fn mark_run(width: i32, height: i32) -> docagent_model::Run {
         docagent_model::Run {
             style: docagent_model::CharStyle::default(),
@@ -956,12 +978,13 @@ mod tests {
     #[test]
     fn png_image_embeds_in_pdfa() {
         let list = paint(&layout_document(&doc_with_mark(), &FontSet::bundled()));
+        let (ew, eh) = docagent_layout::min_on_page_size(1600, 1600);
         assert!(
             list.ops.iter().any(|op| {
                 matches!(
                     op,
                     Op::Image { w, h, bytes, mime, .. }
-                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                        if *w == ew && *h == eh && bytes.as_slice() == MARK_PNG && mime == "image/png"
                 )
             }),
             "paint must forward PNG bytes"
@@ -993,11 +1016,17 @@ mod tests {
     }
 
     #[test]
-    fn letter_inline_image_paints_pdfa_at_imagedata_size() {
-        const W: i32 = 2400;
-        const H: i32 = 1600;
+    fn letter_mark_png_pdfa_uses_minimum_on_page_size() {
+        assert_eq!(png_ihdr_px(MARK_PNG), (16, 16), "fixture is 16×16 px");
+        let (w, h) = mark_png_hu();
+        assert_eq!((w, h), (px_to_hu_96(16), px_to_hu_96(16)));
+        assert!(w < docagent_layout::MIN_IMAGE_EDGE_HU);
+        let (ew, eh) = docagent_layout::min_on_page_size(w, h);
+        assert!(ew >= docagent_layout::MIN_IMAGE_EDGE_HU);
+        assert!(eh >= docagent_layout::MIN_IMAGE_EDGE_HU);
+        assert!(ew >= docagent_model::HU_PER_INCH / 4);
         let list = paint(&layout_document(
-            &letter_with_mark(W, H),
+            &letter_with_mark(w, h),
             &FontSet::bundled(),
         ));
         let image = list.ops.iter().find_map(|op| match op {
@@ -1011,8 +1040,8 @@ mod tests {
         let (ix, iy, iw, ih) = image.expect("letter image op missing");
         assert_eq!(
             (iw, ih),
-            (W, H),
-            "PDF/A paint must use ImageData width×height, not PNG pixels"
+            (ew, eh),
+            "PDF/A paint must use the 24pt on-page floor, not 16px at 96dpi"
         );
         let body = list.ops.iter().find_map(|op| match op {
             Op::Text { x, y, size, text, .. } if text.contains("shipment") => {
@@ -1030,12 +1059,14 @@ mod tests {
         assert!(claims_pdfa(&pdf), "pdfa identifier missing");
         let s = String::from_utf8_lossy(&pdf);
         assert!(
-            s.contains("/Image"),
+            has_image_xobject(&s),
             "PDF image XObject missing: {}",
             s.chars().take(400).collect::<String>()
         );
-        assert!(s.contains("/Width"), "image width missing");
-        assert!(s.contains("/Height"), "image height missing");
+        assert!(
+            s.contains("/Width 16") && s.contains("/Height 16"),
+            "XObject must keep mark.png pixel size, not ImageData HU"
+        );
         let mut plain = Document::new();
         let mut section = Section::default();
         section
@@ -1050,12 +1081,22 @@ mod tests {
             &FontSet::bundled(),
         )
         .expect("pdf");
+        let without_s = String::from_utf8_lossy(&without);
+        assert!(
+            !has_image_xobject(&without_s),
+            "plain letter must not embed an image XObject"
+        );
         assert!(
             pdf.len() > without.len(),
             "letter PNG must enlarge PDF ({} vs {})",
             pdf.len(),
             without.len()
         );
+    }
+
+    fn has_image_xobject(s: &str) -> bool {
+        (s.contains("/Subtype /Image") || s.contains("/Subtype/Image"))
+            && (s.contains("/Type /XObject") || s.contains("/Type/XObject"))
     }
 
     /// 1×1 RGB JPEG (SOI…EOI). Valid input for `Image::from_jpeg`.
@@ -1107,12 +1148,13 @@ mod tests {
     #[test]
     fn jpeg_image_embeds_in_pdfa() {
         let list = paint(&layout_document(&doc_with_jpeg(), &FontSet::bundled()));
+        let (ew, eh) = docagent_layout::min_on_page_size(1600, 1600);
         assert!(
             list.ops.iter().any(|op| {
                 matches!(
                     op,
                     Op::Image { w, h, bytes, mime, .. }
-                        if *w == 1600 && *h == 1600 && bytes.as_slice() == PIXEL_JPEG && mime == "image/jpeg"
+                        if *w == ew && *h == eh && bytes.as_slice() == PIXEL_JPEG && mime == "image/jpeg"
                 )
             }),
             "paint must forward JPEG bytes"
@@ -1166,12 +1208,13 @@ mod tests {
             &doc_with_float_mark(),
             &FontSet::bundled(),
         ));
+        let (ew, eh) = docagent_layout::min_on_page_size(1600, 1600);
         assert!(
             list.ops.iter().any(|op| {
                 matches!(
                     op,
                     Op::Image { w, h, bytes, mime, .. }
-                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                        if *w == ew && *h == eh && bytes.as_slice() == MARK_PNG && mime == "image/png"
                 )
             }),
             "paint must forward float PNG bytes"
@@ -1217,12 +1260,13 @@ mod tests {
             &doc_with_table_cell_mark(),
             &FontSet::bundled(),
         ));
+        let (ew, eh) = docagent_layout::min_on_page_size(1600, 1600);
         assert!(
             list.ops.iter().any(|op| {
                 matches!(
                     op,
                     Op::Image { w, h, bytes, mime, .. }
-                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                        if *w == ew && *h == eh && bytes.as_slice() == MARK_PNG && mime == "image/png"
                 )
             }),
             "paint must forward table-cell PNG bytes"
@@ -1329,12 +1373,13 @@ mod tests {
             &doc_with_header_mark(),
             &FontSet::bundled(),
         ));
+        let (ew, eh) = docagent_layout::min_on_page_size(1600, 1600);
         assert!(
             list.ops.iter().any(|op| {
                 matches!(
                     op,
                     Op::Image { w, h, bytes, mime, .. }
-                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                        if *w == ew && *h == eh && bytes.as_slice() == MARK_PNG && mime == "image/png"
                 )
             }),
             "paint must forward header PNG bytes"

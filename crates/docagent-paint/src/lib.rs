@@ -157,6 +157,28 @@ mod tests {
         "/../../docs/assets/mark.png"
     ));
 
+    fn png_ihdr_px(bytes: &[u8]) -> (u32, u32) {
+        const SIG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        assert!(
+            bytes.len() >= 24 && bytes.starts_with(SIG) && &bytes[12..16] == b"IHDR",
+            "mark.png missing IHDR"
+        );
+        let w = u32::from_be_bytes(bytes[16..20].try_into().expect("ihdr width"));
+        let h = u32::from_be_bytes(bytes[20..24].try_into().expect("ihdr height"));
+        assert!(w > 0 && h > 0, "empty PNG");
+        (w, h)
+    }
+
+    fn px_to_hu_96(px: u32) -> i32 {
+        i32::try_from(i64::from(px).saturating_mul(i64::from(docagent_model::HU_PER_INCH)) / 96)
+            .unwrap_or(i32::MAX)
+    }
+
+    fn mark_png_hu() -> (i32, i32) {
+        let (w, h) = png_ihdr_px(MARK_PNG);
+        (px_to_hu_96(w), px_to_hu_96(h))
+    }
+
     #[test]
     fn image_op_roundtrips_through_rkyv() {
         let list = DisplayList {
@@ -287,12 +309,13 @@ mod tests {
         section.body.push(Block::Paragraph(p));
         doc.sections.push(section);
         let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let (ew, eh) = docagent_layout::min_on_page_size(1600, 1600);
         assert!(
             list.ops.iter().any(|op| {
                 matches!(
                     op,
                     Op::Image { w, h, bytes, mime, .. }
-                        if *w == 1600 && *h == 1600 && bytes == MARK_PNG && mime == "image/png"
+                        if *w == ew && *h == eh && bytes == MARK_PNG && mime == "image/png"
                 )
             }),
             "image op missing"
@@ -300,9 +323,15 @@ mod tests {
     }
 
     #[test]
-    fn paint_letter_image_at_imagedata_size_without_overlapping_body() {
-        const W: i32 = 2400;
-        const H: i32 = 1600;
+    fn paint_letter_mark_png_uses_minimum_on_page_size_without_overlapping_body() {
+        assert_eq!(png_ihdr_px(MARK_PNG), (16, 16), "fixture is 16×16 px");
+        let (w, h) = mark_png_hu();
+        assert_eq!((w, h), (px_to_hu_96(16), px_to_hu_96(16)));
+        assert!(w < docagent_layout::MIN_IMAGE_EDGE_HU);
+        let (ew, eh) = docagent_layout::min_on_page_size(w, h);
+        assert!(ew >= docagent_layout::MIN_IMAGE_EDGE_HU);
+        assert!(eh >= docagent_layout::MIN_IMAGE_EDGE_HU);
+        assert!(ew >= docagent_model::HU_PER_INCH / 4);
         let mut doc = Document::new();
         let mut section = Section::default();
         let mut heading = Paragraph::from_text("Northwind Freight");
@@ -311,7 +340,7 @@ mod tests {
         heading.runs[0].style.bold = true;
         section.body.push(Block::Paragraph(heading));
         let mut img_p = Paragraph::from_text("");
-        img_p.runs = vec![mark_run(W, H)];
+        img_p.runs = vec![mark_run(w, h)];
         section.body.push(Block::Paragraph(img_p));
         section.body.push(Block::Paragraph(Paragraph::from_text(
             "The shipment left Busan on 4 September",
@@ -327,7 +356,11 @@ mod tests {
             _ => None,
         });
         let (ix, iy, iw, ih) = image.expect("letter image op missing");
-        assert_eq!((iw, ih), (W, H), "paint must use ImageData width×height");
+        assert_eq!(
+            (iw, ih),
+            (ew, eh),
+            "paint must use the 24pt on-page floor, not 16px at 96dpi"
+        );
         let body = list.ops.iter().find_map(|op| match op {
             Op::Text { x, y, size, text, .. } if text.contains("shipment") => {
                 Some((*x, *y, *size))
@@ -370,12 +403,13 @@ mod tests {
         section.body.push(Block::Table(table));
         doc.sections.push(section);
         let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let (ew, eh) = docagent_layout::min_on_page_size(1600, 1600);
         assert!(
             list.ops.iter().any(|op| {
                 matches!(
                     op,
                     Op::Image { w, h, bytes, mime, .. }
-                        if *w == 1600 && *h == 1600 && bytes == MARK_PNG && mime == "image/png"
+                        if *w == ew && *h == eh && bytes == MARK_PNG && mime == "image/png"
                 )
             }),
             "table-cell image op missing"
