@@ -371,6 +371,41 @@ mod tests {
     }
 
     #[test]
+    fn code_span_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("prove");
+        p.runs[0].style.code = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [204, 251, 241, 255] && *w > 80 && *h > 80
+                )
+            }),
+            "code span must paint a background fill"
+        );
+        let coded = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("prove")));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(coded, plain_pdf, "code span must change PDF bytes");
+        assert!(claims_pdfa(&coded));
+    }
+
+    #[test]
     fn quote_bar_paints_non_grid_fill() {
         let mut doc = Document::new();
         let mut section = Section::default();

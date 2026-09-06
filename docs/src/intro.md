@@ -9,9 +9,9 @@ Formats, in the order agents usually meet them:
 
 | Family | Codec | Role |
 | --- | --- | --- |
-| Word / OOXML | DOCX | Default interchange with Microsoft Word (`Heading1`/`Heading2`, `Quote`, `w:b`/`w:i`/`w:strike`) |
-| OpenDocument | ODT | Default interchange with LibreOffice (`text:h` 18pt/14pt, Quote left border, `text-line-through`) |
-| Web / notes | Markdown, HTML | Agent-native text (`> quote`, `~~strike~~`) and semantic HTML (`<blockquote>`, `<s>`) |
+| Word / OOXML | DOCX | Default interchange with Microsoft Word (`Heading1`/`Heading2`, `Quote`, `Code`, `w:b`/`w:i`/`w:strike`) |
+| OpenDocument | ODT | Default interchange with LibreOffice (`text:h` 18pt/14pt, Quote left border, `Tcode`, `text-line-through`) |
+| Web / notes | Markdown, HTML | Agent-native text (`> quote`, `` `code` ``, `~~strike~~`) and semantic HTML (`<blockquote>`, `<code>`, `<s>`) |
 | Print | PDF/A | Archival, byte-identical on two runs |
 | Regional | HWP 5, HWPX, HWP 3, HML | East-Asian office formats, same IR |
 

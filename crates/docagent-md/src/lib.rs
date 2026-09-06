@@ -119,40 +119,49 @@ fn parse_runs(text: &str) -> Vec<Run> {
     let mut bold = false;
     let mut italic = false;
     let mut strike = false;
+    let mut code = false;
     let mut i = 0;
-    let flush = |runs: &mut Vec<Run>, buf: &mut String, bold: bool, italic: bool, strike: bool| {
-        if buf.is_empty() {
-            return;
-        }
-        let mut run = Run::text(std::mem::take(buf));
-        run.style.bold = bold;
-        run.style.italic = italic;
-        run.style.strike = strike;
-        runs.push(run);
-    };
+    let flush =
+        |runs: &mut Vec<Run>, buf: &mut String, bold: bool, italic: bool, strike: bool, code: bool| {
+            if buf.is_empty() {
+                return;
+            }
+            let mut run = Run::text(std::mem::take(buf));
+            run.style.bold = bold;
+            run.style.italic = italic;
+            run.style.strike = strike;
+            run.style.code = code;
+            runs.push(run);
+        };
     while i < chars.len() {
-        if chars[i] == '['
+        if chars[i] == '`' {
+            flush(&mut runs, &mut buf, bold, italic, strike, code);
+            code = !code;
+            i += 1;
+            continue;
+        }
+        if !code && chars[i] == '['
             && let Some((display, target, next)) = parse_md_link(&chars, i)
         {
-            flush(&mut runs, &mut buf, bold, italic, strike);
+            flush(&mut runs, &mut buf, bold, italic, strike, code);
             runs.push(Run::hyperlink(display, target));
             i = next;
             continue;
         }
-        if chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
-            flush(&mut runs, &mut buf, bold, italic, strike);
+        if !code && chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
+            flush(&mut runs, &mut buf, bold, italic, strike, code);
             strike = !strike;
             i += 2;
             continue;
         }
-        if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
-            flush(&mut runs, &mut buf, bold, italic, strike);
+        if !code && chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            flush(&mut runs, &mut buf, bold, italic, strike, code);
             bold = !bold;
             i += 2;
             continue;
         }
-        if chars[i] == '*' || chars[i] == '_' {
-            flush(&mut runs, &mut buf, bold, italic, strike);
+        if !code && (chars[i] == '*' || chars[i] == '_') {
+            flush(&mut runs, &mut buf, bold, italic, strike, code);
             italic = !italic;
             i += 1;
             continue;
@@ -160,7 +169,7 @@ fn parse_runs(text: &str) -> Vec<Run> {
         buf.push(chars[i]);
         i += 1;
     }
-    flush(&mut runs, &mut buf, bold, italic, strike);
+    flush(&mut runs, &mut buf, bold, italic, strike, code);
     runs
 }
 
@@ -358,7 +367,13 @@ fn write_runs(p: &Paragraph) -> String {
                 if run.style.strike {
                     s.push_str("~~");
                 }
+                if run.style.code {
+                    s.push('`');
+                }
                 s.push_str(t);
+                if run.style.code {
+                    s.push('`');
+                }
                 if run.style.strike {
                     s.push_str("~~");
                 }
@@ -528,6 +543,24 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn code_spans_roundtrip() {
+        let src = b"Run `prove` twice\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.code && matches!(&r.content, RunContent::Text(t) if t == "prove")
+        }));
+        assert!(p.runs.iter().any(|r| {
+            !r.style.code && matches!(&r.content, RunContent::Text(t) if t.contains("Run"))
+        }));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("`prove`"), "{back}");
+        assert!(!back.contains("`Run"), "{back}");
     }
 
     #[test]

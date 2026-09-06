@@ -1,26 +1,26 @@
 # DocAgent #1 loop state
 
-Last cycle: 23 (2026-09-06) — block-quote left-bar fills
+Last cycle: 24 (2026-09-06) — code-span background fills
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- IR carries `Paragraph.quote`. Layout indents the quote and paints a vertical teal bar (`FillRect` 80 HU wide).
-- Markdown reads/writes `> text`. HTML emits `<blockquote>`. DOCX emits `w:pStyle Quote` plus a left `w:pBdr`. ODT emits `text:p` style Quote with `fo:border-left`.
-- Fixture adds `> Replay is evidence. Same fonts, same bytes.` so the GitHub PDF/HTML screenshots show a real quote bar.
+- IR carries `CharStyle.code`. Layout paints a teal background `FillRect` behind the run.
+- Markdown reads/writes `` `text` ``. HTML emits `<code>`. DOCX emits `w:rStyle Code` plus `w:shd` fill `CCFBF1`. ODT emits `Tcode` with `fo:background-color="#ccfbf1"`.
+- Fixture body now says `Run \`prove\` twice` so the GitHub PDF/HTML screenshots show a real code span.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `b513b323320b4aad7f3cf8917a5b844c639bfb38c210417abee0aaa85d29e895`
+- input  `7eefb2dde905c384cc1d7f1a4521532f5cffad2798d17cf8414c16ac814b5420`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `68bbe5cf9203b719580cf0a2cc719486b69bfd21a2d045cdf73606638d97798d`
+- output `9eee08710a754fa8b9c3e47e31e9875d17260a96e55f387b540e82e59ad30a0c`
 
-Plan hash matches cycle 21–22 (plan is command + targets + fonts, not the paint tree). Input and output hashes changed with the fixture and quote bar.
+Plan hash matches cycle 21–23 (plan is command + targets + fonts, not the paint tree). Input and output hashes changed with the fixture and code fill.
 
 ## Next
 
-1. Hangul codec hyperlinks / strikethrough / quotes, or inline images, or code spans.
+1. Hangul codec hyperlinks / strikethrough / quotes / code, or inline images.
 2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule

@@ -211,7 +211,7 @@ fn document_xml(doc: &Document) -> String {
     s
 }
 
-const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="24" w:space="4" w:color="134E4A"/></w:pBdr><w:ind w:left="144"/></w:pPr></w:style></w:styles>"#;
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="24" w:space="4" w:color="134E4A"/></w:pBdr><w:ind w:left="144"/></w:pPr></w:style><w:style w:type="character" w:styleId="Code"><w:name w:val="Code"/><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/><w:shd w:val="clear" w:fill="CCFBF1"/></w:rPr></w:style></w:styles>"#;
 
 fn hu_to_half_points(hu: i32) -> i32 {
     (hu / 50).max(1)
@@ -274,7 +274,12 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                 s.push_str("<w:r>");
                 let sz = hu_to_half_points(run.style.size);
                 let default_sz = hu_to_half_points(DEFAULT_FONT_SIZE_HU);
-                if run.style.bold || run.style.italic || run.style.strike || sz != default_sz {
+                if run.style.bold
+                    || run.style.italic
+                    || run.style.strike
+                    || run.style.code
+                    || sz != default_sz
+                {
                     s.push_str("<w:rPr>");
                     if run.style.bold {
                         s.push_str("<w:b/>");
@@ -284,6 +289,11 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                     }
                     if run.style.strike {
                         s.push_str("<w:strike/>");
+                    }
+                    if run.style.code {
+                        s.push_str(
+                            r#"<w:rStyle w:val="Code"/><w:shd w:val="clear" w:fill="CCFBF1"/>"#,
+                        );
                     }
                     if sz != default_sz {
                         s.push_str(&format!(r#"<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>"#));
@@ -361,6 +371,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut run_bold = false;
     let mut run_italic = false;
     let mut run_strike = false;
+    let mut run_code = false;
     let mut run_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
@@ -408,6 +419,16 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     "b" if in_rpr => run_bold = ooxml_on(&e),
                     "i" if in_rpr => run_italic = ooxml_on(&e),
                     "strike" if in_rpr => run_strike = ooxml_on(&e),
+                    "rStyle" if in_rpr => {
+                        if attr(&e, "val").as_deref() == Some("Code") {
+                            run_code = true;
+                        }
+                    }
+                    "shd" if in_rpr => {
+                        if attr(&e, "fill").as_deref() == Some("CCFBF1") {
+                            run_code = true;
+                        }
+                    }
                     "sz" if in_rpr => {
                         if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<i32>().ok()) {
                             run_size = Some(half_points_to_hu(v));
@@ -422,6 +443,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_bold = false;
                         run_italic = false;
                         run_strike = false;
+                        run_code = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -434,6 +456,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_bold = false;
                         run_italic = false;
                         run_strike = false;
+                        run_code = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -497,16 +520,20 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         flush_run(
                             &mut para_runs,
                             &mut run_text,
-                            run_bold,
-                            run_italic,
-                            run_strike,
-                            run_size,
+                            RunMarks {
+                                bold: run_bold,
+                                italic: run_italic,
+                                strike: run_strike,
+                                code: run_code,
+                                size: run_size,
+                            },
                             hyperlink_target.as_deref(),
                         );
                         in_run = false;
                         run_bold = false;
                         run_italic = false;
                         run_strike = false;
+                        run_code = false;
                         run_size = None;
                     }
                     "hyperlink" => {
@@ -516,10 +543,13 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         flush_run(
                             &mut para_runs,
                             &mut run_text,
-                            run_bold,
-                            run_italic,
-                            run_strike,
-                            run_size,
+                            RunMarks {
+                                bold: run_bold,
+                                italic: run_italic,
+                                strike: run_strike,
+                                code: run_code,
+                                size: run_size,
+                            },
                             hyperlink_target.as_deref(),
                         );
                         if let Some(p) = take_para(
@@ -586,10 +616,13 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     flush_run(
         &mut para_runs,
         &mut run_text,
-        run_bold,
-        run_italic,
-        run_strike,
-        run_size,
+        RunMarks {
+            bold: run_bold,
+            italic: run_italic,
+            strike: run_strike,
+            code: run_code,
+            size: run_size,
+        },
         hyperlink_target.as_deref(),
     );
     if let Some(p) = take_para(
@@ -617,15 +650,16 @@ fn heading_level_from_style(name: &str) -> Option<u8> {
     rest.parse::<u8>().ok().filter(|v| (1..=9).contains(v))
 }
 
-fn flush_run(
-    runs: &mut Vec<Run>,
-    text: &mut String,
+#[derive(Clone, Copy, Default)]
+struct RunMarks {
     bold: bool,
     italic: bool,
     strike: bool,
+    code: bool,
     size: Option<i32>,
-    href: Option<&str>,
-) {
+}
+
+fn flush_run(runs: &mut Vec<Run>, text: &mut String, marks: RunMarks, href: Option<&str>) {
     if text.is_empty() {
         return;
     }
@@ -634,10 +668,11 @@ fn flush_run(
     } else {
         Run::text(std::mem::take(text))
     };
-    run.style.bold = bold;
-    run.style.italic = italic;
-    run.style.strike = strike;
-    if let Some(sz) = size {
+    run.style.bold = marks.bold;
+    run.style.italic = marks.italic;
+    run.style.strike = marks.strike;
+    run.style.code = marks.code;
+    if let Some(sz) = marks.size {
         run.style.size = sz;
     }
     runs.push(run);
@@ -851,6 +886,31 @@ mod tests {
         };
         assert!(p.quote);
         assert!(p.plain_text().contains("Replay is evidence"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_code_span() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Run ");
+        let mut code = Run::text("prove");
+        code.style.code = true;
+        p.runs.push(code);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains(r#"w:val="Code""#), "{xml}");
+        assert!(xml.contains(r#"w:fill="CCFBF1""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.code && matches!(&r.content, RunContent::Text(t) if t == "prove")
+        }));
+        assert!(p.runs.iter().any(|r| {
+            !r.style.code && matches!(&r.content, RunContent::Text(t) if t.contains("Run"))
+        }));
     }
 
     #[test]
