@@ -10,8 +10,8 @@ use std::io::{Cursor, Read, Write};
 
 use cfb::CompoundFile;
 use docagent_model::{
-    Alignment, Block, CharStyle, Diagnostic, Document, LayoutHint, Paragraph, Run, Section,
-    SplitPolicy, Table, TableBorders, TableCell, TableRow, Underline,
+    Alignment, Block, CharStyle, Diagnostic, Document, InlineObject, LayoutHint, Paragraph, Run,
+    RunContent, Section, SplitPolicy, Table, TableBorders, TableCell, TableRow, Underline,
 };
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
@@ -45,6 +45,7 @@ pub const HWPTAG_CTRL_DATA: u16 = HWPTAG_BEGIN + 71;
 
 const CTRL_TABLE: u32 = u32::from_be_bytes(*b"tbl ");
 const CTRL_SECTION: u32 = u32::from_be_bytes(*b"secd");
+const CTRL_HYPERLINK: u32 = u32::from_be_bytes(*b"%hlk");
 const FILE_SIGNATURE: &[u8] = b"HWP Document File";
 
 #[derive(Debug, Error)]
@@ -651,10 +652,12 @@ fn read_paragraph_or_control(
 fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize, catalog: &StyleCatalog) -> Block {
     let mut text = String::new();
     let mut hints = Vec::new();
+    let mut text_payload: Option<&[u8]> = None;
     for rec in &recs[start..end] {
         match rec.tag {
             HWPTAG_PARA_TEXT => {
                 text.push_str(&decode_para_text(&rec.payload));
+                text_payload = Some(&rec.payload);
             }
             HWPTAG_PARA_LINE_SEG => {
                 hints.extend(decode_lineseg(&rec.payload));
@@ -665,6 +668,10 @@ fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize, catalog: &StyleC
     let mut para = Paragraph::from_text(text);
     para.layout_hints = hints;
     apply_catalog(&mut para, &recs[start].payload, &recs[start + 1..end], catalog);
+    if let Some(payload) = text_payload {
+        let urls = hyperlink_commands(&recs[start..end]);
+        apply_hyperlinks(&mut para, payload, &urls);
+    }
     Block::Paragraph(para)
 }
 
@@ -875,6 +882,178 @@ fn ctrl_id(payload: &[u8]) -> u32 {
     u32::from_le_bytes(payload[0..4].try_into().unwrap()).swap_bytes()
 }
 
+fn push_extended_ctrl(units: &mut Vec<u16>, code: u16, id: u32) {
+    units.push(code);
+    let b = id.to_le_bytes();
+    units.push(u16::from_le_bytes([b[0], b[1]]));
+    units.push(u16::from_le_bytes([b[2], b[3]]));
+    units.extend_from_slice(&[0, 0, 0, 0]);
+    units.push(code);
+}
+
+fn write_hyperlink_ctrl(out: &mut Vec<u8>, level: u16, url: &str) {
+    let cmd: Vec<u16> = url.encode_utf16().collect();
+    let mut data = Vec::with_capacity(15 + cmd.len() * 2);
+    data.extend_from_slice(&CTRL_HYPERLINK.swap_bytes().to_le_bytes());
+    data.extend_from_slice(&0u32.to_le_bytes());
+    data.push(0);
+    data.extend_from_slice(&(cmd.len() as u16).to_le_bytes());
+    for u in cmd {
+        data.extend_from_slice(&u.to_le_bytes());
+    }
+    data.extend_from_slice(&0u32.to_le_bytes());
+    data.extend_from_slice(&0u32.to_le_bytes());
+    write_record(out, HWPTAG_CTRL_HEADER, level, &data);
+}
+
+fn hyperlink_uri(command: &str) -> String {
+    command
+        .split(';')
+        .next()
+        .unwrap_or(command)
+        .trim()
+        .to_string()
+}
+
+fn parse_hyperlink_command(payload: &[u8]) -> Option<String> {
+    if !matches_ctrl(payload, CTRL_HYPERLINK) || payload.len() < 11 {
+        return None;
+    }
+    let cmd_len = u16::from_le_bytes(payload[9..11].try_into().ok()?) as usize;
+    let start: usize = 11;
+    let end = start.saturating_add(cmd_len.saturating_mul(2));
+    if end > payload.len() {
+        return None;
+    }
+    let mut chars = Vec::with_capacity(cmd_len);
+    let mut i = start;
+    while i + 1 < end {
+        chars.push(u16::from_le_bytes([payload[i], payload[i + 1]]));
+        i += 2;
+    }
+    let url = hyperlink_uri(&String::from_utf16_lossy(&chars));
+    if url.is_empty() {
+        None
+    } else {
+        Some(url)
+    }
+}
+
+fn hyperlink_commands(recs: &[Rec]) -> Vec<String> {
+    recs.iter()
+        .filter(|r| r.tag == HWPTAG_CTRL_HEADER)
+        .filter_map(|r| parse_hyperlink_command(&r.payload))
+        .collect()
+}
+
+fn decode_field_spans(payload: &[u8]) -> Vec<(usize, usize)> {
+    let mut units = Vec::new();
+    let mut spans = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut i = 0;
+    while i + 1 < payload.len() {
+        let u = u16::from_le_bytes([payload[i], payload[i + 1]]);
+        i += 2;
+        if u == 0x000B {
+            i = i.saturating_add(14);
+            continue;
+        }
+        if (1..32).contains(&u) && u != 0x0009 && u != 0x000A && u != 0x000D {
+            if u == 0x0003 {
+                i = i.saturating_add(14);
+                start = Some(units.len());
+                continue;
+            }
+            if u == 0x0004 {
+                i = i.saturating_add(14);
+                if let Some(s) = start.take() {
+                    let e = units.len();
+                    if e > s {
+                        spans.push((s, e));
+                    }
+                }
+                continue;
+            }
+            if matches!(u, 0x0008 | 0x0002) {
+                i = i.saturating_add(14);
+            }
+            continue;
+        }
+        if u == 0x000D {
+            continue;
+        }
+        units.push(u);
+    }
+    spans
+        .into_iter()
+        .map(|(s, e)| {
+            let cs = String::from_utf16_lossy(&units[..s.min(units.len())])
+                .chars()
+                .count();
+            let ce = String::from_utf16_lossy(&units[..e.min(units.len())])
+                .chars()
+                .count();
+            (cs, ce)
+        })
+        .collect()
+}
+
+fn apply_hyperlinks(para: &mut Paragraph, payload: &[u8], urls: &[String]) {
+    let spans = decode_field_spans(payload);
+    if spans.is_empty() || urls.is_empty() {
+        return;
+    }
+    let nchars = para.plain_text().chars().count();
+    let mut char_href = vec![None; nchars];
+    for (i, (s, e)) in spans.iter().enumerate() {
+        if urls.get(i).is_none_or(|u| u.is_empty()) {
+            continue;
+        }
+        let end = (*e).min(char_href.len());
+        let start = (*s).min(end);
+        for slot in &mut char_href[start..end] {
+            *slot = Some(i);
+        }
+    }
+    if char_href.iter().all(Option::is_none) {
+        return;
+    }
+    let mut pieces = Vec::new();
+    for run in &para.runs {
+        let style = run.style.clone();
+        for ch in run.display_text().chars() {
+            let href = char_href.get(pieces.len()).copied().flatten();
+            pieces.push((ch, style.clone(), href));
+        }
+    }
+    if pieces.is_empty() {
+        return;
+    }
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < pieces.len() {
+        let href = pieces[i].2;
+        let style = pieces[i].1.clone();
+        let mut j = i + 1;
+        while j < pieces.len() && pieces[j].2 == href && pieces[j].1 == style {
+            j += 1;
+        }
+        let text: String = pieces[i..j].iter().map(|p| p.0).collect();
+        let mut run = if let Some(idx) = href {
+            Run::hyperlink(text, urls[idx].clone())
+        } else {
+            Run::text(text)
+        };
+        run.style = style;
+        if href.is_some() {
+            run.style.underline = Underline::Single;
+        }
+        runs.push(run);
+        i = j;
+    }
+    para.runs = runs;
+}
+
 fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
     let mut out = Vec::new();
     // 한글 5.0 DocInfo: 7×u16 시작번호. rhwp `parse_document_properties` 계약.
@@ -928,19 +1107,38 @@ fn page_def_payload(page: &docagent_model::PageSetup) -> Vec<u8> {
 }
 
 fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16, styles: &[CharStyle]) {
-    let text = para.plain_text();
-    let utf16: Vec<u16> = text.encode_utf16().collect();
-    let nchars = utf16.len() as u32;
+    let mut utf16 = Vec::new();
     let mut ranges = Vec::new();
     let mut pos = 0u32;
+    let mut links = Vec::new();
     for run in &para.runs {
-        let n = run.display_text().encode_utf16().count() as u32;
-        if n == 0 {
-            continue;
+        match &run.content {
+            RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
+                let n = display.encode_utf16().count() as u32;
+                if n > 0 {
+                    ranges.push((pos, style_id(styles, &run.style)));
+                    pos = pos.saturating_add(n);
+                }
+                push_extended_ctrl(&mut utf16, 0x0003, CTRL_HYPERLINK);
+                utf16.extend(display.encode_utf16());
+                push_extended_ctrl(&mut utf16, 0x0004, CTRL_HYPERLINK);
+                if !target.is_empty() {
+                    links.push(target.clone());
+                }
+            }
+            _ => {
+                let t = run.display_text();
+                let n = t.encode_utf16().count() as u32;
+                if n == 0 {
+                    continue;
+                }
+                ranges.push((pos, style_id(styles, &run.style)));
+                pos = pos.saturating_add(n);
+                utf16.extend(t.encode_utf16());
+            }
         }
-        ranges.push((pos, style_id(styles, &run.style)));
-        pos = pos.saturating_add(n);
     }
+    let nchars = utf16.len() as u32;
     if ranges.is_empty() && nchars > 0 {
         ranges.push((0, 0));
     }
@@ -972,6 +1170,9 @@ fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16, styles: &[Ch
             level + 1,
             &encode_lineseg(&para.layout_hints),
         );
+    }
+    for url in links {
+        write_hyperlink_ctrl(out, level + 1, &url);
     }
 }
 
@@ -1132,6 +1333,28 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.strike && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_hyperlink() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
     }
 
     #[test]
