@@ -141,7 +141,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. Links write `[text](url)`. Strikethrough writes `~~text~~`. Quotes write `> text`. Code writes `` `text` ``. Fences write ` ``` `. Highlights write `==text==`. Underlines write `__text__`. Superscripts write `^text^`. Subscripts write `~text~`. Tasks write `- [x]` / `- [ ]`. Thematic breaks write `---`. |
 | **HTML** | Semantic HTML an agent can read back. Quotes are `<blockquote>`. Fenced code is `<pre><code>`. Tasks are disabled checkboxes. Table cells keep `<strong>`/`<em>`. Links are `<a href>`. Strikethrough is `<s>`. Code is `<code>`. Highlights are `<mark>`. Underlines are `<u>`. Superscripts are `<sup>`. Subscripts are `<sub>`. Thematic breaks are `<hr/>`. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
-| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. |
+| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. HWP 5 `CHAR_SHAPE` keeps bold / italic / underline / strike / super / sub on the same IR. |
 
 No spreadsheet. No slides. No cursor. No undo stack. Flow documents only.
 

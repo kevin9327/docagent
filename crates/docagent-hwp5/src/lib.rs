@@ -10,8 +10,8 @@ use std::io::{Cursor, Read, Write};
 
 use cfb::CompoundFile;
 use docagent_model::{
-    Alignment, Block, Diagnostic, Document, LayoutHint, Paragraph, Section, SplitPolicy, Table,
-    TableBorders, TableCell, TableRow,
+    Alignment, Block, CharStyle, Diagnostic, Document, LayoutHint, Paragraph, Run, Section,
+    SplitPolicy, Table, TableBorders, TableCell, TableRow, Underline,
 };
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
@@ -125,6 +125,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
 }
 
 pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
+    let styles = collect_char_styles(doc);
     let mut cursor = Cursor::new(Vec::new());
     {
         let mut comp = CompoundFile::create(&mut cursor)?;
@@ -134,20 +135,20 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         }
         {
             let mut s = comp.create_stream("DocInfo")?;
-            s.write_all(&write_docinfo())?;
+            s.write_all(&write_docinfo(&styles))?;
         }
         if !comp.exists("BodyText") {
             comp.create_storage("BodyText")?;
         }
         for (i, section) in doc.sections.iter().enumerate() {
             let name = format!("BodyText/Section{i}");
-            let bytes = write_section(section);
+            let bytes = write_section(section, &styles);
             let mut s = comp.create_stream(&name)?;
             s.write_all(&bytes)?;
         }
         if doc.sections.is_empty() {
             let mut s = comp.create_stream("BodyText/Section0")?;
-            s.write_all(&write_section(&Section::default()))?;
+            s.write_all(&write_section(&Section::default(), &styles))?;
         }
         {
             let mut s = comp.create_stream("PrvText")?;
@@ -284,7 +285,7 @@ fn write_record(out: &mut Vec<u8>, tag: u16, level: u16, payload: &[u8]) {
 
 #[derive(Clone, Debug, Default)]
 struct StyleCatalog {
-    char_sizes: Vec<i32>,
+    chars: Vec<CharStyle>,
     para: Vec<ParsedParaShape>,
 }
 
@@ -314,7 +315,7 @@ impl StyleCatalog {
         let mut cat = Self::default();
         for rec in recs {
             match rec.tag {
-                HWPTAG_CHAR_SHAPE => cat.char_sizes.push(char_shape_size(&rec.payload)),
+                HWPTAG_CHAR_SHAPE => cat.chars.push(char_shape_style(&rec.payload)),
                 HWPTAG_PARA_SHAPE => cat.para.push(parse_para_shape(&rec.payload)),
                 _ => {}
             }
@@ -323,14 +324,92 @@ impl StyleCatalog {
     }
 }
 
-fn char_shape_size(p: &[u8]) -> i32 {
-    // 7×u16 faces + 7×u8 ratio/spacing/rel/offset, then i32 height (10pt = 1000).
+/// 한글 5.0 r1.3 표 37: faces/ratio/spacing/rel/offset then i32 height, u32 attr.
+fn char_shape_style(p: &[u8]) -> CharStyle {
+    let mut style = CharStyle::default();
     const OFF: usize = 7 * 2 + 7 * 4;
     if p.len() >= OFF + 4 {
-        i32_at(p, OFF).max(1)
-    } else {
-        docagent_model::DEFAULT_FONT_SIZE_HU
+        style.size = i32_at(p, OFF).max(1);
     }
+    if p.len() >= OFF + 8 {
+        let attr = u32::from_le_bytes(p[OFF + 4..OFF + 8].try_into().unwrap());
+        style.italic = attr & 1 != 0;
+        style.bold = attr & 2 != 0;
+        if (attr >> 2) & 0x03 != 0 {
+            style.underline = Underline::Single;
+        }
+        style.superscript = attr & (1 << 15) != 0;
+        style.subscript = attr & (1 << 16) != 0;
+        style.strike = (attr >> 18) & 0x07 != 0;
+    }
+    style
+}
+
+fn encode_char_shape(style: &CharStyle) -> Vec<u8> {
+    let mut p = vec![0u8; 72];
+    for i in 0..7 {
+        p[14 + i] = 100;
+        p[28 + i] = 100;
+    }
+    put_i32(&mut p, 42, style.size.max(1));
+    let mut attr = 0u32;
+    if style.italic {
+        attr |= 1;
+    }
+    if style.bold {
+        attr |= 2;
+    }
+    if style.underline != Underline::None {
+        attr |= 1 << 2;
+    }
+    if style.superscript {
+        attr |= 1 << 15;
+    }
+    if style.subscript {
+        attr |= 1 << 16;
+    }
+    if style.strike {
+        attr |= 1 << 18;
+    }
+    p[46..50].copy_from_slice(&attr.to_le_bytes());
+    p
+}
+
+fn collect_char_styles(doc: &Document) -> Vec<CharStyle> {
+    let mut out = vec![CharStyle::default()];
+    for section in &doc.sections {
+        collect_block_styles(&section.body, &mut out);
+    }
+    out
+}
+
+fn collect_block_styles(blocks: &[Block], out: &mut Vec<CharStyle>) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(p) => {
+                for run in &p.runs {
+                    if !out.iter().any(|s| s == &run.style) {
+                        out.push(run.style.clone());
+                    }
+                }
+            }
+            Block::Table(t) => {
+                for row in &t.rows {
+                    for cell in &row.cells {
+                        collect_block_styles(&cell.blocks, out);
+                    }
+                }
+            }
+            Block::Float(_) | Block::Break(_) => {}
+        }
+    }
+}
+
+fn style_id(styles: &[CharStyle], style: &CharStyle) -> u32 {
+    styles
+        .iter()
+        .position(|s| s == style)
+        .unwrap_or(0) as u32
 }
 
 fn parse_para_shape(p: &[u8]) -> ParsedParaShape {
@@ -369,20 +448,60 @@ fn apply_catalog(para: &mut Paragraph, header: &[u8], children: &[Rec], cat: &St
             para.line_spacing = ps.line_spacing;
         }
     }
-    let shape_id = children.iter().find_map(|r| {
-        if r.tag == HWPTAG_PARA_CHAR_SHAPE && r.payload.len() >= 8 {
-            Some(u32::from_le_bytes(r.payload[4..8].try_into().unwrap()) as usize)
-        } else {
-            None
+    let ranges = para_char_shape_ranges(children);
+    if ranges.is_empty() {
+        return;
+    }
+    let text = para.plain_text();
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        if let Some((_, id)) = ranges.first()
+            && let Some(st) = cat.chars.get(*id as usize)
+        {
+            for run in &mut para.runs {
+                run.style = st.clone();
+            }
         }
-    });
-    if let Some(id) = shape_id
-        && let Some(size) = cat.char_sizes.get(id).copied()
-    {
-        for run in &mut para.runs {
-            run.style.size = size;
+        return;
+    }
+    let mut runs = Vec::new();
+    for (i, (start, id)) in ranges.iter().enumerate() {
+        let s = (*start as usize).min(chars.len());
+        let e = ranges
+            .get(i + 1)
+            .map(|(n, _)| *n as usize)
+            .unwrap_or(chars.len())
+            .min(chars.len());
+        if s >= e {
+            continue;
+        }
+        let slice: String = chars[s..e].iter().collect();
+        let mut run = Run::text(slice);
+        if let Some(st) = cat.chars.get(*id as usize) {
+            run.style = st.clone();
+        }
+        runs.push(run);
+    }
+    if !runs.is_empty() {
+        para.runs = runs;
+    }
+}
+
+fn para_char_shape_ranges(children: &[Rec]) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    for rec in children {
+        if rec.tag != HWPTAG_PARA_CHAR_SHAPE {
+            continue;
+        }
+        let mut i = 0;
+        while i + 8 <= rec.payload.len() {
+            let start = u32::from_le_bytes(rec.payload[i..i + 4].try_into().unwrap());
+            let id = u32::from_le_bytes(rec.payload[i + 4..i + 8].try_into().unwrap());
+            out.push((start, id));
+            i += 8;
         }
     }
+    out
 }
 
 fn section_from_records(
@@ -756,7 +875,7 @@ fn ctrl_id(payload: &[u8]) -> u32 {
     u32::from_le_bytes(payload[0..4].try_into().unwrap()).swap_bytes()
 }
 
-fn write_docinfo() -> Vec<u8> {
+fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
     let mut out = Vec::new();
     // 한글 5.0 DocInfo: 7×u16 시작번호. rhwp `parse_document_properties` 계약.
     let mut props = Vec::new();
@@ -764,24 +883,29 @@ fn write_docinfo() -> Vec<u8> {
         props.extend_from_slice(&1u16.to_le_bytes());
     }
     write_record(&mut out, HWPTAG_DOCUMENT_PROPERTIES, 0, &props);
-    // 15×u32 ID mappings. Counts stay 0 so no FACE_NAME/CHAR_SHAPE payloads follow.
-    let map = vec![0u8; 60];
+    // 15×u32 ID mappings. Index 3 is CHAR_SHAPE count.
+    let mut map = vec![0u8; 60];
+    let n = styles.len() as u32;
+    map[12..16].copy_from_slice(&n.to_le_bytes());
     write_record(&mut out, HWPTAG_ID_MAPPINGS, 0, &map);
+    for style in styles {
+        write_record(&mut out, HWPTAG_CHAR_SHAPE, 0, &encode_char_shape(style));
+    }
     out
 }
 
-fn write_section(section: &Section) -> Vec<u8> {
+fn write_section(section: &Section, styles: &[CharStyle]) -> Vec<u8> {
     let mut out = Vec::new();
     write_record(&mut out, HWPTAG_PAGE_DEF, 0, &page_def_payload(&section.page));
     if section.body.is_empty() {
-        write_paragraph(&mut out, &Paragraph::from_text(""), 0);
+        write_paragraph(&mut out, &Paragraph::from_text(""), 0, styles);
     } else {
         for block in &section.body {
             match block {
-                Block::Paragraph(p) => write_paragraph(&mut out, p, 0),
-                Block::Table(t) => write_table(&mut out, t, 0),
+                Block::Paragraph(p) => write_paragraph(&mut out, p, 0, styles),
+                Block::Table(t) => write_table(&mut out, t, 0, styles),
                 Block::Float(_) | Block::Break(_) => {
-                    write_paragraph(&mut out, &Paragraph::from_text(""), 0);
+                    write_paragraph(&mut out, &Paragraph::from_text(""), 0, styles);
                 }
             }
         }
@@ -803,14 +927,27 @@ fn page_def_payload(page: &docagent_model::PageSetup) -> Vec<u8> {
     p
 }
 
-fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16) {
+fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16, styles: &[CharStyle]) {
     let text = para.plain_text();
     let utf16: Vec<u16> = text.encode_utf16().collect();
     let nchars = utf16.len() as u32;
+    let mut ranges = Vec::new();
+    let mut pos = 0u32;
+    for run in &para.runs {
+        let n = run.display_text().encode_utf16().count() as u32;
+        if n == 0 {
+            continue;
+        }
+        ranges.push((pos, style_id(styles, &run.style)));
+        pos = pos.saturating_add(n);
+    }
+    if ranges.is_empty() && nchars > 0 {
+        ranges.push((0, 0));
+    }
     let mut header = vec![0u8; 22];
     header[0..4].copy_from_slice(&nchars.to_le_bytes());
     header[8..10].copy_from_slice(&0u16.to_le_bytes());
-    let char_shapes = if nchars == 0 { 0u16 } else { 1u16 };
+    let char_shapes = ranges.len() as u16;
     header[12..14].copy_from_slice(&char_shapes.to_le_bytes());
     let line_count = para.layout_hints.len() as u16;
     header[16..18].copy_from_slice(&line_count.to_le_bytes());
@@ -820,9 +957,12 @@ fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16) {
         bytes.extend_from_slice(&u.to_le_bytes());
     }
     write_record(out, HWPTAG_PARA_TEXT, level + 1, &bytes);
-    if char_shapes == 1 {
-        let mut cs = vec![0u8; 8];
-        cs[4..8].copy_from_slice(&0u32.to_le_bytes());
+    if !ranges.is_empty() {
+        let mut cs = Vec::with_capacity(ranges.len() * 8);
+        for (start, id) in ranges {
+            cs.extend_from_slice(&start.to_le_bytes());
+            cs.extend_from_slice(&id.to_le_bytes());
+        }
         write_record(out, HWPTAG_PARA_CHAR_SHAPE, level + 1, &cs);
     }
     if !para.layout_hints.is_empty() {
@@ -835,7 +975,7 @@ fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16) {
     }
 }
 
-fn write_table(out: &mut Vec<u8>, table: &Table, level: u16) {
+fn write_table(out: &mut Vec<u8>, table: &Table, level: u16, styles: &[CharStyle]) {
     let n_rows = table.rows.len() as u16;
     let n_cols = table.rows.first().map(|r| r.cells.len() as u16).unwrap_or(0);
     let mut header = vec![0u8; 22];
@@ -874,7 +1014,7 @@ fn write_table(out: &mut Vec<u8>, table: &Table, level: u16) {
             put_i32(&mut list, 10, row.height.unwrap_or(0));
             write_record(out, HWPTAG_LIST_HEADER, level + 2, &list);
             let text = cell_text(cell);
-            write_paragraph(out, &Paragraph::from_text(text), level + 3);
+            write_paragraph(out, &Paragraph::from_text(text), level + 3, styles);
         }
     }
 }
@@ -936,6 +1076,62 @@ mod tests {
         doc.sections.push(section);
         let back = roundtrip(&doc).expect("roundtrip");
         assert!(back.plain_text().contains("한글 HWP5 roundtrip"));
+    }
+
+    #[test]
+    fn char_shape_style_reads_attr_bits() {
+        let bold = CharStyle {
+            bold: true,
+            ..CharStyle::default()
+        };
+        let p = encode_char_shape(&bold);
+        let back = char_shape_style(&p);
+        assert!(back.bold);
+        assert!(!back.italic);
+        let strike = CharStyle {
+            strike: true,
+            italic: true,
+            underline: Underline::Single,
+            superscript: true,
+            ..CharStyle::default()
+        };
+        let p = encode_char_shape(&strike);
+        let back = char_shape_style(&p);
+        assert!(back.strike && back.italic && back.superscript);
+        assert_eq!(back.underline, Underline::Single);
+        assert!(!back.bold);
+        let sub = CharStyle {
+            subscript: true,
+            ..CharStyle::default()
+        };
+        let back = char_shape_style(&encode_char_shape(&sub));
+        assert!(back.subscript);
+        assert!(!back.superscript);
+    }
+
+    #[test]
+    fn roundtrip_keeps_char_shape_marks() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut bold = Run::text("GPU-free");
+        bold.style.bold = true;
+        p.runs.push(bold);
+        let mut strike = Run::text(" guess");
+        strike.style.strike = true;
+        p.runs.push(strike);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        assert!(p.runs.iter().any(|r| {
+            r.style.strike && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
+        }));
     }
 
     #[test]
