@@ -8,8 +8,8 @@
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, Diagnostic, DiagnosticCode, Document, Paragraph, Section, Severity, Table,
-    TableCell, TableRow, hu_to_twips, twips_to_hu,
+    Alignment, Block, Diagnostic, DiagnosticCode, Document, Paragraph, Run, RunContent, Section,
+    Severity, Table, TableCell, TableRow, hu_to_twips, twips_to_hu,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -93,11 +93,7 @@ fn document_xml(doc: &Document) -> String {
         } else {
             for block in &section.body {
                 match block {
-                    Block::Paragraph(p) => {
-                        s.push_str("<w:p><w:r><w:t xml:space=\"preserve\">");
-                        s.push_str(&xml_escape(&p.plain_text()));
-                        s.push_str("</w:t></w:r></w:p>");
-                    }
+                    Block::Paragraph(p) => s.push_str(&p_xml(p)),
                     Block::Table(t) => s.push_str(&tbl_xml(t)),
                     Block::Float(_) | Block::Break(_) => s.push_str("<w:p/>"),
                 }
@@ -128,6 +124,39 @@ fn document_xml(doc: &Document) -> String {
         let _ = si;
     }
     s.push_str("</w:body></w:document>");
+    s
+}
+
+fn p_xml(p: &Paragraph) -> String {
+    let mut s = String::from("<w:p>");
+    let mut wrote = false;
+    for run in &p.runs {
+        let RunContent::Text(t) = &run.content else {
+            continue;
+        };
+        if t.is_empty() {
+            continue;
+        }
+        s.push_str("<w:r>");
+        if run.style.bold || run.style.italic {
+            s.push_str("<w:rPr>");
+            if run.style.bold {
+                s.push_str("<w:b/>");
+            }
+            if run.style.italic {
+                s.push_str("<w:i/>");
+            }
+            s.push_str("</w:rPr>");
+        }
+        s.push_str("<w:t xml:space=\"preserve\">");
+        s.push_str(&xml_escape(t));
+        s.push_str("</w:t></w:r>");
+        wrote = true;
+    }
+    if !wrote {
+        s.push_str("<w:r><w:t/></w:r>");
+    }
+    s.push_str("</w:p>");
     s
 }
 
@@ -183,8 +212,12 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
     let mut section = Section::default();
     let mut body = Vec::new();
     let mut in_t = false;
+    let mut in_rpr = false;
     let mut in_tbl = false;
-    let mut cur = String::new();
+    let mut run_bold = false;
+    let mut run_italic = false;
+    let mut run_text = String::new();
+    let mut para_runs: Vec<Run> = Vec::new();
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_buf = String::new();
@@ -196,8 +229,16 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                 let name = local_name(&e);
                 match name.as_str() {
                     "t" => in_t = true,
+                    "rPr" if !in_tbl => in_rpr = true,
+                    "b" if in_rpr => run_bold = ooxml_on(&e),
+                    "i" if in_rpr => run_italic = ooxml_on(&e),
+                    "r" if !in_tbl => {
+                        run_bold = false;
+                        run_italic = false;
+                        run_text.clear();
+                    }
                     "tbl" => {
-                        flush_p(&mut body, &mut cur);
+                        flush_para(&mut body, &mut para_runs);
                         in_tbl = true;
                     }
                     "tr" if in_tbl => cur_row.clear(),
@@ -241,7 +282,16 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 match name.as_str() {
                     "t" => in_t = false,
-                    "p" if !in_tbl => flush_p(&mut body, &mut cur),
+                    "rPr" => in_rpr = false,
+                    "r" if !in_tbl => {
+                        flush_run(&mut para_runs, &mut run_text, run_bold, run_italic);
+                        run_bold = false;
+                        run_italic = false;
+                    }
+                    "p" if !in_tbl => {
+                        flush_run(&mut para_runs, &mut run_text, run_bold, run_italic);
+                        flush_para(&mut body, &mut para_runs);
+                    }
                     "tc" if in_tbl => {
                         cur_row.push(TableCell {
                             width: cell_width,
@@ -272,7 +322,7 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                 if in_tbl {
                     cell_buf.push_str(&decoded);
                 } else if in_t {
-                    cur.push_str(&decoded);
+                    run_text.push_str(&decoded);
                 }
             }
             Ok(Event::Eof) => break,
@@ -281,7 +331,8 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
         }
         buf.clear();
     }
-    flush_p(&mut body, &mut cur);
+    flush_run(&mut para_runs, &mut run_text, run_bold, run_italic);
+    flush_para(&mut body, &mut para_runs);
     section.body = body;
     Ok(Document {
         sections: vec![section],
@@ -289,11 +340,30 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
     })
 }
 
-fn flush_p(body: &mut Vec<Block>, text: &mut String) {
+fn flush_run(runs: &mut Vec<Run>, text: &mut String, bold: bool, italic: bool) {
     if text.is_empty() {
         return;
     }
-    body.push(Block::Paragraph(Paragraph::from_text(std::mem::take(text))));
+    let mut run = Run::text(std::mem::take(text));
+    run.style.bold = bold;
+    run.style.italic = italic;
+    runs.push(run);
+}
+
+fn flush_para(body: &mut Vec<Block>, runs: &mut Vec<Run>) {
+    if runs.is_empty() {
+        return;
+    }
+    let mut p = Paragraph::from_text("");
+    p.runs = std::mem::take(runs);
+    body.push(Block::Paragraph(p));
+}
+
+fn ooxml_on(e: &BytesStart<'_>) -> bool {
+    match attr(e, "val").as_deref() {
+        Some("0") | Some("false") | Some("off") => false,
+        _ => true,
+    }
 }
 
 fn local_name(e: &BytesStart<'_>) -> String {
@@ -388,7 +458,35 @@ pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docagent_model::{LayoutHint, Paragraph};
+    use docagent_model::{LayoutHint, Paragraph, Run};
+
+    #[test]
+    fn roundtrip_keeps_bold_and_italic() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut bold = Run::text("GPU-free");
+        bold.style.bold = true;
+        p.runs.push(bold);
+        let mut italic = Run::text(" byte-for-byte");
+        italic.style.italic = true;
+        p.runs.push(italic);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:b/>"), "docx must emit w:b");
+        assert!(xml.contains("<w:i/>"), "docx must emit w:i");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        assert!(p.runs.iter().any(|r| {
+            r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
+        }));
+    }
 
     #[test]
     fn roundtrip_text_and_page() {

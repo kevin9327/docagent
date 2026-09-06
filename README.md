@@ -97,7 +97,7 @@ These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json)
 
 ## What you get
 
-These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [capsule JSON](docs/assets/letter-capsule.json).
+These three pictures are the convert of [`examples/letter.md`](examples/letter.md). Click through to the files: [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [DOCX](docs/assets/letter.docx) · [ODT](docs/assets/letter.odt) · [capsule JSON](docs/assets/letter-capsule.json).
 
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
@@ -129,6 +129,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
 | **PDF/A** | Archival print. Two runs, same fonts, same bytes. |
+| **DOCX / ODT** | Same IR runs: `w:b`/`w:i` and `fo:font-weight`/`fo:font-style`. |
 | **HTML** | Semantic HTML an agent can read back. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
 | **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. |

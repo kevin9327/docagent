@@ -1,16 +1,16 @@
 # DocAgent #1 loop state
 
-Last cycle: 10 (2026-09-06) — PDF synthetic italic
+Last cycle: 11 (2026-09-06) — DOCX/ODT CharStyle
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- PDF/A shears italic runs 0.20 around the baseline (Y-down, tops lean right) on the Regular face.
-- `_byte-for-byte_` in `examples/letter.md` is visibly oblique in the PDF screenshot.
-- Bold+italic still compose: shear wraps both fills.
-- Prove hashes and convert screenshots refreshed.
+- DOCX write emits per-run `w:rPr` (`w:b` / `w:i`); read restores `CharStyle`.
+- ODT write emits `text:span` + automatic styles (`fo:font-weight` / `fo:font-style`); read restores them.
+- `examples/letter.md` convert keeps **GPU-free** and _byte-for-byte_ in [letter.docx](../assets/letter.docx) and [letter.odt](../assets/letter.odt).
+- README links those files next to PDF/A and HTML. Prove hashes unchanged (PDF/A + HTML only).
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 - input  `5f33b7f2389a3c4a4f53b638808a8e958305cc8f8a77b976d03f3d41f3d4a85f`
@@ -19,7 +19,7 @@ Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
 
 ## Next
 
-1. PDF fills beyond table grids, or DOCX/ODT emitting `CharStyle` bold/italic.
+1. PDF fills beyond table grids, or DOCX/ODT heading styles / table-cell emphasis.
 2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule

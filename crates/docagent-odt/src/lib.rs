@@ -3,10 +3,13 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
-use docagent_model::{Alignment, Block, Document, Paragraph, Section, Table, TableCell, TableRow};
-use quick_xml::events::Event;
+use docagent_model::{
+    Alignment, Block, Document, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow,
+};
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use thiserror::Error;
 use zip::write::SimpleFileOptions;
@@ -72,7 +75,15 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut section = Section::default();
     let mut in_p = false;
     let mut in_table = false;
-    let mut text = String::new();
+    let mut in_style = false;
+    let mut style_name = String::new();
+    let mut style_bold = false;
+    let mut style_italic = false;
+    let mut styles: HashMap<String, (bool, bool)> = HashMap::new();
+    let mut span_bold = false;
+    let mut span_italic = false;
+    let mut run_text = String::new();
+    let mut para_runs: Vec<Run> = Vec::new();
     let mut table_rows: Vec<TableRow> = Vec::new();
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_text = String::new();
@@ -81,9 +92,33 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 match name.as_str() {
+                    "style" => {
+                        in_style = true;
+                        style_name = attr(&e, "name").unwrap_or_default();
+                        style_bold = false;
+                        style_italic = false;
+                    }
+                    "text-properties" if in_style => {
+                        if let Some(w) = attr(&e, "font-weight") {
+                            style_bold = w == "bold" || w == "700";
+                        }
+                        if let Some(s) = attr(&e, "font-style") {
+                            style_italic = s == "italic" || s == "oblique";
+                        }
+                    }
                     "p" | "h" => {
                         in_p = true;
-                        text.clear();
+                        run_text.clear();
+                        para_runs.clear();
+                        span_bold = false;
+                        span_italic = false;
+                    }
+                    "span" if in_p && !in_table => {
+                        flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
+                        let key = attr(&e, "style-name").unwrap_or_default();
+                        let (b, i) = styles.get(&key).copied().unwrap_or((false, false));
+                        span_bold = b;
+                        span_italic = i;
                     }
                     "table" => {
                         in_table = true;
@@ -97,14 +132,28 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 match name.as_str() {
+                    "style" => {
+                        in_style = false;
+                        if !style_name.is_empty() {
+                            styles.insert(style_name.clone(), (style_bold, style_italic));
+                        }
+                    }
+                    "span" if in_p && !in_table => {
+                        flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
+                        span_bold = false;
+                        span_italic = false;
+                    }
                     "p" | "h" => {
                         in_p = false;
-                        if !in_table && !text.trim().is_empty() {
-                            section
-                                .body
-                                .push(Block::Paragraph(Paragraph::from_text(text.clone())));
+                        if !in_table {
+                            flush_odt_run(&mut para_runs, &mut run_text, span_bold, span_italic);
+                            if !para_runs.is_empty() {
+                                let mut p = Paragraph::from_text("");
+                                p.runs = std::mem::take(&mut para_runs);
+                                section.body.push(Block::Paragraph(p));
+                            }
                         }
-                        text.clear();
+                        run_text.clear();
                     }
                     "table-cell" if in_table => {
                         cur_row.push(TableCell {
@@ -137,7 +186,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                 if in_table {
                     cell_text.push_str(&decoded);
                 } else if in_p {
-                    text.push_str(&decoded);
+                    run_text.push_str(&decoded);
                 }
             }
             Ok(Event::Eof) => break,
@@ -150,16 +199,64 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     Ok(doc)
 }
 
+fn flush_odt_run(runs: &mut Vec<Run>, text: &mut String, bold: bool, italic: bool) {
+    if text.is_empty() {
+        return;
+    }
+    let mut run = Run::text(std::mem::take(text));
+    run.style.bold = bold;
+    run.style.italic = italic;
+    runs.push(run);
+}
+
+fn attr(e: &BytesStart<'_>, key: &str) -> Option<String> {
+    e.attributes()
+        .filter_map(|a| a.ok())
+        .find(|a| a.key.local_name().as_ref() == key.as_bytes())
+        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+}
+
+fn odt_runs(p: &Paragraph) -> String {
+    let mut s = String::new();
+    for run in &p.runs {
+        let RunContent::Text(t) = &run.content else {
+            continue;
+        };
+        if t.is_empty() {
+            continue;
+        }
+        let escaped = xml_escape(t);
+        match (run.style.bold, run.style.italic) {
+            (true, true) => {
+                s.push_str(r#"<text:span text:style-name="Tbi">"#);
+                s.push_str(&escaped);
+                s.push_str("</text:span>");
+            }
+            (true, false) => {
+                s.push_str(r#"<text:span text:style-name="Tbold">"#);
+                s.push_str(&escaped);
+                s.push_str("</text:span>");
+            }
+            (false, true) => {
+                s.push_str(r#"<text:span text:style-name="Titalic">"#);
+                s.push_str(&escaped);
+                s.push_str("</text:span>");
+            }
+            (false, false) => s.push_str(&escaped),
+        }
+    }
+    s
+}
+
 fn content_xml(doc: &Document) -> String {
     let mut body = String::new();
     for section in &doc.sections {
         for block in &section.body {
             match block {
                 Block::Paragraph(p) => {
-                    body.push_str(&format!(
-                        "<text:p>{}</text:p>",
-                        xml_escape(&p.plain_text())
-                    ));
+                    body.push_str("<text:p>");
+                    body.push_str(&odt_runs(p));
+                    body.push_str("</text:p>");
                 }
                 Block::Table(table) => {
                     body.push_str("<table:table>");
@@ -189,7 +286,7 @@ fn content_xml(doc: &Document) -> String {
         }
     }
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"><office:automatic-styles><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
     )
 }
 
@@ -206,6 +303,35 @@ pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn roundtrip_keeps_bold_and_italic() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("plain ");
+        let mut bold = Run::text("GPU-free");
+        bold.style.bold = true;
+        p.runs.push(bold);
+        let mut italic = Run::text(" byte-for-byte");
+        italic.style.italic = true;
+        p.runs.push(italic);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("fo:font-weight=\"bold\""));
+        assert!(xml.contains("fo:font-style=\"italic\""));
+        assert!(xml.contains("Tbold"));
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        assert!(p.runs.iter().any(|r| {
+            r.style.italic && matches!(&r.content, RunContent::Text(t) if t.contains("byte-for-byte"))
+        }));
+    }
 
     #[test]
     fn roundtrip_paragraph_and_table() {
