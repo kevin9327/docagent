@@ -5,7 +5,7 @@
 | GitHub first screen | Harbor-mark convert shots under the H2 | MinerU/Docling photos | **closed** |
 | Agent API + capsule | Command + SHA-256×3 | none | none — keep |
 | Same bytes (`prove`) | identical: true | none | none — keep |
-| Demo letter looks real | denser page landed (`e93747f` + shots) | WeasyPrint / MinerU | **open** — table/paragraph tightness vs WeasyPrint |
+| Demo letter looks real | tightness pass (`288c7ba` + shots) | WeasyPrint / MinerU | **open** — table/paragraph tightness vs WeasyPrint |
 | Images in the demo | letter.md `![` and shots paint the mark | yes | **closed** |
 | DOCX/ODT/MD/HTML/PDF/A | five codecs; PNG/JPEG yes | Pandoc | Hangul images **—**; **stop deepening Hangul** |
 

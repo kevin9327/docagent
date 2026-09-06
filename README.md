@@ -174,7 +174,7 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 | --- | --- |
 | input | `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf` |
 | plan | `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a` |
-| output | `e38bb197cbc8a9379834e71c2a4827d5d8a5cc70af67ef2a68501fceccce916a` |
+| output | `b4b3843b18793d3fa50e43706583fc7bd388f83fef04ecabaccb2cb6cf084fc1` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this.
 
