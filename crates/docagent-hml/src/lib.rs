@@ -5,11 +5,11 @@
 use std::collections::HashMap;
 
 use docagent_model::{
-    Alignment, Block, CharStyle, Document, InlineObject, Paragraph, Run, RunContent, Section,
-    Table, TableCell, TableRow, Underline,
+    Alignment, Block, BreakKind, CharStyle, Document, InlineObject, Paragraph, Run, RunContent,
+    Section, Table, TableCell, TableRow, Underline,
 };
-use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use quick_xml::events::{BytesStart, Event};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -40,7 +40,9 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
     s.push_str(&charshape_head(&styles));
     s.push_str("<BODY>");
     if doc.sections.is_empty() {
-        s.push_str(r#"<SECTION><P><TEXT CharShape="0"></TEXT></P></SECTION>"#);
+        s.push_str(
+            r#"<SECTION><P Style="0" ParaShape="0"><TEXT CharShape="0"></TEXT></P></SECTION>"#,
+        );
     } else {
         for section in &doc.sections {
             s.push_str(&format!(
@@ -53,15 +55,18 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                 section.page.margin_bottom
             ));
             if section.body.is_empty() {
-                s.push_str(r#"<P><TEXT CharShape="0"></TEXT></P>"#);
+                s.push_str(r#"<P Style="0" ParaShape="0"><TEXT CharShape="0"></TEXT></P>"#);
             } else {
                 for block in &section.body {
                     match block {
                         Block::Paragraph(p) => s.push_str(&p_xml(p, &styles)),
                         Block::Table(t) => s.push_str(&table_xml(t)),
-                        Block::Float(_) | Block::Break(_) => {
-                            s.push_str(r#"<P><TEXT CharShape="0"></TEXT></P>"#)
-                        }
+                        Block::Break(BreakKind::Thematic) => s.push_str(
+                            r#"<P Style="3" ParaShape="3"><TEXT CharShape="0"></TEXT></P>"#,
+                        ),
+                        Block::Float(_) | Block::Break(_) => s.push_str(
+                            r#"<P Style="0" ParaShape="0"><TEXT CharShape="0"></TEXT></P>"#,
+                        ),
                     }
                 }
             }
@@ -136,12 +141,29 @@ fn charshape_head(styles: &[CharStyle]) -> String {
         }
         s.push_str("</CHARSHAPE>");
     }
-    s.push_str("</CHARSHAPELIST></MAPPINGTABLE></HEAD>");
+    s.push_str("</CHARSHAPELIST>");
+    s.push_str(
+        r#"<PARASHAPELIST Count="4"><PARASHAPE Id="0"/><PARASHAPE Id="1"><PARAMARGIN Left="1400"/><PARABORDER BorderFill="1" Left="1"/></PARASHAPE><PARASHAPE Id="2"><PARABORDER BorderFill="2" Fill="1"/></PARASHAPE><PARASHAPE Id="3"><PARABORDER BorderFill="3" Bottom="1"/></PARASHAPE></PARASHAPELIST>"#,
+    );
+    s.push_str(
+        r#"<STYLELIST Count="4"><STYLE Id="0" Name="Normal" EngName="Normal" Type="Para" ParaShape="0"/><STYLE Id="1" Name="Quote" EngName="Quote" Type="Para" ParaShape="1"/><STYLE Id="2" Name="CodeBlock" EngName="CodeBlock" Type="Para" ParaShape="2"/><STYLE Id="3" Name="HorizontalLine" EngName="HorizontalLine" Type="Para" ParaShape="3"/></STYLELIST></MAPPINGTABLE></HEAD>"#,
+    );
     s
 }
 
+fn para_style_id(p: &Paragraph) -> u32 {
+    if p.code_block {
+        2
+    } else if p.quote {
+        1
+    } else {
+        0
+    }
+}
+
 fn p_xml(p: &Paragraph, styles: &[CharStyle]) -> String {
-    let mut s = String::from("<P>");
+    let sid = para_style_id(p);
+    let mut s = format!(r#"<P Style="{sid}" ParaShape="{sid}">"#);
     if p.runs.is_empty() {
         s.push_str(r#"<TEXT CharShape="0"></TEXT>"#);
     } else {
@@ -230,6 +252,8 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
     let mut in_string_param = false;
     let mut string_param_name = String::new();
     let mut param_text = String::new();
+    let mut named_styles: HashMap<u32, String> = HashMap::new();
+    let mut para_kind: Option<StyleKind> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -257,6 +281,19 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                         if let Some(h) = attr_i32(&e, "Height").filter(|h| *h > 0) {
                             char_style.size = h;
                         }
+                    }
+                    "STYLE" => {
+                        if let Some(id) = attr_u32(&e, "Id") {
+                            let eng = attr_string(&e, "EngName").unwrap_or_default();
+                            let name = attr_string(&e, "Name").unwrap_or_default();
+                            named_styles.insert(id, if eng.is_empty() { name } else { eng });
+                        }
+                    }
+                    "P" if !in_table => {
+                        para_kind = attr_u32(&e, "Style")
+                            .and_then(|id| named_styles.get(&id).cloned())
+                            .as_deref()
+                            .and_then(style_kind);
                     }
                     "BOLD" if in_charshape => char_style.bold = true,
                     "ITALIC" if in_charshape => char_style.italic = true,
@@ -298,7 +335,7 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                             &run_style,
                             pending_href.as_deref(),
                         );
-                        flush_p(&mut body, &mut para_runs);
+                        flush_p(&mut body, &mut para_runs, &mut para_kind);
                         pending_href = None;
                         in_table = true;
                     }
@@ -344,7 +381,7 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                             &run_style,
                             pending_href.as_deref(),
                         );
-                        flush_p(&mut body, &mut para_runs);
+                        flush_p(&mut body, &mut para_runs, &mut para_kind);
                         pending_href = None;
                     }
                     "TD" if in_table => {
@@ -400,7 +437,7 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
         &run_style,
         pending_href.as_deref(),
     );
-    flush_p(&mut body, &mut para_runs);
+    flush_p(&mut body, &mut para_runs, &mut para_kind);
     if have_section || !body.is_empty() {
         section.body = body;
         doc.sections.push(section);
@@ -428,12 +465,43 @@ fn flush_run(runs: &mut Vec<Run>, text: &mut String, style: &CharStyle, href: Op
     runs.push(run);
 }
 
-fn flush_p(body: &mut Vec<Block>, runs: &mut Vec<Run>) {
-    if runs.is_empty() {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StyleKind {
+    Quote,
+    CodeBlock,
+    Thematic,
+}
+
+fn style_kind(name: &str) -> Option<StyleKind> {
+    let n = name.trim();
+    if n.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
+        Some(StyleKind::Quote)
+    } else if n.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
+        Some(StyleKind::CodeBlock)
+    } else if n.eq_ignore_ascii_case("HorizontalLine")
+        || n.contains("가로선")
+        || n.contains("구분선")
+    {
+        Some(StyleKind::Thematic)
+    } else {
+        None
+    }
+}
+
+fn flush_p(body: &mut Vec<Block>, runs: &mut Vec<Run>, kind: &mut Option<StyleKind>) {
+    let kind = kind.take();
+    if kind == Some(StyleKind::Thematic) {
+        runs.clear();
+        body.push(Block::Break(BreakKind::Thematic));
+        return;
+    }
+    if runs.is_empty() && kind.is_none() {
         return;
     }
     let mut p = Paragraph::from_text("");
     p.runs = std::mem::take(runs);
+    p.quote = kind == Some(StyleKind::Quote);
+    p.code_block = kind == Some(StyleKind::CodeBlock);
     body.push(Block::Paragraph(p));
 }
 
@@ -507,7 +575,8 @@ mod tests {
             r.style.bold && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("GPU-free"))
         }));
         assert!(p.runs.iter().any(|r| {
-            r.style.strike && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
+            r.style.strike
+                && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
         }));
     }
 
@@ -523,7 +592,10 @@ mod tests {
         let xml = p_xml(&p, &[CharStyle::default()]);
         assert!(xml.contains(r#"Type="Hyperlink""#), "{xml}");
         assert!(xml.contains("STRINGPARAM"), "{xml}");
-        assert!(xml.contains("https://github.com/kevin9327/docagent"), "{xml}");
+        assert!(
+            xml.contains("https://github.com/kevin9327/docagent"),
+            "{xml}"
+        );
         section.body.push(Block::Paragraph(p));
         doc.sections.push(section);
         let back = roundtrip(&doc).unwrap();
@@ -535,5 +607,71 @@ mod tests {
             RunContent::Inline(InlineObject::Hyperlink { target, display })
                 if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
         )));
+    }
+
+    #[test]
+    fn roundtrip_keeps_quote() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay is evidence.");
+        p.quote = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains(r#"EngName="Quote""#), "{xml}");
+        assert!(xml.contains(r#"Style="1""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.quote);
+        assert!(p.plain_text().contains("Replay is evidence"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_code_block() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("let n = 1;");
+        p.code_block = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains(r#"EngName="CodeBlock""#), "{xml}");
+        assert!(xml.contains(r#"Style="2""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.code_block);
+        assert!(p.plain_text().contains("let n = 1;"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_thematic_break() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("before")));
+        section.body.push(Block::Break(BreakKind::Thematic));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("after")));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains(r#"EngName="HorizontalLine""#), "{xml}");
+        assert!(xml.contains(r#"Style="3""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        assert!(
+            back.sections[0]
+                .body
+                .iter()
+                .any(|b| matches!(b, Block::Break(BreakKind::Thematic))),
+            "{:?}",
+            back.sections[0].body
+        );
+        assert!(back.plain_text().contains("before"));
+        assert!(back.plain_text().contains("after"));
     }
 }

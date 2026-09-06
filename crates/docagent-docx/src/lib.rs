@@ -5,13 +5,14 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, BreakKind, Diagnostic, DiagnosticCode, Document, InlineObject, NumberFormat,
-    NumberingRef, Paragraph, Run, RunContent, Section, Severity, Table, TableCell, TableRow,
-    Underline, DEFAULT_FONT_SIZE_HU, hu_to_twips, twips_to_hu,
+    Alignment, Block, BreakKind, CharStyle, Diagnostic, DiagnosticCode, Document, Float, Hu,
+    ImageData, InlineObject, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section,
+    Severity, Table, TableCell, TableRow, Underline, WrapMode, DEFAULT_FONT_SIZE_HU, HU_PER_INCH,
+    hu_to_twips, twips_to_hu,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -41,6 +42,28 @@ pub fn sniff(bytes: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
+struct Rel {
+    target: String,
+    ty: String,
+}
+
+struct MediaPart {
+    bytes: Vec<u8>,
+    mime: String,
+}
+
+/// 1 HWPUNIT = 1/7200 in; 1 inch = 914400 EMU; 914400/7200 = 127.
+const EMU_PER_HU: i64 = 127;
+
+fn hu_to_emu(hu: Hu) -> i64 {
+    i64::from(hu.max(1)).saturating_mul(EMU_PER_HU)
+}
+
+fn emu_to_hu(emu: i64) -> Hu {
+    emu.saturating_div(EMU_PER_HU)
+        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as Hu
+}
+
 pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     if bytes.len() < 4 || bytes[0..2] != [0x50, 0x4B] {
         return Err(Error::NotDocx);
@@ -59,10 +82,74 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             .map_err(|_| Error::NotDocx)?;
         f.read_to_string(&mut xml)?;
     }
-    parse_document_xml(&xml, &rels)
+    let mut media = HashMap::new();
+    for (id, rel) in &rels {
+        if !rel_is_image(&rel.ty) {
+            continue;
+        }
+        let path = resolve_word_target(&rel.target);
+        if let Ok(mut f) = zip.by_name(&path) {
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf)?;
+            let mime = mime_of(&rel.target, &buf);
+            media.insert(id.clone(), MediaPart { bytes: buf, mime });
+        }
+    }
+    parse_document_xml(&xml, &rels, &media)
 }
 
-fn parse_rels(xml: &str) -> HashMap<String, String> {
+fn rel_is_image(ty: &str) -> bool {
+    ty.rsplit('/').next().is_some_and(|s| s.eq_ignore_ascii_case("image"))
+}
+
+fn resolve_word_target(target: &str) -> String {
+    let t = target.replace('\\', "/");
+    let t = t.split(['?', '#']).next().unwrap_or(&t);
+    if let Some(rest) = t.strip_prefix('/') {
+        rest.to_string()
+    } else if t.starts_with("word/") {
+        t.to_string()
+    } else {
+        format!("word/{t}")
+    }
+}
+
+fn mime_of(name: &str, bytes: &[u8]) -> String {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".png") || bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return "image/png".into();
+    }
+    if lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+    {
+        return "image/jpeg".into();
+    }
+    if lower.ends_with(".gif") || bytes.starts_with(b"GIF8") {
+        return "image/gif".into();
+    }
+    if lower.ends_with(".bmp") || bytes.starts_with(b"BM") {
+        return "image/bmp".into();
+    }
+    if lower.ends_with(".tif") || lower.ends_with(".tiff") {
+        return "image/tiff".into();
+    }
+    if lower.ends_with(".emf") {
+        return "image/x-emf".into();
+    }
+    if lower.ends_with(".wmf") {
+        return "image/x-wmf".into();
+    }
+    if lower.ends_with(".svg") {
+        return "image/svg+xml".into();
+    }
+    if lower.ends_with(".webp") {
+        return "image/webp".into();
+    }
+    "image/png".into()
+}
+
+fn parse_rels(xml: &str) -> HashMap<String, Rel> {
     let mut map = HashMap::new();
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -74,10 +161,8 @@ fn parse_rels(xml: &str) -> HashMap<String, String> {
                     let id = attr(&e, "Id").or_else(|| attr(&e, "id"));
                     let target = attr(&e, "Target").or_else(|| attr(&e, "target"));
                     let ty = attr(&e, "Type").or_else(|| attr(&e, "type")).unwrap_or_default();
-                    if ty.contains("hyperlink")
-                        && let (Some(id), Some(target)) = (id, target)
-                    {
-                        map.insert(id, target);
+                    if let (Some(id), Some(target)) = (id, target) {
+                        map.insert(id, Rel { target, ty });
                     }
                 }
             }
@@ -90,14 +175,13 @@ fn parse_rels(xml: &str) -> HashMap<String, String> {
 }
 
 pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
+    let images = collect_images(doc);
     let mut cursor = Cursor::new(Vec::new());
     {
         let mut zip = ZipWriter::new(&mut cursor);
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         zip.start_file("[Content_Types].xml", deflated)?;
-        zip.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#,
-        )?;
+        zip.write_all(content_types_xml(&images).as_bytes())?;
         zip.start_file("_rels/.rels", deflated)?;
         zip.write_all(
             br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
@@ -110,9 +194,60 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         zip.write_all(NUMBERING_XML.as_bytes())?;
         zip.start_file("word/document.xml", deflated)?;
         zip.write_all(document_xml(doc).as_bytes())?;
+        for (idx, img) in images.iter().enumerate() {
+            let ext = ext_from_mime(&img.mime);
+            zip.start_file(format!("word/media/image{}.{ext}", idx + 1), deflated)?;
+            zip.write_all(&img.bytes)?;
+        }
         zip.finish()?;
     }
     Ok(cursor.into_inner())
+}
+
+fn content_types_xml(images: &[&ImageData]) -> String {
+    let mut s = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>"#,
+    );
+    let mut extras = BTreeSet::new();
+    for img in images {
+        extras.insert((
+            ext_from_mime(&img.mime).to_string(),
+            content_type_for_mime(&img.mime).to_string(),
+        ));
+    }
+    for (ext, ct) in extras {
+        s.push_str(&format!(
+            r#"<Default Extension="{ext}" ContentType="{ct}"/>"#
+        ));
+    }
+    s.push_str(
+        r#"<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#,
+    );
+    s
+}
+
+fn ext_from_mime(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" | "image/jpg" => "jpeg",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        "image/svg+xml" => "svg",
+        "image/x-emf" | "image/emf" => "emf",
+        "image/x-wmf" | "image/wmf" => "wmf",
+        "image/webp" => "webp",
+        _ => "png",
+    }
+}
+
+fn content_type_for_mime(mime: &str) -> &str {
+    if mime.starts_with("image/") && mime != "image/jpg" {
+        mime
+    } else if mime == "image/jpg" {
+        "image/jpeg"
+    } else {
+        "image/png"
+    }
 }
 
 fn document_rels(doc: &Document) -> String {
@@ -120,6 +255,14 @@ fn document_rels(doc: &Document) -> String {
         r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>"#,
     );
     let mut i = 3u32;
+    for img in collect_images(doc) {
+        let ext = ext_from_mime(&img.mime);
+        let n = i - 2;
+        s.push_str(&format!(
+            r#"<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image{n}.{ext}"/>"#
+        ));
+        i += 1;
+    }
     for target in hyperlink_targets(doc) {
         s.push_str(&format!(
             r#"<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{}" TargetMode="External"/>"#,
@@ -161,27 +304,94 @@ fn collect_hyperlinks(blocks: &[Block], out: &mut Vec<String>) {
     }
 }
 
+fn collect_images(doc: &Document) -> Vec<&ImageData> {
+    let mut out = Vec::new();
+    for section in &doc.sections {
+        collect_images_in_blocks(&section.body, &mut out);
+    }
+    out
+}
+
+fn collect_images_in_blocks<'a>(blocks: &'a [Block], out: &mut Vec<&'a ImageData>) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(p) => {
+                for run in &p.runs {
+                    if let RunContent::Inline(InlineObject::Image(img)) = &run.content {
+                        out.push(img);
+                    }
+                }
+            }
+            Block::Table(t) => {
+                for row in &t.rows {
+                    for cell in &row.cells {
+                        collect_images_in_blocks(&cell.blocks, out);
+                    }
+                }
+            }
+            Block::Float(Float::Image(img)) => out.push(img),
+            Block::Float(_) | Block::Break(_) => {}
+        }
+    }
+}
+
+struct WriteCtx {
+    image_i: u32,
+    link_i: u32,
+    image_base: u32,
+    link_base: u32,
+}
+
+impl WriteCtx {
+    fn new(n_images: u32) -> Self {
+        Self {
+            image_i: 0,
+            link_i: 0,
+            image_base: 3,
+            link_base: 3 + n_images,
+        }
+    }
+
+    fn next_image_rid(&mut self) -> u32 {
+        let rid = self.image_base + self.image_i;
+        self.image_i += 1;
+        rid
+    }
+
+    fn next_link_rid(&mut self) -> u32 {
+        let rid = self.link_base + self.link_i;
+        self.link_i += 1;
+        rid
+    }
+}
+
 fn document_xml(doc: &Document) -> String {
     let mut s = String::from(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>"#,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>"#,
     );
     let sections = if doc.sections.is_empty() {
         vec![Section::default()]
     } else {
         doc.sections.clone()
     };
-    let mut link_i = 0u32;
+    let mut ctx = WriteCtx::new(collect_images(doc).len() as u32);
     for (si, section) in sections.iter().enumerate() {
         if section.body.is_empty() {
             s.push_str("<w:p><w:r><w:t/></w:r></w:p>");
         } else {
             for block in &section.body {
                 match block {
-                    Block::Paragraph(p) => s.push_str(&p_xml(p, &mut link_i)),
-                    Block::Table(t) => s.push_str(&tbl_xml(t, &mut link_i)),
+                    Block::Paragraph(p) => s.push_str(&p_xml(p, &mut ctx)),
+                    Block::Table(t) => s.push_str(&tbl_xml(t, &mut ctx)),
                     Block::Break(BreakKind::Thematic) => s.push_str(
                         r#"<w:p><w:pPr><w:pStyle w:val="HorizontalLine"/><w:pBdr><w:bottom w:val="single" w:sz="12" w:space="1" w:color="134E4A"/></w:pBdr></w:pPr></w:p>"#,
                     ),
+                    Block::Float(Float::Image(img)) => {
+                        let rid = ctx.next_image_rid();
+                        s.push_str("<w:p>");
+                        s.push_str(&drawing_run_xml(img, rid));
+                        s.push_str("</w:p>");
+                    }
                     Block::Float(_) | Block::Break(_) => s.push_str("<w:p/>"),
                 }
             }
@@ -226,7 +436,42 @@ fn half_points_to_hu(hp: i32) -> i32 {
 
 const NUMBERING_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%2."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%3."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#;
 
-fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
+fn drawing_run_xml(img: &ImageData, rid: u32) -> String {
+    let cx = hu_to_emu(img.width);
+    let cy = hu_to_emu(img.height);
+    let name = format!("Picture {rid}");
+    let descr = img
+        .alt_text
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| format!(r#" descr="{}""#, xml_escape(s)))
+        .unwrap_or_default();
+    let wrap_body = format!(
+        r#"<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{rid}" name="{name}"{descr}/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="image{rid}"{descr}/><pic:cNvPicPr><a:picLocks noChangeAspect="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>"#
+    );
+    let framed = match img.wrap {
+        WrapMode::Inline => format!(
+            r#"<wp:inline distT="0" distB="0" distL="0" distR="0">{wrap_body}</wp:inline>"#
+        ),
+        wrap => {
+            let behind = if wrap == WrapMode::Behind { "1" } else { "0" };
+            let wrap_el = match wrap {
+                WrapMode::Square => r#"<wp:wrapSquare wrapText="bothSides"/>"#,
+                WrapMode::Tight => r#"<wp:wrapTight wrapText="bothSides"/>"#,
+                WrapMode::Through => r#"<wp:wrapThrough wrapText="bothSides"/>"#,
+                WrapMode::TopAndBottom => r#"<wp:wrapTopAndBottom/>"#,
+                WrapMode::Behind | WrapMode::InFront => r#"<wp:wrapNone/>"#,
+                WrapMode::Inline => unreachable!(),
+            };
+            format!(
+                r#"<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0" behindDoc="{behind}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>{wrap_body}{wrap_el}</wp:anchor>"#
+            )
+        }
+    };
+    format!(r#"<w:r><w:drawing>{framed}</w:drawing></w:r>"#)
+}
+
+fn p_xml(p: &Paragraph, ctx: &mut WriteCtx) -> String {
     let mut s = String::from("<w:p>");
     let heading = p.outline_level.filter(|l| *l > 0);
     let num = p.numbering.as_ref();
@@ -278,12 +523,16 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                 if display.is_empty() {
                     continue;
                 }
-                *link_i += 1;
-                let rid = *link_i + 2;
+                let rid = ctx.next_link_rid();
                 s.push_str(&format!(r#"<w:hyperlink r:id="rId{rid}">"#));
                 s.push_str(r#"<w:r><w:rPr><w:u w:val="single"/><w:color w:val="0D9488"/></w:rPr><w:t xml:space="preserve">"#);
                 s.push_str(&xml_escape(display));
                 s.push_str("</w:t></w:r></w:hyperlink>");
+                wrote = true;
+            }
+            RunContent::Inline(InlineObject::Image(img)) => {
+                let rid = ctx.next_image_rid();
+                s.push_str(&drawing_run_xml(img, rid));
                 wrote = true;
             }
             RunContent::Text(t) => {
@@ -353,7 +602,7 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
     s
 }
 
-fn tbl_xml(table: &Table, link_i: &mut u32) -> String {
+fn tbl_xml(table: &Table, ctx: &mut WriteCtx) -> String {
     let mut s = String::from("<w:tbl><w:tblPr/><w:tblGrid>");
     if let Some(row) = table.rows.first() {
         for cell in &row.cells {
@@ -382,7 +631,7 @@ fn tbl_xml(table: &Table, link_i: &mut u32) -> String {
             let mut wrote_p = false;
             for b in &cell.blocks {
                 if let Block::Paragraph(p) = b {
-                    s.push_str(&p_xml(p, link_i));
+                    s.push_str(&p_xml(p, ctx));
                     wrote_p = true;
                 }
             }
@@ -401,9 +650,34 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
-fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Document, Error> {
+struct PendingPic {
+    embed: Option<String>,
+    cx: Option<i64>,
+    cy: Option<i64>,
+    alt: Option<String>,
+    wrap: WrapMode,
+}
+
+impl PendingPic {
+    fn new() -> Self {
+        Self {
+            embed: None,
+            cx: None,
+            cy: None,
+            alt: None,
+            wrap: WrapMode::Inline,
+        }
+    }
+}
+
+fn parse_document_xml(
+    xml: &str,
+    rels: &HashMap<String, Rel>,
+    media: &HashMap<String, MediaPart>,
+) -> Result<Document, Error> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut buf = Vec::new();
@@ -424,6 +698,8 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut run_sub = false;
     let mut run_size: Option<i32> = None;
     let mut run_text = String::new();
+    let mut pending_pic: Option<PendingPic> = None;
+    let mut run_had_drawing = false;
     let mut para_runs: Vec<Run> = Vec::new();
     let mut para_outline: Option<u8> = None;
     let mut para_quote = false;
@@ -507,10 +783,127 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     }
                     "hyperlink" => {
                         let id = attr(&e, "id").unwrap_or_default();
-                        hyperlink_target = rels.get(&id).cloned();
+                        hyperlink_target = rels.get(&id).and_then(|r| {
+                            r.ty.contains("hyperlink").then(|| r.target.clone())
+                        });
+                    }
+                    "drawing" => {
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            RunMarks {
+                                bold: run_bold,
+                                italic: run_italic,
+                                strike: run_strike,
+                                code: run_code,
+                                highlight: run_mark,
+                                underline: run_under,
+                                superscript: run_super,
+                                subscript: run_sub,
+                                size: run_size,
+                            },
+                            hyperlink_target.as_deref(),
+                        );
+                        pending_pic = Some(PendingPic::new());
+                    }
+                    "pict" => {
+                        if !run_had_drawing {
+                            flush_run(
+                                &mut para_runs,
+                                &mut run_text,
+                                RunMarks {
+                                    bold: run_bold,
+                                    italic: run_italic,
+                                    strike: run_strike,
+                                    code: run_code,
+                                    highlight: run_mark,
+                                    underline: run_under,
+                                    superscript: run_super,
+                                    subscript: run_sub,
+                                    size: run_size,
+                                },
+                                hyperlink_target.as_deref(),
+                            );
+                            pending_pic = Some(PendingPic::new());
+                        }
+                    }
+                    "inline" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.wrap = WrapMode::Inline;
+                        }
+                    }
+                    "anchor" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.wrap = if attr(&e, "behindDoc").as_deref() == Some("1") {
+                                WrapMode::Behind
+                            } else {
+                                WrapMode::InFront
+                            };
+                        }
+                    }
+                    "wrapSquare" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.wrap = WrapMode::Square;
+                        }
+                    }
+                    "wrapTight" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.wrap = WrapMode::Tight;
+                        }
+                    }
+                    "wrapThrough" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.wrap = WrapMode::Through;
+                        }
+                    }
+                    "wrapTopAndBottom" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.wrap = WrapMode::TopAndBottom;
+                        }
+                    }
+                    "wrapNone" => {
+                        if let Some(p) = pending_pic.as_mut()
+                            && p.wrap != WrapMode::Behind
+                        {
+                            p.wrap = WrapMode::InFront;
+                        }
+                    }
+                    "extent" | "ext" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            if let Some(cx) = attr(&e, "cx").and_then(|v| v.parse().ok()) {
+                                p.cx = Some(cx);
+                            }
+                            if let Some(cy) = attr(&e, "cy").and_then(|v| v.parse().ok()) {
+                                p.cy = Some(cy);
+                            }
+                        }
+                    }
+                    "docPr" | "cNvPr" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            let descr = attr(&e, "descr").or_else(|| attr(&e, "title"));
+                            if let Some(d) = descr.filter(|s| !s.is_empty()) {
+                                p.alt = Some(d);
+                            }
+                        }
+                    }
+                    "blip" => {
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.embed = attr(&e, "embed");
+                        }
+                    }
+                    "imagedata" => {
+                        if pending_pic.is_none() && !run_had_drawing {
+                            pending_pic = Some(PendingPic::new());
+                        }
+                        if let Some(p) = pending_pic.as_mut() {
+                            p.embed = attr(&e, "id")
+                                .or_else(|| attr(&e, "relid"))
+                                .or_else(|| attr(&e, "href"));
+                        }
                     }
                     "r" => {
                         in_run = true;
+                        run_had_drawing = false;
                         run_bold = false;
                         run_italic = false;
                         run_strike = false;
@@ -603,7 +996,19 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                     "t" => in_t = false,
                     "pPr" => in_ppr = false,
                     "rPr" => in_rpr = false,
+                    "drawing" => {
+                        flush_pic(&mut para_runs, &mut pending_pic, media);
+                        run_had_drawing = true;
+                    }
+                    "pict" => {
+                        if !run_had_drawing {
+                            flush_pic(&mut para_runs, &mut pending_pic, media);
+                        } else {
+                            pending_pic = None;
+                        }
+                    }
                     "r" => {
+                        flush_pic(&mut para_runs, &mut pending_pic, media);
                         flush_run(
                             &mut para_runs,
                             &mut run_text,
@@ -725,6 +1130,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
         }
         buf.clear();
     }
+    flush_pic(&mut para_runs, &mut pending_pic, media);
     flush_run(
         &mut para_runs,
         &mut run_text,
@@ -779,6 +1185,35 @@ struct RunMarks {
     superscript: bool,
     subscript: bool,
     size: Option<i32>,
+}
+
+fn flush_pic(
+    runs: &mut Vec<Run>,
+    pic: &mut Option<PendingPic>,
+    media: &HashMap<String, MediaPart>,
+) {
+    let Some(pic) = pic.take() else {
+        return;
+    };
+    let Some(id) = pic.embed else {
+        return;
+    };
+    let Some(part) = media.get(&id) else {
+        return;
+    };
+    let width = pic.cx.map(emu_to_hu).filter(|w| *w > 0).unwrap_or(HU_PER_INCH);
+    let height = pic.cy.map(emu_to_hu).filter(|h| *h > 0).unwrap_or(HU_PER_INCH);
+    runs.push(Run {
+        style: CharStyle::default(),
+        content: RunContent::Inline(InlineObject::Image(ImageData {
+            bytes: part.bytes.clone(),
+            mime: part.mime.clone(),
+            width,
+            height,
+            alt_text: pic.alt.filter(|s| !s.is_empty()),
+            wrap: pic.wrap,
+        })),
+    });
 }
 
 fn flush_run(runs: &mut Vec<Run>, text: &mut String, marks: RunMarks, href: Option<&str>) {
@@ -992,9 +1427,33 @@ pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Cursor, Read, Write};
+
     use docagent_model::{
-        InlineObject, LayoutHint, NumberFormat, NumberingRef, Paragraph, Run, RunContent,
+        CharStyle, Hu, ImageData, InlineObject, LayoutHint, NumberFormat, NumberingRef, Paragraph,
+        Run, RunContent, WrapMode, HU_PER_INCH,
     };
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    fn mark_png() -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/assets/mark.png");
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    }
+
+    fn image_run(bytes: Vec<u8>, width: Hu, height: Hu, alt: &str) -> Run {
+        Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes,
+                mime: "image/png".into(),
+                width,
+                height,
+                alt_text: Some(alt.into()),
+                wrap: WrapMode::Inline,
+            })),
+        }
+    }
 
     #[test]
     fn roundtrip_keeps_bold_and_italic() {
@@ -1443,6 +1902,141 @@ mod tests {
             delta < docagent_model::HU_PER_TWIP,
             "page width quantized beyond one twip: {delta}"
         );
+    }
+
+    #[test]
+    fn roundtrip_keeps_image_bytes() {
+        let png = mark_png();
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "fixture must be PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![image_run(png.clone(), 7200, 3600, "DocAgent mark")];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<w:drawing>"), "{xml}");
+        assert!(xml.contains("<a:blip r:embed="), "{xml}");
+        assert!(xml.contains(r#"cx="914400""#), "{xml}");
+        assert!(xml.contains(r#"cy="457200""#), "{xml}");
+        assert!(xml.contains(r#"descr="DocAgent mark""#), "{xml}");
+
+        let rels = document_rels(&doc);
+        assert!(rels.contains("/relationships/image"), "{rels}");
+        assert!(rels.contains("media/image1.png"), "{rels}");
+
+        let bytes = write(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let mut media = Vec::new();
+        zip.by_name("word/media/image1.png")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert_eq!(media, png);
+
+        let types = {
+            let mut f = zip.by_name("[Content_Types].xml").unwrap();
+            let mut s = String::new();
+            f.read_to_string(&mut s).unwrap();
+            s
+        };
+        assert!(types.contains(r#"Extension="png""#), "{types}");
+        assert!(types.contains("image/png"), "{types}");
+
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image run: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 7200);
+        assert_eq!(img.height, 3600);
+        assert_eq!(img.alt_text.as_deref(), Some("DocAgent mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    #[test]
+    fn reads_python_docx_style_blip() {
+        let png = mark_png();
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut cursor);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            zip.start_file("[Content_Types].xml", opt).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            )
+            .unwrap();
+            zip.start_file("_rels/.rels", opt).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            )
+            .unwrap();
+            zip.start_file("word/_rels/document.xml.rels", opt).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#,
+            )
+            .unwrap();
+            zip.start_file("word/document.xml", opt).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="1270000" cy="635000"/><wp:docPr id="1" name="Picture 1" descr="mark"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="mark.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId4" cstate="print"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1270000" cy="635000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#,
+            )
+            .unwrap();
+            zip.start_file("word/media/image1.png", opt).unwrap();
+            zip.write_all(&png).unwrap();
+            zip.finish().unwrap();
+        }
+        let pkg = cursor.into_inner();
+        assert!(sniff(&pkg));
+        let back = read(&pkg).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 10_000);
+        assert_eq!(img.height, 5_000);
+        assert_eq!(img.alt_text.as_deref(), Some("mark"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_cell_image() {
+        let png = mark_png();
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["plain".into()]]);
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![image_run(png.clone(), HU_PER_INCH, HU_PER_INCH, "cell mark")];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table");
+        };
+        let Block::Paragraph(cell) = &t.rows[0].cells[0].blocks[0] else {
+            panic!("cell para");
+        };
+        assert!(cell.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Image(img)) if img.bytes == png
+        )));
     }
 
     #[test]

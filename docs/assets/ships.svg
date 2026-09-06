@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="220" viewBox="0 0 1280 220" role="img" aria-label="DocAgent shipped marks on one IR">
+  <defs>
+    <linearGradient id="sbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#071018"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="220" rx="24" fill="url(#sbg)"/>
+  <text x="40" y="38" fill="#5eead4" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="13" font-weight="700" letter-spacing="3">SHIPS ON ONE IR — NOT A VLM, NOT OCR</text>
+
+  <g font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="15" font-weight="700">
+    <rect x="40" y="56" width="70" height="34" rx="17" fill="#134e4a"/><text x="75" y="78" text-anchor="middle" fill="#99f6e4">lists</text>
+    <rect x="122" y="56" width="70" height="34" rx="17" fill="#134e4a"/><text x="157" y="78" text-anchor="middle" fill="#99f6e4">links</text>
+    <rect x="204" y="56" width="74" height="34" rx="17" fill="#134e4a"/><text x="241" y="78" text-anchor="middle" fill="#99f6e4">strike</text>
+    <rect x="290" y="56" width="80" height="34" rx="17" fill="#134e4a"/><text x="330" y="78" text-anchor="middle" fill="#99f6e4">quotes</text>
+    <rect x="382" y="56" width="70" height="34" rx="17" fill="#134e4a"/><text x="417" y="78" text-anchor="middle" fill="#99f6e4">code</text>
+    <rect x="464" y="56" width="72" height="34" rx="17" fill="#134e4a"/><text x="500" y="78" text-anchor="middle" fill="#99f6e4">tasks</text>
+    <rect x="548" y="56" width="100" height="34" rx="17" fill="#134e4a"/><text x="598" y="78" text-anchor="middle" fill="#99f6e4">highlight</text>
+    <rect x="660" y="56" width="108" height="34" rx="17" fill="#134e4a"/><text x="714" y="78" text-anchor="middle" fill="#99f6e4">super / sub</text>
+    <rect x="780" y="56" width="102" height="34" rx="17" fill="#115e59"/><text x="831" y="78" text-anchor="middle" fill="#ccfbf1">underline</text>
+  </g>
+
+  <text x="40" y="124" fill="#94a3b8" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="13" font-weight="700" letter-spacing="2">HANGUL CODECS ON THE SAME IR</text>
+  <g font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="14" font-weight="700">
+    <rect x="40" y="140" width="168" height="34" rx="17" fill="#1e293b"/><text x="124" y="162" text-anchor="middle" fill="#e2e8f0">CHAR_SHAPE marks</text>
+    <rect x="220" y="140" width="128" height="34" rx="17" fill="#1e293b"/><text x="284" y="162" text-anchor="middle" fill="#e2e8f0">hyperlinks</text>
+    <rect x="360" y="140" width="86" height="34" rx="17" fill="#0b1220" stroke="#334155"/><text x="403" y="162" text-anchor="middle" fill="#64748b">HWP 5</text>
+    <rect x="458" y="140" width="86" height="34" rx="17" fill="#0b1220" stroke="#334155"/><text x="501" y="162" text-anchor="middle" fill="#64748b">HWPX</text>
+    <rect x="556" y="140" width="86" height="34" rx="17" fill="#0b1220" stroke="#334155"/><text x="599" y="162" text-anchor="middle" fill="#64748b">HWP 3</text>
+    <rect x="654" y="140" width="70" height="34" rx="17" fill="#0b1220" stroke="#334155"/><text x="689" y="162" text-anchor="middle" fill="#64748b">HML</text>
+  </g>
+
+  <text x="40" y="202" fill="#64748b" font-family="ui-monospace, Consolas, monospace" font-size="13">not claimed: OCR · VLM · OmniDocBench · Hangul quotes / code / tasks (next)</text>
+</svg>

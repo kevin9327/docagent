@@ -1,27 +1,26 @@
 # DocAgent #1 loop state
 
-Last cycle: 42 (2026-09-06) — HWP 3 hypertext + TagID 3 on the same IR
+Last cycle: 43 (2026-09-06) — six exclusive lanes in parallel
 
-## Public GitHub page (priority 0)
+## Public GitHub page
 
-The page strangers see is `https://github.com/kevin9327/docagent`.
+https://github.com/kevin9327/docagent
 
-Shipped this cycle:
-- HWP 3 writer emits control char 10 with `other_options & 0x10` around the display run and additional-info TagID 3 (617-byte kchar URL, kind=HTML).
-- Reader maps those hypertext objects plus TagID 3 onto `InlineObject::Hyperlink`.
-- First-class letter.md fixture unchanged (input/plan/output hashes match cycle 34–41).
+## Cycle 43 lanes
 
-Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `927baa86fcdc5d76a72cfbcc8ee32ac3cadbcefb2505bc4bb80b335a14ddef74`
-- plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `86f9fb0ea23d189dddd58705f2330e44312a6b557459d332f9bf188dfe505d92`
+1. **landing** — README first screen: deterministic convert · capsule · GPU-free. Honest matrix vs the ten.
+2. **pdf** — `InlineObject::Image` layouts, paints, PDF/A XObject, raster blit.
+3. **docx** — OOXML `a:blip` + `word/media`.
+4. **odt** — `draw:image` + `Pictures/`.
+5. **mdhtml** — `![alt](…)` and `<img>` data URIs.
+6. **hangul** — Quote / CodeBlock / HorizontalLine on HWP5+HWPX+HML+HWP3.
 
 ## Next
 
-1. Hangul quotes / code / breaks / tasks, or inline images.
-2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
+- Put a real image in `examples/letter.md` and refresh GitHub convert shots.
+- Hangul images / tasks.
+- Keep visual density vs MinerU/Docling.
 
 ## Rule
 
-Each cycle must ship a visible GitHub-page or engine improvement, then
-`git add -A && git commit && git push origin master` when tests allow.
+Orchestrator fans out 6 lanes (LANES.md). One commit after clippy+tests. No overlapping files.

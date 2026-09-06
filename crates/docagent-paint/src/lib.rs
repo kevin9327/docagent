@@ -35,6 +35,15 @@ pub enum Op {
         h: i32,
         uri: String,
     },
+    /// Inline PNG/JPEG. `w`/`h` are HWPUNIT; `bytes` are the original file.
+    Image {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        bytes: Vec<u8>,
+        mime: String,
+    },
 }
 
 #[derive(Archive, Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -81,6 +90,19 @@ pub fn paint(tree: &FragmentTree) -> DisplayList {
             });
         }
         for line in &page.lines {
+            if let Some(img) = &line.image {
+                if img.width > 0 && img.height > 0 && !img.bytes.is_empty() {
+                    ops.push(Op::Image {
+                        x: line.x,
+                        y: line.y,
+                        w: img.width,
+                        h: img.height,
+                        bytes: img.bytes.clone(),
+                        mime: img.mime.clone(),
+                    });
+                }
+                continue;
+            }
             ops.push(Op::Text {
                 x: line.x,
                 y: line.y + line.baseline,
@@ -127,6 +149,27 @@ mod tests {
         let list = paint(&tree);
         let bytes = list.to_bytes().unwrap();
         let back = DisplayList::from_bytes(&bytes).unwrap();
+        assert_eq!(list, back);
+    }
+
+    const MARK_PNG: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/assets/mark.png"
+    ));
+
+    #[test]
+    fn image_op_roundtrips_through_rkyv() {
+        let list = DisplayList {
+            ops: vec![Op::Image {
+                x: 100,
+                y: 200,
+                w: 1600,
+                h: 1600,
+                bytes: MARK_PNG.to_vec(),
+                mime: "image/png".into(),
+            }],
+        };
+        let back = DisplayList::from_bytes(&list.to_bytes().unwrap()).unwrap();
         assert_eq!(list, back);
     }
 
@@ -203,6 +246,39 @@ mod tests {
             }),
             "link text must be teal: {:?}",
             list.ops
+        );
+    }
+
+    #[test]
+    fn paint_emits_image_ops() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("mark");
+        p.runs.push(docagent_model::Run {
+            style: docagent_model::CharStyle::default(),
+            content: docagent_model::RunContent::Inline(docagent_model::InlineObject::Image(
+                docagent_model::ImageData {
+                    bytes: MARK_PNG.to_vec(),
+                    mime: "image/png".into(),
+                    width: 1600,
+                    height: 1600,
+                    alt_text: Some("mark".into()),
+                    wrap: docagent_model::WrapMode::Inline,
+                },
+            )),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Image { w, h, bytes, mime, .. }
+                        if *w == 1600 && *h == 1600 && bytes == MARK_PNG && mime == "image/png"
+                )
+            }),
+            "image op missing"
         );
     }
 }

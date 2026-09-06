@@ -5,15 +5,18 @@ not a Hangul-only tool. Agents open, draft, convert, and verify flow documents.
 People receive PDF/A, DOCX, ODT, Markdown, or HTML. Hangul files use the same
 pipeline.
 
+The contract a stranger should see on the first screen: **deterministic convert,
+three-hash capsule, GPU-free.** Same fonts → same bytes. No VLM.
+
 Formats, in the order agents usually meet them:
 
 | Family | Codec | Role |
 | --- | --- | --- |
-| Word / OOXML | DOCX | Default interchange with Microsoft Word (`Heading1`/`Heading2`, `Quote`, `Code`, `CodeBlock`, `HorizontalLine`) |
-| OpenDocument | ODT | Default interchange with LibreOffice (`text:h` 18pt/14pt, Quote, `Tcode`, `Tmark`, `Tunder`, `Tsuper`, `Tsub`, `THcell`, `Tlink`, `CodeBlock`, `HorizontalLine`) |
-| Web / notes | Markdown, HTML | Agent-native text (`> quote`, `` `code` ``, ` ```fence``` `, `==mark==`, `__underline__`, `^super^`, `~sub~`, `- [x]`, `---`) and semantic HTML (`<blockquote>`, `<pre>`, `<mark>`, `<u>`, `<sup>`, `<sub>`, checkbox, `<hr/>`) |
-| Print | PDF/A | Archival, byte-identical on two runs |
-| Regional | HWP 5, HWPX, HWP 3, HML | East-Asian office formats, same IR. HWP 5 `CHAR_SHAPE`, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 char-shape attr bits map onto `CharStyle` marks. HWP 5 hyperlinks are `%hlk` field begin/end plus Command. HWPX hyperlinks are `hp:fieldBegin type="HYPERLINK"`. HML hyperlinks are `FIELDBEGIN Type="Hyperlink"` with `STRINGPARAM Name="Command"`. HWP 3 hyperlinks are control char 10 (`other_options & 0x10`) plus additional-info TagID 3 (617-byte kchar URL). |
+| Word / OOXML | DOCX | Default interchange with Microsoft Word (`Heading1`/`Heading2`, `Quote`, `Code`, `CodeBlock`, lists, `w:hyperlink`, `w:strike`, `w:highlight`, `w:vertAlign`) |
+| OpenDocument | ODT | Default interchange with LibreOffice (`text:h`, Quote, `Tcode`, `Tmark`, `Tunder`, `Tsuper`, `Tsub`, `Tlink`, `CodeBlock`, `text:list`) |
+| Web / notes | Markdown, HTML | Agent-native text (`> quote`, `` `code` ``, fences, `==mark==`, `__underline__`, `^super^`, `~sub~`, `- [x]`, `~~strike~~`, `[text](url)`) and semantic HTML (`<blockquote>`, `<pre>`, `<mark>`, `<u>`, `<sup>`, `<sub>`, `<s>`, checkbox, `<a href>`) |
+| Print | PDF/A | Archival, byte-identical on two runs. Marks are painted fills, not guesswork. |
+| Regional | HWP 5, HWPX, HWP 3, HML | East-Asian office formats, same IR. CHAR_SHAPE / `hh:charPr` / `CHARSHAPE` / HWP 3 attr bits map bold, italic, underline, super, sub (strike on HWP 5 / HWPX / HML). Hyperlinks: HWP 5 `%hlk`, HWPX `hp:fieldBegin type="HYPERLINK"`, HML `FIELDBEGIN Type="Hyperlink"`, HWP 3 control-10 + TagID 3. Quotes, code, and tasks are **not** claimed on Hangul yet. |
 
 One integer IR (lengths in 1/7200 inch). One layout engine. Command / Query / Event
 is the only API. CLI `docagent`, daemon `docagentd`, MCP, and WIT are thin adapters.
@@ -24,4 +27,8 @@ docagent convert examples/letter.md --pdf out.pdf --html out.html --md out.md --
 docagent prove examples/letter.md
 ```
 
-No GUI. No spreadsheet or presentation models.
+No GUI. No spreadsheet or presentation models. No OCR scores.
+
+See [What ships](capabilities.md) for the codec matrix versus MinerU, Docling,
+Pandoc, Marker, Unstructured, PyMuPDF, WeasyPrint, ONLYOFFICE, python-docx, and
+LibreOffice.

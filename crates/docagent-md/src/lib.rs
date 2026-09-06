@@ -5,8 +5,8 @@
 #![forbid(unsafe_code)]
 
 use docagent_model::{
-    Block, BreakKind, Document, InlineObject, NumberFormat, NumberingRef, Paragraph, Run,
-    RunContent, Section, Table,
+    Block, BreakKind, Document, ImageData, InlineObject, NumberFormat, NumberingRef, Paragraph,
+    Run, RunContent, Section, Table, WrapMode,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -204,6 +204,15 @@ fn parse_runs(text: &str) -> Vec<Run> {
             flush(&mut runs, &mut buf, marks);
             marks.code = !marks.code;
             i += 1;
+            continue;
+        }
+        if !marks.code
+            && chars[i] == '!'
+            && let Some((alt, src, next)) = parse_md_image(&chars, i)
+        {
+            flush(&mut runs, &mut buf, marks);
+            runs.push(image_run(alt, &src));
+            i = next;
             continue;
         }
         if !marks.code && chars[i] == '['
@@ -441,6 +450,10 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
                     out.push('\n');
                 }
                 Block::Break(BreakKind::Thematic) => out.push_str("---\n\n"),
+                Block::Float(docagent_model::Float::Image(img)) => {
+                    out.push_str(&write_image(img));
+                    out.push_str("\n\n");
+                }
                 Block::Float(_) | Block::Break(_) => {}
             }
         }
@@ -448,7 +461,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
     Ok(out.into_bytes())
 }
 
-fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+fn parse_md_link_parts(chars: &[char], start: usize) -> Option<(String, String, usize)> {
     if start >= chars.len() || chars[start] != '[' {
         return None;
     }
@@ -468,16 +481,214 @@ fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)
         return None;
     }
     let target: String = chars[j + 2..k].iter().collect();
+    Some((display, target, k + 1))
+}
+
+fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    let (display, target, next) = parse_md_link_parts(chars, start)?;
     if display.is_empty() || target.is_empty() {
         return None;
     }
-    Some((display, target, k + 1))
+    Some((display, target, next))
+}
+
+fn parse_md_image(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    if start >= chars.len() || chars[start] != '!' {
+        return None;
+    }
+    let (alt, src, next) = parse_md_link_parts(chars, start + 1)?;
+    let src = src.trim();
+    if src.is_empty() {
+        return None;
+    }
+    Some((alt, src.to_string(), next))
+}
+
+fn image_run(alt: String, src: &str) -> Run {
+    Run {
+        style: docagent_model::CharStyle::default(),
+        content: RunContent::Inline(InlineObject::Image(image_from_src(&alt, src))),
+    }
+}
+
+fn image_from_src(alt: &str, src: &str) -> ImageData {
+    let (mime, bytes) = decode_data_uri(src).unwrap_or_else(|| (mime_from_name(src), Vec::new()));
+    let (width, height) = raster_hu(&bytes);
+    ImageData {
+        bytes,
+        mime,
+        width,
+        height,
+        alt_text: if alt.is_empty() {
+            None
+        } else {
+            Some(alt.to_string())
+        },
+        wrap: WrapMode::Inline,
+    }
+}
+
+fn mime_from_name(name: &str) -> String {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e)
+        .unwrap_or("")
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    }
+    .to_string()
+}
+
+fn decode_data_uri(src: &str) -> Option<(String, Vec<u8>)> {
+    let rest = src.strip_prefix("data:")?;
+    let (meta, payload) = rest.split_once(',')?;
+    let mut mime = "application/octet-stream";
+    let mut is_b64 = false;
+    for (i, part) in meta.split(';').enumerate() {
+        if i == 0 && !part.is_empty() && !part.eq_ignore_ascii_case("base64") {
+            mime = part;
+        } else if part.eq_ignore_ascii_case("base64") {
+            is_b64 = true;
+        }
+    }
+    if !is_b64 {
+        return None;
+    }
+    Some((mime.to_string(), b64_decode(payload)?))
+}
+
+fn write_image(img: &ImageData) -> String {
+    let alt = img.alt_text.as_deref().unwrap_or("");
+    let mut s = String::from("![");
+    s.push_str(alt);
+    s.push_str("](");
+    s.push_str(&image_src(img));
+    s.push(')');
+    s
+}
+
+fn image_src(img: &ImageData) -> String {
+    let mime = if img.mime.is_empty() {
+        "image/png"
+    } else {
+        img.mime.as_str()
+    };
+    let mut s = String::from("data:");
+    s.push_str(mime);
+    s.push_str(";base64,");
+    s.push_str(&b64_encode(&img.bytes));
+    s
+}
+
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn b64_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    let mut i = 0;
+    while i < data.len() {
+        let remaining = data.len() - i;
+        let a = data[i];
+        let b = if remaining > 1 { data[i + 1] } else { 0 };
+        let c = if remaining > 2 { data[i + 2] } else { 0 };
+        let n = (u32::from(a) << 16) | (u32::from(b) << 8) | u32::from(c);
+        out.push(char::from(B64_ALPHABET[((n >> 18) & 63) as usize]));
+        out.push(char::from(B64_ALPHABET[((n >> 12) & 63) as usize]));
+        if remaining > 1 {
+            out.push(char::from(B64_ALPHABET[((n >> 6) & 63) as usize]));
+        } else {
+            out.push('=');
+        }
+        if remaining > 2 {
+            out.push(char::from(B64_ALPHABET[(n & 63) as usize]));
+        } else {
+            out.push('=');
+        }
+        i += 3;
+    }
+    out
+}
+
+fn b64_val(c: u8) -> Option<u8> {
+    match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' | b'-' => Some(62),
+        b'/' | b'_' => Some(63),
+        _ => None,
+    }
+}
+
+fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    let mut raw = Vec::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_whitespace() {
+            continue;
+        }
+        raw.push(b);
+    }
+    while !raw.is_empty() && raw.len() % 4 != 0 {
+        raw.push(b'=');
+    }
+    if raw.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut out = Vec::with_capacity(raw.len() / 4 * 3);
+    for chunk in raw.chunks(4) {
+        let a = b64_val(chunk[0])?;
+        let b = b64_val(chunk[1])?;
+        let c_pad = chunk[2] == b'=';
+        let d_pad = chunk[3] == b'=';
+        let c = if c_pad { 0 } else { b64_val(chunk[2])? };
+        let d = if d_pad { 0 } else { b64_val(chunk[3])? };
+        let n = (u32::from(a) << 18) | (u32::from(b) << 12) | (u32::from(c) << 6) | u32::from(d);
+        out.push((n >> 16) as u8);
+        if !c_pad {
+            out.push((n >> 8) as u8);
+        }
+        if !d_pad {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
+}
+
+fn png_px(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 24 || !bytes.starts_with(SIG) || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    (w > 0 && h > 0).then_some((w, h))
+}
+
+fn raster_hu(bytes: &[u8]) -> (docagent_model::Hu, docagent_model::Hu) {
+    match png_px(bytes) {
+        Some((w, h)) => {
+            let px = docagent_model::HU_PER_INCH / 96;
+            (
+                i32::try_from(w).unwrap_or(i32::MAX).saturating_mul(px),
+                i32::try_from(h).unwrap_or(i32::MAX).saturating_mul(px),
+            )
+        }
+        None => (0, 0),
+    }
 }
 
 fn write_runs(p: &Paragraph) -> String {
     let mut s = String::new();
     for run in &p.runs {
         match &run.content {
+            RunContent::Inline(InlineObject::Image(img)) => s.push_str(&write_image(img)),
             RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
                 s.push('[');
                 s.push_str(display);
@@ -895,6 +1106,83 @@ mod tests {
             back.contains("[DocAgent](https://github.com/kevin9327/docagent)"),
             "{back}"
         );
+    }
+
+    fn fixture_png() -> Vec<u8> {
+        std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/assets/mark.png"),
+        )
+        .expect("docs/assets/mark.png")
+    }
+
+    fn fixture_image(alt: &str) -> ImageData {
+        let bytes = fixture_png();
+        let (width, height) = raster_hu(&bytes);
+        ImageData {
+            bytes,
+            mime: "image/png".into(),
+            width,
+            height,
+            alt_text: Some(alt.into()),
+            wrap: WrapMode::Inline,
+        }
+    }
+
+    fn first_image(doc: &Document) -> &ImageData {
+        for block in &doc.sections[0].body {
+            match block {
+                Block::Paragraph(p) => {
+                    for run in &p.runs {
+                        if let RunContent::Inline(InlineObject::Image(img)) = &run.content {
+                            return img;
+                        }
+                    }
+                }
+                Block::Float(docagent_model::Float::Image(img)) => return img,
+                _ => {}
+            }
+        }
+        panic!("no image");
+    }
+
+    #[test]
+    fn images_parse_bang_syntax() {
+        let img = fixture_image("mark");
+        let src = format!("![mark]({})\n", image_src(&img));
+        let doc = read(src.as_bytes()).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Image(_))
+        )));
+        assert_eq!(first_image(&doc), &img);
+        assert!(p.runs.iter().all(|r| !matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { .. })
+        )));
+    }
+
+    #[test]
+    fn images_roundtrip_imagedata() {
+        let img = fixture_image("mark");
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: docagent_model::CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(img.clone())),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = write(&doc).unwrap();
+        let text = String::from_utf8(back.clone()).unwrap();
+        assert!(text.contains("![mark](data:image/png;base64,"), "{text}");
+        let again = read(&back).unwrap();
+        assert_eq!(first_image(&again), &img);
+        let twice = write(&again).unwrap();
+        assert_eq!(first_image(&read(&twice).unwrap()), &img);
     }
 
     #[test]

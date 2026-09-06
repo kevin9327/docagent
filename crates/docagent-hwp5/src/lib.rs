@@ -10,8 +10,9 @@ use std::io::{Cursor, Read, Write};
 
 use cfb::CompoundFile;
 use docagent_model::{
-    Alignment, Block, CharStyle, Diagnostic, Document, InlineObject, LayoutHint, Paragraph, Run,
-    RunContent, Section, SplitPolicy, Table, TableBorders, TableCell, TableRow, Underline,
+    Alignment, Block, BreakKind, CharStyle, Diagnostic, Document, InlineObject, LayoutHint,
+    Paragraph, Run, RunContent, Section, SplitPolicy, Table, TableBorders, TableCell, TableRow,
+    Underline,
 };
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
@@ -154,7 +155,10 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         {
             let mut s = comp.create_stream("PrvText")?;
             let preview: String = doc.plain_text().chars().take(256).collect();
-            let utf16: Vec<u8> = preview.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+            let utf16: Vec<u8> = preview
+                .encode_utf16()
+                .flat_map(|u| u.to_le_bytes())
+                .collect();
             s.write_all(&utf16)?;
         }
     }
@@ -284,10 +288,35 @@ fn write_record(out: &mut Vec<u8>, tag: u16, level: u16, payload: &[u8]) {
     out.extend_from_slice(payload);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StyleKind {
+    Quote,
+    CodeBlock,
+    Thematic,
+}
+
+fn style_kind(name: &str) -> Option<StyleKind> {
+    let n = name.trim();
+    if n.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
+        Some(StyleKind::Quote)
+    } else if n.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
+        Some(StyleKind::CodeBlock)
+    } else if n.eq_ignore_ascii_case("HorizontalLine")
+        || n.contains("가로선")
+        || n.contains("구분선")
+    {
+        Some(StyleKind::Thematic)
+    } else {
+        None
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct StyleCatalog {
     chars: Vec<CharStyle>,
     para: Vec<ParsedParaShape>,
+    styles: Vec<String>,
+    fills: Vec<ParsedBorderFill>,
 }
 
 #[derive(Clone, Debug)]
@@ -297,6 +326,7 @@ struct ParsedParaShape {
     indent_right: i32,
     indent_first: i32,
     line_spacing: docagent_model::LineSpacing,
+    border_fill_id: u16,
 }
 
 impl Default for ParsedParaShape {
@@ -307,8 +337,16 @@ impl Default for ParsedParaShape {
             indent_right: 0,
             indent_first: 0,
             line_spacing: docagent_model::LineSpacing::Percent(160),
+            border_fill_id: 0,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ParsedBorderFill {
+    left: bool,
+    bottom: bool,
+    filled: bool,
 }
 
 impl StyleCatalog {
@@ -318,10 +356,36 @@ impl StyleCatalog {
             match rec.tag {
                 HWPTAG_CHAR_SHAPE => cat.chars.push(char_shape_style(&rec.payload)),
                 HWPTAG_PARA_SHAPE => cat.para.push(parse_para_shape(&rec.payload)),
+                HWPTAG_STYLE => cat.styles.push(parse_style_name(&rec.payload)),
+                HWPTAG_BORDER_FILL => cat.fills.push(parse_border_fill(&rec.payload)),
                 _ => {}
             }
         }
         cat
+    }
+
+    fn kind_for(&self, header: &[u8], empty: bool) -> Option<StyleKind> {
+        let style_id = if header.len() > 10 {
+            header[10] as usize
+        } else {
+            0
+        };
+        if let Some(name) = self.styles.get(style_id)
+            && let Some(kind) = style_kind(name)
+        {
+            return Some(kind);
+        }
+        let ps_id = u16_at(header, 8) as usize;
+        let fill = self
+            .para
+            .get(ps_id)
+            .and_then(|ps| self.fills.get(ps.border_fill_id as usize).copied());
+        match fill {
+            Some(f) if f.left && !f.bottom && !f.filled => Some(StyleKind::Quote),
+            Some(f) if f.filled && !f.left && !f.bottom => Some(StyleKind::CodeBlock),
+            Some(f) if f.bottom && !f.left && empty => Some(StyleKind::Thematic),
+            _ => None,
+        }
     }
 }
 
@@ -407,10 +471,7 @@ fn collect_block_styles(blocks: &[Block], out: &mut Vec<CharStyle>) {
 }
 
 fn style_id(styles: &[CharStyle], style: &CharStyle) -> u32 {
-    styles
-        .iter()
-        .position(|s| s == style)
-        .unwrap_or(0) as u32
+    styles.iter().position(|s| s == style).unwrap_or(0) as u32
 }
 
 fn parse_para_shape(p: &[u8]) -> ParsedParaShape {
@@ -435,6 +496,52 @@ fn parse_para_shape(p: &[u8]) -> ParsedParaShape {
         0 => Alignment::Justify,
         _ => Alignment::Start,
     };
+    if p.len() >= 34 {
+        out.border_fill_id = u16_at(p, 32);
+    }
+    out
+}
+
+fn parse_style_name(p: &[u8]) -> String {
+    let mut i = 0usize;
+    let local = read_hwp_string(p, &mut i);
+    let english = read_hwp_string(p, &mut i);
+    if english.is_empty() { local } else { english }
+}
+
+fn read_hwp_string(p: &[u8], i: &mut usize) -> String {
+    if *i + 2 > p.len() {
+        return String::new();
+    }
+    let len = u16_at(p, *i) as usize;
+    *i += 2;
+    let mut units = Vec::with_capacity(len);
+    for _ in 0..len {
+        if *i + 2 > p.len() {
+            break;
+        }
+        units.push(u16_at(p, *i));
+        *i += 2;
+    }
+    String::from_utf16_lossy(&units)
+}
+
+fn parse_border_fill(p: &[u8]) -> ParsedBorderFill {
+    let mut out = ParsedBorderFill::default();
+    if p.len() < 32 {
+        return out;
+    }
+    // Interleaved L/R/T/B: type + width + COLORREF.
+    let left_ty = p[2];
+    let right_ty = p.get(8).copied().unwrap_or(0);
+    let top_ty = p.get(14).copied().unwrap_or(0);
+    let bottom_ty = p.get(20).copied().unwrap_or(0);
+    out.left = left_ty != 0 && right_ty == 0 && top_ty == 0;
+    out.bottom = bottom_ty != 0 && left_ty == 0 && right_ty == 0 && top_ty == 0;
+    if p.len() >= 36 {
+        let fill_ty = u32::from_le_bytes(p[32..36].try_into().unwrap_or([0; 4]));
+        out.filled = fill_ty & 1 != 0;
+    }
     out
 }
 
@@ -634,9 +741,10 @@ fn read_paragraph_or_control(
         end += 1;
     }
     let children = &recs[start + 1..end];
-    if let Some(ctrl_idx) = children.iter().position(|r| {
-        r.tag == HWPTAG_CTRL_HEADER && matches_ctrl(&r.payload, CTRL_TABLE)
-    }) {
+    if let Some(ctrl_idx) = children
+        .iter()
+        .position(|r| r.tag == HWPTAG_CTRL_HEADER && matches_ctrl(&r.payload, CTRL_TABLE))
+    {
         let table = read_table(children, ctrl_idx, catalog, diagnostics);
         return (Block::Table(table), end);
     }
@@ -667,12 +775,28 @@ fn read_plain_paragraph(recs: &[Rec], start: usize, end: usize, catalog: &StyleC
     }
     let mut para = Paragraph::from_text(text);
     para.layout_hints = hints;
-    apply_catalog(&mut para, &recs[start].payload, &recs[start + 1..end], catalog);
+    apply_catalog(
+        &mut para,
+        &recs[start].payload,
+        &recs[start + 1..end],
+        catalog,
+    );
     if let Some(payload) = text_payload {
         let urls = hyperlink_commands(&recs[start..end]);
         apply_hyperlinks(&mut para, payload, &urls);
     }
-    Block::Paragraph(para)
+    match catalog.kind_for(&recs[start].payload, para.plain_text().trim().is_empty()) {
+        Some(StyleKind::Thematic) => Block::Break(BreakKind::Thematic),
+        Some(StyleKind::Quote) => {
+            para.quote = true;
+            Block::Paragraph(para)
+        }
+        Some(StyleKind::CodeBlock) => {
+            para.code_block = true;
+            Block::Paragraph(para)
+        }
+        None => Block::Paragraph(para),
+    }
 }
 
 fn read_control(
@@ -740,8 +864,10 @@ fn read_table(
     while i < recs.len() {
         if recs[i].tag == HWPTAG_PARA_HEADER {
             let (block, next) = read_paragraph_or_control(recs, i, catalog, diagnostics);
-            if let Block::Paragraph(p) = block {
-                paras.push(p);
+            match block {
+                Block::Paragraph(p) => paras.push(p),
+                Block::Break(_) => paras.push(Paragraph::from_text("")),
+                _ => {}
             }
             i = next;
         } else {
@@ -932,11 +1058,7 @@ fn parse_hyperlink_command(payload: &[u8]) -> Option<String> {
         i += 2;
     }
     let url = hyperlink_uri(&String::from_utf16_lossy(&chars));
-    if url.is_empty() {
-        None
-    } else {
-        Some(url)
-    }
+    if url.is_empty() { None } else { Some(url) }
 }
 
 fn hyperlink_commands(recs: &[Rec]) -> Vec<String> {
@@ -1062,20 +1184,148 @@ fn write_docinfo(styles: &[CharStyle]) -> Vec<u8> {
         props.extend_from_slice(&1u16.to_le_bytes());
     }
     write_record(&mut out, HWPTAG_DOCUMENT_PROPERTIES, 0, &props);
-    // 15×u32 ID mappings. Index 3 is CHAR_SHAPE count.
-    let mut map = vec![0u8; 60];
+    // Spec 표 16 INT32[18]: 8 border, 9 char, 13 para, 14 style. Index 3 kept for
+    // this crate's earlier CHAR_SHAPE slot.
+    let mut map = vec![0u8; 72];
     let n = styles.len() as u32;
     map[12..16].copy_from_slice(&n.to_le_bytes());
+    map[32..36].copy_from_slice(&4u32.to_le_bytes());
+    map[36..40].copy_from_slice(&n.to_le_bytes());
+    map[52..56].copy_from_slice(&4u32.to_le_bytes());
+    map[56..60].copy_from_slice(&4u32.to_le_bytes());
     write_record(&mut out, HWPTAG_ID_MAPPINGS, 0, &map);
+    write_record(
+        &mut out,
+        HWPTAG_BORDER_FILL,
+        0,
+        &encode_border_fill(false, false, None),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_BORDER_FILL,
+        0,
+        &encode_border_fill(true, false, None),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_BORDER_FILL,
+        0,
+        &encode_border_fill(false, false, Some(0x00F1_FBCC)),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_BORDER_FILL,
+        0,
+        &encode_border_fill(false, true, None),
+    );
     for style in styles {
         write_record(&mut out, HWPTAG_CHAR_SHAPE, 0, &encode_char_shape(style));
+    }
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(0, 0, 0, 0),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(1400, 1, 0, 0),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(0, 2, 0, 0),
+    );
+    write_record(
+        &mut out,
+        HWPTAG_PARA_SHAPE,
+        0,
+        &encode_para_shape(0, 3, 400, 400),
+    );
+    for (i, name) in ["Normal", "Quote", "CodeBlock", "HorizontalLine"]
+        .iter()
+        .enumerate()
+    {
+        write_record(
+            &mut out,
+            HWPTAG_STYLE,
+            0,
+            &encode_style(name, name, i as u16),
+        );
     }
     out
 }
 
+fn encode_hwp_string(s: &str) -> Vec<u8> {
+    let units: Vec<u16> = s.encode_utf16().collect();
+    let mut out = Vec::with_capacity(2 + units.len() * 2);
+    out.extend_from_slice(&(units.len() as u16).to_le_bytes());
+    for u in units {
+        out.extend_from_slice(&u.to_le_bytes());
+    }
+    out
+}
+
+fn encode_style(local: &str, english: &str, para_shape_id: u16) -> Vec<u8> {
+    let mut p = encode_hwp_string(local);
+    p.extend(encode_hwp_string(english));
+    p.push(0);
+    p.push(0);
+    p.extend_from_slice(&1042i16.to_le_bytes());
+    p.extend_from_slice(&para_shape_id.to_le_bytes());
+    p.extend_from_slice(&0u16.to_le_bytes());
+    p.extend_from_slice(&0u16.to_le_bytes());
+    p
+}
+
+fn encode_para_shape(indent_left: i32, border_fill_id: u16, before: i32, after: i32) -> Vec<u8> {
+    let mut p = vec![0u8; 54];
+    // attr1 bits 2–4 = 1 → left/start alignment.
+    p[0..4].copy_from_slice(&4u32.to_le_bytes());
+    p[4..8].copy_from_slice(&indent_left.to_le_bytes());
+    p[16..20].copy_from_slice(&before.to_le_bytes());
+    p[20..24].copy_from_slice(&after.to_le_bytes());
+    p[24..28].copy_from_slice(&160i32.to_le_bytes());
+    p[32..34].copy_from_slice(&border_fill_id.to_le_bytes());
+    p[50..54].copy_from_slice(&160u32.to_le_bytes());
+    p
+}
+
+fn encode_border_fill(left: bool, bottom: bool, fill: Option<u32>) -> Vec<u8> {
+    let mut p = vec![0u8; 2];
+    let sides = [left, false, false, bottom];
+    for on in sides {
+        p.push(u8::from(on));
+        p.push(if on { 9 } else { 0 });
+        let color = if on { 0x004A_4E13u32 } else { 0 };
+        p.extend_from_slice(&color.to_le_bytes());
+    }
+    p.push(0);
+    p.push(0);
+    p.extend_from_slice(&0u32.to_le_bytes());
+    if let Some(rgb) = fill {
+        p.extend_from_slice(&1u32.to_le_bytes());
+        p.extend_from_slice(&rgb.to_le_bytes());
+        p.extend_from_slice(&0u32.to_le_bytes());
+        p.extend_from_slice(&0i32.to_le_bytes());
+    } else {
+        p.extend_from_slice(&0u32.to_le_bytes());
+        p.extend_from_slice(&0u32.to_le_bytes());
+    }
+    p
+}
+
 fn write_section(section: &Section, styles: &[CharStyle]) -> Vec<u8> {
     let mut out = Vec::new();
-    write_record(&mut out, HWPTAG_PAGE_DEF, 0, &page_def_payload(&section.page));
+    write_record(
+        &mut out,
+        HWPTAG_PAGE_DEF,
+        0,
+        &page_def_payload(&section.page),
+    );
     if section.body.is_empty() {
         write_paragraph(&mut out, &Paragraph::from_text(""), 0, styles);
     } else {
@@ -1083,6 +1333,9 @@ fn write_section(section: &Section, styles: &[CharStyle]) -> Vec<u8> {
             match block {
                 Block::Paragraph(p) => write_paragraph(&mut out, p, 0, styles),
                 Block::Table(t) => write_table(&mut out, t, 0, styles),
+                Block::Break(BreakKind::Thematic) => {
+                    write_paragraph_role(&mut out, &Paragraph::from_text(""), 0, styles, 3);
+                }
                 Block::Float(_) | Block::Break(_) => {
                     write_paragraph(&mut out, &Paragraph::from_text(""), 0, styles);
                 }
@@ -1106,7 +1359,27 @@ fn page_def_payload(page: &docagent_model::PageSetup) -> Vec<u8> {
     p
 }
 
+fn para_style_id(p: &Paragraph) -> u16 {
+    if p.code_block {
+        2
+    } else if p.quote {
+        1
+    } else {
+        0
+    }
+}
+
 fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16, styles: &[CharStyle]) {
+    write_paragraph_role(out, para, level, styles, para_style_id(para));
+}
+
+fn write_paragraph_role(
+    out: &mut Vec<u8>,
+    para: &Paragraph,
+    level: u16,
+    styles: &[CharStyle],
+    role: u16,
+) {
     let mut utf16 = Vec::new();
     let mut ranges = Vec::new();
     let mut pos = 0u32;
@@ -1144,7 +1417,8 @@ fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16, styles: &[Ch
     }
     let mut header = vec![0u8; 22];
     header[0..4].copy_from_slice(&nchars.to_le_bytes());
-    header[8..10].copy_from_slice(&0u16.to_le_bytes());
+    header[8..10].copy_from_slice(&role.to_le_bytes());
+    header[10] = role.min(255) as u8;
     let char_shapes = ranges.len() as u16;
     header[12..14].copy_from_slice(&char_shapes.to_le_bytes());
     let line_count = para.layout_hints.len() as u16;
@@ -1178,7 +1452,11 @@ fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, level: u16, styles: &[Ch
 
 fn write_table(out: &mut Vec<u8>, table: &Table, level: u16, styles: &[CharStyle]) {
     let n_rows = table.rows.len() as u16;
-    let n_cols = table.rows.first().map(|r| r.cells.len() as u16).unwrap_or(0);
+    let n_cols = table
+        .rows
+        .first()
+        .map(|r| r.cells.len() as u16)
+        .unwrap_or(0);
     let mut header = vec![0u8; 22];
     header[0..4].copy_from_slice(&8u32.to_le_bytes());
     header[4..8].copy_from_slice(&0x8000_0000u32.to_le_bytes());
@@ -1271,9 +1549,9 @@ mod tests {
     fn write_read_preserves_paragraph_text() {
         let mut doc = Document::new();
         let mut section = Section::default();
-        section
-            .body
-            .push(Block::Paragraph(Paragraph::from_text("한글 HWP5 roundtrip")));
+        section.body.push(Block::Paragraph(Paragraph::from_text(
+            "한글 HWP5 roundtrip",
+        )));
         doc.sections.push(section);
         let back = roundtrip(&doc).expect("roundtrip");
         assert!(back.plain_text().contains("한글 HWP5 roundtrip"));
@@ -1331,7 +1609,8 @@ mod tests {
             r.style.bold && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("GPU-free"))
         }));
         assert!(p.runs.iter().any(|r| {
-            r.style.strike && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
+            r.style.strike
+                && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
         }));
     }
 
@@ -1465,10 +1744,7 @@ mod tests {
                 _ => None,
             })
             .expect("first LineSeg");
-        assert_eq!(
-            hint.y, 0,
-            "Hangul PARA_LINE_SEG vertpos is body-relative"
-        );
+        assert_eq!(hint.y, 0, "Hangul PARA_LINE_SEG vertpos is body-relative");
         assert!(hint.line_height > 0);
     }
 
@@ -1504,5 +1780,89 @@ mod tests {
             panic!("expected table");
         };
         assert_eq!(t.rows[0].height, Some(4000));
+    }
+
+    #[test]
+    fn roundtrip_keeps_quote() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay is evidence.");
+        p.quote = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        let quote: Vec<u8> = "Quote"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(
+            bytes.windows(quote.len()).any(|w| w == quote),
+            "DocInfo STYLE Quote"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.quote);
+        assert!(p.plain_text().contains("Replay is evidence"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_code_block() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("let n = 1;");
+        p.code_block = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        let name: Vec<u8> = "CodeBlock"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(
+            bytes.windows(name.len()).any(|w| w == name),
+            "DocInfo STYLE CodeBlock"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.code_block);
+        assert!(p.plain_text().contains("let n = 1;"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_thematic_break() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("before")));
+        section.body.push(Block::Break(BreakKind::Thematic));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("after")));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        let name: Vec<u8> = "HorizontalLine"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(
+            bytes.windows(name.len()).any(|w| w == name),
+            "DocInfo STYLE HorizontalLine"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        assert!(
+            back.sections[0]
+                .body
+                .iter()
+                .any(|b| matches!(b, Block::Break(BreakKind::Thematic))),
+            "{:?}",
+            back.sections[0].body
+        );
+        assert!(back.plain_text().contains("before"));
+        assert!(back.plain_text().contains("after"));
     }
 }

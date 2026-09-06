@@ -21,7 +21,7 @@
     <text x="498" y="104" text-anchor="middle" fill="#5eead4" font-size="13" font-weight="700">ONE ENGINE</text>
     <text x="498" y="140" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">IR + layout</text>
     <text x="498" y="168" text-anchor="middle" fill="#99f6e4" font-size="16">integer 1/7200 inch</text>
-    <text x="498" y="200" text-anchor="middle" fill="#5eead4" font-size="13">no format id in layout</text>
+    <text x="498" y="200" text-anchor="middle" fill="#5eead4" font-size="13">GPU-free · no format id</text>
 
     <polygon points="662,150 690,138 690,162" fill="#2dd4bf"/>
 

@@ -1,6 +1,7 @@
 # Summary
 
 - [Intro](intro.md)
+- [What ships](capabilities.md)
 - [Codec authoring guide](codec-guide.md)
 - [Format hops](format-hops.md)
 - [Hangul / rhwp notes (regional)](stage0-rhwp-reading.md)

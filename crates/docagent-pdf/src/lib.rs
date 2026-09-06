@@ -8,7 +8,8 @@ use krilla::action::LinkAction;
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::color::rgb;
 use krilla::configure::{Archival, ConfigurationBuilder, Validator};
-use krilla::geom::{PathBuilder, Point, Rect, Transform};
+use krilla::geom::{PathBuilder, Point, Rect, Size, Transform};
+use krilla::image::Image;
 use krilla::metadata::{DateTime, Metadata};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
@@ -159,6 +160,24 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
                                 links.push((*x, *y, *w, *h, uri.clone()));
                             }
                         }
+                        Op::Image {
+                            x,
+                            y,
+                            w,
+                            h,
+                            bytes,
+                            mime,
+                        } => {
+                            draw_embedded_image(
+                                &mut surface,
+                                *x as f32 / HU_PER_PT,
+                                *y as f32 / HU_PER_PT,
+                                *w as f32 / HU_PER_PT,
+                                *h as f32 / HU_PER_PT,
+                                bytes,
+                                mime,
+                            );
+                        }
                         Op::Page { .. } => {}
                     }
                 }
@@ -185,6 +204,44 @@ pub fn to_pdfa(list: &DisplayList, fonts: &FontSet) -> Result<Vec<u8>, String> {
         }
     }
     document.finish().map_err(|e| format!("{e:?}"))
+}
+
+fn draw_embedded_image(
+    surface: &mut krilla::surface::Surface<'_>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    bytes: &[u8],
+    mime: &str,
+) {
+    let Some(size) = Size::from_wh(w.max(0.05), h.max(0.05)) else {
+        return;
+    };
+    let Some(image) = pdf_image(bytes, mime) else {
+        return;
+    };
+    surface.push_transform(&Transform::from_translate(x, y));
+    surface.draw_image(image, size);
+    surface.pop();
+}
+
+fn pdf_image(bytes: &[u8], mime: &str) -> Option<Image> {
+    let jpeg = is_jpeg(bytes, mime);
+    let data = bytes.to_vec().into();
+    if jpeg {
+        Image::from_jpeg(data, false).ok()
+    } else {
+        Image::from_png(data, false)
+            .ok()
+            .or_else(|| Image::from_jpeg(bytes.to_vec().into(), false).ok())
+    }
+}
+
+fn is_jpeg(bytes: &[u8], mime: &str) -> bool {
+    mime.eq_ignore_ascii_case("image/jpeg")
+        || mime.eq_ignore_ascii_case("image/jpg")
+        || (bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
 }
 
 fn fill_rect(
@@ -845,5 +902,71 @@ mod tests {
         let roman = pdf_for(false);
         let oblique = pdf_for(true);
         assert_ne!(roman, oblique, "synthetic italic must change PDF bytes");
+    }
+
+    const MARK_PNG: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/assets/mark.png"
+    ));
+
+    fn doc_with_mark() -> Document {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run {
+            style: docagent_model::CharStyle::default(),
+            content: docagent_model::RunContent::Inline(docagent_model::InlineObject::Image(
+                docagent_model::ImageData {
+                    bytes: MARK_PNG.to_vec(),
+                    mime: "image/png".into(),
+                    width: 1600,
+                    height: 1600,
+                    alt_text: Some("mark".into()),
+                    wrap: docagent_model::WrapMode::Inline,
+                },
+            )),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        doc
+    }
+
+    #[test]
+    fn png_image_embeds_in_pdfa() {
+        let list = paint(&layout_document(&doc_with_mark(), &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Image { w, h, bytes, mime, .. }
+                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                )
+            }),
+            "paint must forward PNG bytes"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(
+            s.contains("/Image"),
+            "PDF image XObject missing: {}",
+            s.chars().take(400).collect::<String>()
+        );
+        assert!(s.contains("/Width"), "image width missing");
+        assert!(s.contains("/Height"), "image height missing");
+        let mut blank = Document::new();
+        blank.sections.push(Section::default());
+        let blank_pdf = to_pdfa(
+            &paint(&layout_document(&blank, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert!(
+            pdf.len() > blank_pdf.len(),
+            "embedded PNG must enlarge PDF ({} vs {})",
+            pdf.len(),
+            blank_pdf.len()
+        );
     }
 }

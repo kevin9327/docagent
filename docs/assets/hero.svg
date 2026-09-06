@@ -21,10 +21,10 @@
   <circle cx="1040" cy="90" r="180" fill="url(#glow)" filter="url(#soft)"/>
   <circle cx="1180" cy="420" r="140" fill="#2dd4bf" fill-opacity="0.08" filter="url(#soft)"/>
 
-  <text x="64" y="92" fill="#5eead4" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="18" font-weight="700" letter-spacing="4">DOCUMENT RUNTIME FOR AGENTS</text>
+  <text x="64" y="92" fill="#5eead4" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="18" font-weight="700" letter-spacing="4">AGENT DOCUMENT RUNTIME</text>
   <text x="64" y="168" fill="#f8fafc" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="72" font-weight="800">DocAgent</text>
-  <text x="64" y="222" fill="#cbd5e1" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="24">One integer layout engine. Every Command hashed.</text>
-  <text x="64" y="258" fill="#94a3b8" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="20">Not an office suite. Not a Hangul-only tool. Not a GPU model.</text>
+  <text x="64" y="222" fill="#cbd5e1" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="24">Deterministic convert. Capsule hashed. GPU-free.</text>
+  <text x="64" y="258" fill="#94a3b8" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="20">Integer layout at 1/7200 in. Same fonts → same bytes. No VLM.</text>
 
   <g font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="16" font-weight="700">
     <rect x="64" y="312" width="92" height="36" rx="18" fill="#134e4a"/>

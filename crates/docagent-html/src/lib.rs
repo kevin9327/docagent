@@ -2,11 +2,11 @@
 
 #![forbid(unsafe_code)]
 
-use docagent_model::{Block, Document, Paragraph, RunContent, Table};
+use docagent_model::{Block, Document, ImageData, Paragraph, RunContent, Table};
 
 pub fn to_html(doc: &Document) -> String {
     let mut s = String::from(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em;padding-bottom:.4rem;border-bottom:3px solid #134e4a}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a;padding-bottom:.2rem;border-bottom:2px solid #0d9488}p{margin:0 0 .7rem}blockquote{margin:.5rem 0 1rem;padding:.15rem 0 .15rem 1rem;border-left:4px solid #134e4a;color:#134e4a}strong{font-weight:700}em{font-style:italic}a{color:#0d9488}u{text-decoration:underline}sup{font-size:.75em;vertical-align:super}sub{font-size:.75em;vertical-align:sub}s{text-decoration:line-through;color:#134e4a}mark{background:#fde68a;padding:.05em .2em}code{background:#ccfbf1;padding:.1em .35em;border-radius:3px;font-family:ui-monospace,Consolas,monospace;font-size:.92em;color:#134e4a}pre{background:#ccfbf1;padding:.75rem 1rem;margin:.6rem 0 1rem;border-radius:4px;overflow:auto}pre code{background:transparent;padding:0;color:#134e4a}hr{border:none;border-top:3px solid #134e4a;margin:1.1rem 0}ul,ol{margin:0 0 1rem;padding-left:1.25rem}ul ul,ol ul,ul ol,ol ol{margin:.25rem 0}li{margin:0 0 .35rem}ul.tasks{list-style:none;padding-left:1.25rem}ul.tasks input{margin-right:.4rem;vertical-align:middle;accent-color:#134e4a}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#ccfbf1;color:#134e4a}</style></head><body>"#,
+        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>DocAgent</title><style>body{margin:0;background:#f8fafc;color:#111827}article{max-width:48rem;margin:2rem auto;padding:2.5rem 2.75rem;background:#fff;border:1px solid #e2e8f0;font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}h1{font-size:1.75rem;margin:0 0 .6rem;letter-spacing:-.02em;padding-bottom:.4rem;border-bottom:3px solid #134e4a}h2{font-size:1.15rem;margin:1.1rem 0 .45rem;color:#134e4a;padding-bottom:.2rem;border-bottom:2px solid #0d9488}p{margin:0 0 .7rem}img{max-width:100%;height:auto;margin:.6rem 0}blockquote{margin:.5rem 0 1rem;padding:.15rem 0 .15rem 1rem;border-left:4px solid #134e4a;color:#134e4a}strong{font-weight:700}em{font-style:italic}a{color:#0d9488}u{text-decoration:underline}sup{font-size:.75em;vertical-align:super}sub{font-size:.75em;vertical-align:sub}s{text-decoration:line-through;color:#134e4a}mark{background:#fde68a;padding:.05em .2em}code{background:#ccfbf1;padding:.1em .35em;border-radius:3px;font-family:ui-monospace,Consolas,monospace;font-size:.92em;color:#134e4a}pre{background:#ccfbf1;padding:.75rem 1rem;margin:.6rem 0 1rem;border-radius:4px;overflow:auto}pre code{background:transparent;padding:0;color:#134e4a}hr{border:none;border-top:3px solid #134e4a;margin:1.1rem 0}ul,ol{margin:0 0 1rem;padding-left:1.25rem}ul ul,ol ul,ul ol,ol ol{margin:.25rem 0}li{margin:0 0 .35rem}ul.tasks{list-style:none;padding-left:1.25rem}ul.tasks input{margin-right:.4rem;vertical-align:middle;accent-color:#134e4a}table{border-collapse:collapse;margin:1rem 0;width:100%}th,td{border:1px solid #cbd5e1;padding:.4rem .65rem;text-align:left;font-size:.95rem}th{background:#ccfbf1;color:#134e4a}</style></head><body>"#,
     );
     for (i, section) in doc.sections.iter().enumerate() {
         s.push_str(&format!(r#"<article data-section="{i}">"#));
@@ -122,6 +122,11 @@ fn push_block(s: &mut String, block: &Block) {
     match block {
         Block::Paragraph(p) => push_para(s, p),
         Block::Table(t) => push_table(s, t),
+        Block::Float(docagent_model::Float::Image(img)) => {
+            s.push_str("<aside>");
+            push_img(s, img);
+            s.push_str("</aside>");
+        }
         Block::Float(_) => s.push_str("<aside></aside>"),
         Block::Break(_) => s.push_str("<hr/>"),
     }
@@ -158,6 +163,7 @@ fn push_para(s: &mut String, p: &Paragraph) {
 fn push_runs(s: &mut String, p: &Paragraph) {
     for run in &p.runs {
         match &run.content {
+            RunContent::Inline(docagent_model::InlineObject::Image(img)) => push_img(s, img),
             RunContent::Inline(docagent_model::InlineObject::Hyperlink { target, display }) => {
                 if display.is_empty() {
                     continue;
@@ -252,10 +258,110 @@ fn push_table(s: &mut String, t: &Table) {
     s.push_str("</table>");
 }
 
+fn push_img(s: &mut String, img: &ImageData) {
+    s.push_str("<img alt=\"");
+    s.push_str(&escape_attr(img.alt_text.as_deref().unwrap_or("")));
+    s.push_str("\" src=\"");
+    s.push_str(&escape_attr(&image_src(img)));
+    s.push_str("\"/>");
+}
+
+fn image_src(img: &ImageData) -> String {
+    let mime = if img.mime.is_empty() {
+        "image/png"
+    } else {
+        img.mime.as_str()
+    };
+    let mut s = String::from("data:");
+    s.push_str(mime);
+    s.push_str(";base64,");
+    s.push_str(&b64_encode(&img.bytes));
+    s
+}
+
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn b64_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    let mut i = 0;
+    while i < data.len() {
+        let remaining = data.len() - i;
+        let a = data[i];
+        let b = if remaining > 1 { data[i + 1] } else { 0 };
+        let c = if remaining > 2 { data[i + 2] } else { 0 };
+        let n = (u32::from(a) << 16) | (u32::from(b) << 8) | u32::from(c);
+        out.push(char::from(B64_ALPHABET[((n >> 18) & 63) as usize]));
+        out.push(char::from(B64_ALPHABET[((n >> 12) & 63) as usize]));
+        if remaining > 1 {
+            out.push(char::from(B64_ALPHABET[((n >> 6) & 63) as usize]));
+        } else {
+            out.push('=');
+        }
+        if remaining > 2 {
+            out.push(char::from(B64_ALPHABET[(n & 63) as usize]));
+        } else {
+            out.push('=');
+        }
+        i += 3;
+    }
+    out
+}
+
+#[cfg(test)]
+fn b64_val(c: u8) -> Option<u8> {
+    match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' | b'-' => Some(62),
+        b'/' | b'_' => Some(63),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    let mut raw = Vec::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_whitespace() {
+            continue;
+        }
+        raw.push(b);
+    }
+    while !raw.is_empty() && raw.len() % 4 != 0 {
+        raw.push(b'=');
+    }
+    if raw.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut out = Vec::with_capacity(raw.len() / 4 * 3);
+    for chunk in raw.chunks(4) {
+        let a = b64_val(chunk[0])?;
+        let b = b64_val(chunk[1])?;
+        let c_pad = chunk[2] == b'=';
+        let d_pad = chunk[3] == b'=';
+        let c = if c_pad { 0 } else { b64_val(chunk[2])? };
+        let d = if d_pad { 0 } else { b64_val(chunk[3])? };
+        let n = (u32::from(a) << 18) | (u32::from(b) << 12) | (u32::from(c) << 6) | u32::from(d);
+        out.push((n >> 16) as u8);
+        if !c_pad {
+            out.push((n >> 8) as u8);
+        }
+        if !d_pad {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
+}
+
 fn escape(t: &str) -> String {
     t.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn escape_attr(t: &str) -> String {
+    escape(t).replace('"', "&quot;")
 }
 
 #[cfg(test)]
@@ -576,6 +682,49 @@ mod tests {
             html.contains(r#"<a href="https://github.com/kevin9327/docagent">DocAgent</a>"#),
             "{html}"
         );
+    }
+
+    fn fixture_png() -> Vec<u8> {
+        std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/assets/mark.png"),
+        )
+        .expect("docs/assets/mark.png")
+    }
+
+    fn fixture_image(alt: &str) -> ImageData {
+        ImageData {
+            bytes: fixture_png(),
+            mime: "image/png".into(),
+            width: 0,
+            height: 0,
+            alt_text: Some(alt.into()),
+            wrap: docagent_model::WrapMode::Inline,
+        }
+    }
+
+    #[test]
+    fn images_emit_img() {
+        let img = fixture_image("mark");
+        let src = image_src(&img);
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run {
+            style: docagent_model::CharStyle::default(),
+            content: RunContent::Inline(docagent_model::InlineObject::Image(img.clone())),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        let tag = format!(r#"<img alt="mark" src="{src}"/>"#);
+        assert!(html.contains(&tag), "{html}");
+        assert!(html.contains("img{max-width:100%"), "{html}");
+        let start = html.find(r#"src="data:image/png;base64,"#).expect("src");
+        let payload = &html[start + r#"src="data:image/png;base64,"#.len()..];
+        let end = payload.find('"').expect("src end");
+        let decoded = b64_decode(&payload[..end]).expect("b64");
+        assert_eq!(decoded, img.bytes);
+        assert_eq!(decoded, fixture_png());
     }
 
     #[test]

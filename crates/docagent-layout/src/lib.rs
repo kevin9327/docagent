@@ -7,8 +7,8 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, BorderStyle, BreakKind, Document, Hu, LineSpacing, NumberFormat, Paragraph,
-    RunContent, Section, Table, DEFAULT_FONT_SIZE_HU,
+    Alignment, Block, BorderStyle, BreakKind, Document, Hu, InlineObject, LineSpacing,
+    NumberFormat, Paragraph, RunContent, Section, Table, DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
 
@@ -48,6 +48,17 @@ pub struct LineFrag {
     pub highlight: bool,
     /// External URI for this run, if it is a hyperlink.
     pub href: Option<String>,
+    /// Inline raster occupying `width` × stored height in HWPUNIT.
+    pub image: Option<InlineImage>,
+}
+
+/// PNG/JPEG bytes laid out as an inline run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlineImage {
+    pub bytes: Vec<u8>,
+    pub mime: String,
+    pub width: Hu,
+    pub height: Hu,
 }
 
 impl LineFrag {
@@ -433,7 +444,7 @@ fn marker_advance(size: Hu, glyph_w: Hu, box_mark: bool) -> Hu {
 }
 
 fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>, Vec<RectFrag>) {
-    let text = p.plain_text();
+    let (text, spans) = collect_runs(p);
     let size = p
         .runs
         .first()
@@ -476,9 +487,15 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     let box_mark = bullet || task;
     let marker_w = marker_advance(size, glyph_w, box_mark);
     let usable = (width - p.indent_left - quote_pad - p.indent_right - marker_w).max(1);
-    let shaped = shape(fonts, &text, size);
+    let mut shaped = shape(fonts, &text, size);
+    for span in &spans {
+        if let Some(img) = &span.image
+            && let Some(adv) = shaped.advances.get_mut(span.start)
+        {
+            *adv = img.width.max(1);
+        }
+    }
     let ranges = break_lines(text.clone(), shaped.advances.clone(), usable);
-    let spans = run_spans(p);
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut fills = Vec::new();
@@ -502,6 +519,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             code: false,
             highlight: false,
             href: None,
+            image: None,
         });
         if bullet {
             fills.push(bullet_fill(p.indent_left + quote_pad, baseline, size));
@@ -562,6 +580,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 code: false,
                 highlight: false,
                 href: None,
+                image: None,
             });
             x += marker_w;
         }
@@ -569,6 +588,27 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             let s = span.start.max(a);
             let e = span.end.min(b);
             if s >= e {
+                continue;
+            }
+            if let Some(img) = &span.image {
+                row.push(LineFrag {
+                    x,
+                    y: 0,
+                    width: img.width,
+                    height: 0,
+                    baseline,
+                    text: String::new(),
+                    font_size: size,
+                    bold: span.bold,
+                    italic: span.italic,
+                    underline: span.underline,
+                    strike: span.strike,
+                    code: span.code,
+                    highlight: span.highlight,
+                    href: span.href.clone(),
+                    image: Some(img.clone()),
+                });
+                x += img.width;
                 continue;
             }
             let slice: String = chars.get(s..e).unwrap_or(&[]).iter().collect();
@@ -605,6 +645,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 code: span.code,
                 highlight: span.highlight,
                 href: span.href.clone(),
+                image: None,
             });
             x += w;
         }
@@ -614,8 +655,14 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
         for f in &mut row {
             f.x += shift;
         }
+        let mut row_h = lh;
+        for f in &row {
+            if let Some(img) = &f.image {
+                row_h = row_h.max(img.height);
+            }
+        }
         if let Some(last) = row.last_mut() {
-            last.height = lh;
+            last.height = row_h;
         } else {
             row.push(LineFrag {
                 x: p.indent_left + quote_pad,
@@ -632,6 +679,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 code: false,
                 highlight: false,
                 href: None,
+                image: None,
             });
         }
         out.extend(row);
@@ -732,26 +780,54 @@ struct RunSpan {
     superscript: bool,
     subscript: bool,
     href: Option<String>,
+    image: Option<InlineImage>,
 }
 
-fn run_spans(p: &Paragraph) -> Vec<RunSpan> {
+fn collect_runs(p: &Paragraph) -> (String, Vec<RunSpan>) {
     let mut i = 0usize;
+    let mut text = String::new();
     let mut out = Vec::new();
     for run in &p.runs {
-        let t = run.display_text();
-        if t.is_empty() {
-            continue;
-        }
-        let n = t.chars().count();
         let href = match &run.content {
-            RunContent::Inline(docagent_model::InlineObject::Hyperlink { target, .. })
-                if !target.is_empty() =>
-            {
+            RunContent::Inline(InlineObject::Hyperlink { target, .. }) if !target.is_empty() => {
                 Some(target.clone())
             }
             _ => None,
         };
         let underline = run.style.underline != docagent_model::Underline::None || href.is_some();
+        if let RunContent::Inline(InlineObject::Image(img)) = &run.content {
+            if img.width <= 0 || img.height <= 0 {
+                continue;
+            }
+            text.push('\u{FFFC}');
+            out.push(RunSpan {
+                start: i,
+                end: i + 1,
+                bold: run.style.bold,
+                italic: run.style.italic,
+                underline,
+                strike: run.style.strike,
+                code: run.style.code,
+                highlight: run.style.highlight.is_some(),
+                superscript: run.style.superscript,
+                subscript: run.style.subscript,
+                href,
+                image: Some(InlineImage {
+                    bytes: img.bytes.clone(),
+                    mime: img.mime.clone(),
+                    width: img.width,
+                    height: img.height,
+                }),
+            });
+            i += 1;
+            continue;
+        }
+        let t = run.display_text();
+        if t.is_empty() {
+            continue;
+        }
+        let n = t.chars().count();
+        text.push_str(t);
         out.push(RunSpan {
             start: i,
             end: i + n,
@@ -764,10 +840,11 @@ fn run_spans(p: &Paragraph) -> Vec<RunSpan> {
             superscript: run.style.superscript,
             subscript: run.style.subscript,
             href,
+            image: None,
         });
         i += n;
     }
-    out
+    (text, out)
 }
 
 fn list_marker(p: &Paragraph) -> Option<String> {
@@ -1575,5 +1652,84 @@ mod tests {
             .find(|l| l.text.contains("plain"))
             .expect("plain span");
         assert!(!plain.italic);
+    }
+
+    const MARK_PNG: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/assets/mark.png"
+    ));
+
+    fn mark_run(width: Hu, height: Hu) -> docagent_model::Run {
+        docagent_model::Run {
+            style: docagent_model::CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(docagent_model::ImageData {
+                bytes: MARK_PNG.to_vec(),
+                mime: "image/png".into(),
+                width,
+                height,
+                alt_text: Some("mark".into()),
+                wrap: docagent_model::WrapMode::Inline,
+            })),
+        }
+    }
+
+    #[test]
+    fn image_runs_reserve_width_and_height() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![mark_run(1600, 1600)];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let frag = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("image run skipped");
+        assert_eq!(frag.width, 1600);
+        assert!(frag.height >= 1600, "line height {}", frag.height);
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.width, 1600);
+        assert_eq!(img.height, 1600);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.bytes, MARK_PNG);
+        assert!(frag.text.is_empty());
+    }
+
+    #[test]
+    fn image_run_advances_following_text() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![
+            docagent_model::Run::text("before"),
+            mark_run(1600, 800),
+            docagent_model::Run::text("after"),
+        ];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let before = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("before"))
+            .expect("before");
+        let img = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("image");
+        let after = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("after"))
+            .expect("after");
+        assert!(img.x >= before.x + before.width, "image x {}", img.x);
+        assert!(after.x >= img.x + img.width, "after x {}", after.x);
+        assert_eq!(img.width, 1600);
+        assert_eq!(img.image.as_ref().map(|i| i.height), Some(800));
     }
 }

@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, BreakKind, CharStyle, Color, Document, InlineObject, NumberFormat,
-    NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, Underline,
-    HU_PER_POINT,
+    Alignment, Block, BreakKind, CharStyle, Color, Document, Hu, ImageData, InlineObject,
+    NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow,
+    Underline, WrapMode, HU_PER_INCH, HU_PER_POINT,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -45,12 +45,26 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
     }
     let mut zip = ZipArchive::new(Cursor::new(bytes.to_vec()))?;
     let mut xml = String::new();
-    zip.by_name("content.xml")?
-        .read_to_string(&mut xml)?;
-    parse_content_xml(&xml)
+    let mut pictures: HashMap<String, Vec<u8>> = HashMap::new();
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i)?;
+        let name = file.name().replace('\\', "/");
+        if name.ends_with('/') {
+            continue;
+        }
+        if name == "content.xml" {
+            file.read_to_string(&mut xml)?;
+        } else if is_package_picture(&name) {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)?;
+            pictures.insert(name, buf);
+        }
+    }
+    parse_content_xml(&xml, &pictures)
 }
 
 pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
+    let (xml, pictures) = build_content(doc);
     let mut cursor = Cursor::new(Vec::new());
     {
         let mut zip = ZipWriter::new(&mut cursor);
@@ -59,17 +73,19 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
         zip.write_all(b"application/vnd.oasis.opendocument.text")?;
         let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         zip.start_file("META-INF/manifest.xml", deflated)?;
-        zip.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"><manifest:file-entry manifest:media-type="application/vnd.oasis.opendocument.text" manifest:full-path="/"/><manifest:file-entry manifest:media-type="text/xml" manifest:full-path="content.xml"/></manifest:manifest>"#,
-        )?;
+        zip.write_all(manifest_xml(&pictures).as_bytes())?;
         zip.start_file("content.xml", deflated)?;
-        zip.write_all(content_xml(doc).as_bytes())?;
+        zip.write_all(xml.as_bytes())?;
+        for pic in &pictures {
+            zip.start_file(&pic.path, stored)?;
+            zip.write_all(&pic.bytes)?;
+        }
         zip.finish()?;
     }
     Ok(cursor.into_inner())
 }
 
-fn parse_content_xml(xml: &str) -> Result<Document, Error> {
+fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<Document, Error> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     reader.config_mut().expand_empty_elements = true;
@@ -112,6 +128,14 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut list_stack: Vec<ListCtx> = Vec::new();
     let mut a_href: Option<String> = None;
     let mut in_header_rows = false;
+    let mut in_frame = false;
+    let mut in_frame_title = false;
+    let mut frame_width: Option<Hu> = None;
+    let mut frame_height: Option<Hu> = None;
+    let mut frame_alt = String::new();
+    let mut frame_as_char = true;
+    let mut image_href: Option<String> = None;
+    let mut image_mime: Option<String> = None;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
@@ -272,6 +296,42 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                     "table-header-rows" if in_table => in_header_rows = true,
                     "table-row" if in_table => cur_row.clear(),
                     "table-cell" if in_table => cell_blocks.clear(),
+                    "frame" => {
+                        if in_p {
+                            flush_odt_run(
+                                &mut para_runs,
+                                &mut run_text,
+                                StyleBits {
+                                    bold: span_bold,
+                                    italic: span_italic,
+                                    strike: span_strike,
+                                    code: span_code,
+                                    highlight: span_mark,
+                                    underline: span_under,
+                                    superscript: span_super,
+                                    subscript: span_sub,
+                                    size: span_size,
+                                },
+                                None,
+                            );
+                        }
+                        in_frame = true;
+                        in_frame_title = false;
+                        frame_width = attr(&e, "width").as_deref().and_then(parse_odf_length);
+                        frame_height = attr(&e, "height").as_deref().and_then(parse_odf_length);
+                        frame_alt.clear();
+                        frame_as_char = matches!(
+                            attr(&e, "anchor-type").as_deref(),
+                            Some("as-char") | None
+                        );
+                        image_href = None;
+                        image_mime = None;
+                    }
+                    "image" if in_frame => {
+                        image_href = attr(&e, "href");
+                        image_mime = attr(&e, "mime-type");
+                    }
+                    "title" | "desc" if in_frame => in_frame_title = true,
                     _ => {}
                 }
             }
@@ -424,11 +484,43 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             ..Table::from_cells(Vec::new())
                         }));
                     }
+                    "title" | "desc" if in_frame => in_frame_title = false,
+                    "frame" => {
+                        if let Some(img) = take_frame_image(
+                            pictures,
+                            image_href.take(),
+                            image_mime.take(),
+                            (frame_width.take(), frame_height.take()),
+                            std::mem::take(&mut frame_alt),
+                            frame_as_char,
+                        ) {
+                            let run = Run {
+                                style: CharStyle::default(),
+                                content: RunContent::Inline(InlineObject::Image(img)),
+                            };
+                            if in_p {
+                                para_runs.push(run);
+                            } else {
+                                let mut p = Paragraph::from_text("");
+                                p.runs = vec![run];
+                                if in_table {
+                                    cell_blocks.push(Block::Paragraph(p));
+                                } else {
+                                    section.body.push(Block::Paragraph(p));
+                                }
+                            }
+                        }
+                        in_frame = false;
+                        in_frame_title = false;
+                    }
                     _ => {}
                 }
             }
             Ok(Event::Text(t)) => {
-                if in_p {
+                if in_frame_title {
+                    let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
+                    frame_alt.push_str(&decoded);
+                } else if in_p && !in_frame {
                     let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
                     run_text.push_str(&decoded);
                 }
@@ -533,8 +625,8 @@ fn apply_task_marker(p: &mut Paragraph) {
     });
 }
 
-fn odt_para(p: &Paragraph) -> String {
-    let inner = odt_runs(p);
+fn odt_para(p: &Paragraph, pics: &mut Vec<PicturePart>) -> String {
+    let inner = odt_runs(p, pics);
     if p.code_block {
         return format!(r#"<text:p text:style-name="CodeBlock">{inner}</text:p>"#);
     }
@@ -555,7 +647,7 @@ fn odt_para(p: &Paragraph) -> String {
     }
 }
 
-fn odt_runs(p: &Paragraph) -> String {
+fn odt_runs(p: &Paragraph, pics: &mut Vec<PicturePart>) -> String {
     let mut s = String::new();
     if let Some(n) = p.numbering.as_ref()
         && n.format == Some(NumberFormat::Task)
@@ -574,6 +666,9 @@ fn odt_runs(p: &Paragraph) -> String {
                 s.push_str(r#"">"#);
                 s.push_str(&xml_escape(display));
                 s.push_str("</text:a>");
+            }
+            RunContent::Inline(InlineObject::Image(img)) => {
+                push_odt_image(&mut s, img, pics);
             }
             RunContent::Text(t) => {
                 if t.is_empty() {
@@ -610,7 +705,7 @@ fn list_level(block: &Block) -> Option<u8> {
     }
 }
 
-fn emit_list(body: &mut String, blocks: &[Block], i: &mut usize) {
+fn emit_list(body: &mut String, blocks: &[Block], i: &mut usize, pics: &mut Vec<PicturePart>) {
     let Some(fmt) = list_format(&blocks[*i]) else {
         return;
     };
@@ -631,7 +726,7 @@ fn emit_list(body: &mut String, blocks: &[Block], i: &mut usize) {
             break;
         }
         if lvl > base {
-            emit_list(body, blocks, i);
+            emit_list(body, blocks, i, pics);
             continue;
         }
         if f != fmt {
@@ -641,35 +736,35 @@ fn emit_list(body: &mut String, blocks: &[Block], i: &mut usize) {
             break;
         };
         body.push_str("<text:list-item>");
-        body.push_str(&odt_para(p));
+        body.push_str(&odt_para(p, pics));
         *i += 1;
         if *i < blocks.len() && list_level(&blocks[*i]).is_some_and(|nl| nl > base) {
-            emit_list(body, blocks, i);
+            emit_list(body, blocks, i, pics);
         }
         body.push_str("</text:list-item>");
     }
     body.push_str("</text:list>");
 }
 
-fn push_table(body: &mut String, table: &Table) {
+fn push_table(body: &mut String, table: &Table, pics: &mut Vec<PicturePart>) {
     body.push_str("<table:table>");
     let mut i = 0usize;
     if table.rows.iter().any(|r| r.header) {
         body.push_str("<table:table-header-rows>");
         while i < table.rows.len() && table.rows[i].header {
-            push_table_row(body, &table.rows[i], true);
+            push_table_row(body, &table.rows[i], true, pics);
             i += 1;
         }
         body.push_str("</table:table-header-rows>");
     }
     while i < table.rows.len() {
-        push_table_row(body, &table.rows[i], false);
+        push_table_row(body, &table.rows[i], false, pics);
         i += 1;
     }
     body.push_str("</table:table>");
 }
 
-fn push_table_row(body: &mut String, row: &TableRow, header: bool) {
+fn push_table_row(body: &mut String, row: &TableRow, header: bool, pics: &mut Vec<PicturePart>) {
     body.push_str("<table:table-row>");
     for cell in &row.cells {
         if header {
@@ -680,7 +775,7 @@ fn push_table_row(body: &mut String, row: &TableRow, header: bool) {
         let mut wrote = false;
         for b in &cell.blocks {
             if let Block::Paragraph(p) = b {
-                body.push_str(&odt_para(p));
+                body.push_str(&odt_para(p, pics));
                 wrote = true;
             }
         }
@@ -692,17 +787,23 @@ fn push_table_row(body: &mut String, row: &TableRow, header: bool) {
     body.push_str("</table:table-row>");
 }
 
+#[cfg(test)]
 fn content_xml(doc: &Document) -> String {
+    build_content(doc).0
+}
+
+fn build_content(doc: &Document) -> (String, Vec<PicturePart>) {
+    let mut pics = Vec::new();
     let mut body = String::new();
     for section in &doc.sections {
         let mut i = 0;
         while i < section.body.len() {
             if list_format(&section.body[i]).is_some() {
-                emit_list(&mut body, &section.body, &mut i);
+                emit_list(&mut body, &section.body, &mut i, &mut pics);
             } else {
                 match &section.body[i] {
-                    Block::Paragraph(p) => body.push_str(&odt_para(p)),
-                    Block::Table(table) => push_table(&mut body, table),
+                    Block::Paragraph(p) => body.push_str(&odt_para(p, &mut pics)),
+                    Block::Table(table) => push_table(&mut body, table, &mut pics),
                     Block::Break(BreakKind::Thematic) => {
                         body.push_str(r#"<text:p text:style-name="HorizontalLine"/>"#);
                     }
@@ -712,9 +813,10 @@ fn content_xml(doc: &Document) -> String {
             }
         }
     }
-    format!(
-        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="HorizontalLine" style:family="paragraph"><style:paragraph-properties fo:border-bottom="0.02in solid #134e4a" fo:margin-top="0.15in" fo:margin-bottom="0.15in"/></style:style><style:style style:name="CodeBlock" style:family="paragraph"><style:paragraph-properties fo:background-color="#ccfbf1" fo:padding="0.1in"/><style:text-properties fo:font-family="Consolas"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><style:style style:name="Tmark" style:family="text"><style:text-properties fo:background-color="#fde68a"/></style:style><style:style style:name="Tunder" style:family="text"><style:text-properties style:text-underline-style="solid"/></style:style><style:style style:name="Tsuper" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style><style:style style:name="Tsub" style:family="text"><style:text-properties style:text-position="sub 58%"/></style:style><style:style style:name="THcell" style:family="table-cell"><style:table-cell-properties fo:background-color="#ccfbf1"/></style:style><style:style style:name="Tlink" style:family="text"><style:text-properties fo:color="#0d9488" style:text-underline-style="solid"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
-    )
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="HorizontalLine" style:family="paragraph"><style:paragraph-properties fo:border-bottom="0.02in solid #134e4a" fo:margin-top="0.15in" fo:margin-bottom="0.15in"/></style:style><style:style style:name="CodeBlock" style:family="paragraph"><style:paragraph-properties fo:background-color="#ccfbf1" fo:padding="0.1in"/><style:text-properties fo:font-family="Consolas"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><style:style style:name="Tmark" style:family="text"><style:text-properties fo:background-color="#fde68a"/></style:style><style:style style:name="Tunder" style:family="text"><style:text-properties style:text-underline-style="solid"/></style:style><style:style style:name="Tsuper" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style><style:style style:name="Tsub" style:family="text"><style:text-properties style:text-position="sub 58%"/></style:style><style:style style:name="THcell" style:family="table-cell"><style:table-cell-properties fo:background-color="#ccfbf1"/></style:style><style:style style:name="Tlink" style:family="text"><style:text-properties fo:color="#0d9488" style:text-underline-style="solid"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
+    );
+    (xml, pics)
 }
 
 fn odt_span_style(style: &CharStyle) -> Option<&'static str> {
@@ -749,6 +851,283 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+struct PicturePart {
+    path: String,
+    mime: String,
+    bytes: Vec<u8>,
+}
+
+fn is_package_picture(name: &str) -> bool {
+    let name = name.trim_start_matches("./");
+    let ext = name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    name.starts_with("Pictures/")
+        || matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "svg" | "bmp" | "tif" | "tiff" | "webp"
+        )
+}
+
+fn manifest_xml(pics: &[PicturePart]) -> String {
+    let mut s = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"><manifest:file-entry manifest:media-type="application/vnd.oasis.opendocument.text" manifest:full-path="/"/><manifest:file-entry manifest:media-type="text/xml" manifest:full-path="content.xml"/>"#,
+    );
+    for pic in pics {
+        s.push_str(r#"<manifest:file-entry manifest:media-type=""#);
+        s.push_str(&xml_escape(&pic.mime));
+        s.push_str(r#"" manifest:full-path=""#);
+        s.push_str(&xml_escape(&pic.path));
+        s.push_str(r#""/>"#);
+    }
+    s.push_str("</manifest:manifest>");
+    s
+}
+
+fn push_odt_image(s: &mut String, img: &ImageData, pics: &mut Vec<PicturePart>) {
+    let mime = if img.mime.trim().is_empty() {
+        sniff_image_mime(&img.bytes, "")
+    } else {
+        img.mime
+            .split(';')
+            .next()
+            .unwrap_or(img.mime.as_str())
+            .trim()
+            .to_string()
+    };
+    let ext = image_ext(&mime);
+    let n = pics.len() + 1;
+    let path = format!("Pictures/image{n}.{ext}");
+    pics.push(PicturePart {
+        path: path.clone(),
+        mime: mime.clone(),
+        bytes: img.bytes.clone(),
+    });
+    let w = if img.width > 0 { img.width } else { HU_PER_INCH };
+    let h = if img.height > 0 {
+        img.height
+    } else {
+        HU_PER_INCH
+    };
+    let anchor = match img.wrap {
+        WrapMode::Inline => "as-char",
+        _ => "paragraph",
+    };
+    s.push_str(r#"<draw:frame draw:name="Image"#);
+    s.push_str(&n.to_string());
+    s.push_str(r#"" text:anchor-type=""#);
+    s.push_str(anchor);
+    s.push_str(r#"" svg:width=""#);
+    s.push_str(&format_odf_length(w));
+    s.push_str(r#"" svg:height=""#);
+    s.push_str(&format_odf_length(h));
+    s.push_str(r#"">"#);
+    if let Some(alt) = img.alt_text.as_deref().filter(|a| !a.is_empty()) {
+        s.push_str("<svg:title>");
+        s.push_str(&xml_escape(alt));
+        s.push_str("</svg:title>");
+    }
+    s.push_str(r#"<draw:image xlink:href=""#);
+    s.push_str(&xml_escape(&path));
+    s.push_str(r#"" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type=""#);
+    s.push_str(&xml_escape(&mime));
+    s.push_str(r#""/></draw:frame>"#);
+}
+
+fn take_frame_image(
+    pictures: &HashMap<String, Vec<u8>>,
+    href: Option<String>,
+    mime: Option<String>,
+    size: (Option<Hu>, Option<Hu>),
+    alt: String,
+    as_char: bool,
+) -> Option<ImageData> {
+    let href = href.filter(|h| !h.is_empty())?;
+    let bytes = resolve_picture(pictures, &href)?.to_vec();
+    let mime = mime
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| sniff_image_mime(&bytes, &href));
+    let alt_text = {
+        let t = alt.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    };
+    Some(ImageData {
+        bytes,
+        mime,
+        width: size.0.filter(|w| *w > 0).unwrap_or(HU_PER_INCH),
+        height: size.1.filter(|h| *h > 0).unwrap_or(HU_PER_INCH),
+        alt_text,
+        wrap: if as_char {
+            WrapMode::Inline
+        } else {
+            WrapMode::Square
+        },
+    })
+}
+
+fn resolve_picture<'a>(pictures: &'a HashMap<String, Vec<u8>>, href: &str) -> Option<&'a [u8]> {
+    let href = href.trim();
+    if href.is_empty() {
+        return None;
+    }
+    let stripped = href
+        .strip_prefix("./")
+        .or_else(|| href.strip_prefix('/'))
+        .unwrap_or(href)
+        .replace('\\', "/");
+    if let Some(b) = pictures.get(stripped.as_str()).or_else(|| pictures.get(href)) {
+        return Some(b.as_slice());
+    }
+    let base = stripped.rsplit('/').next().unwrap_or(stripped.as_str());
+    pictures.iter().find_map(|(k, v)| {
+        k.replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .filter(|n| *n == base)
+            .map(|_| v.as_slice())
+    })
+}
+
+fn sniff_image_mime(bytes: &[u8], path: &str) -> String {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return "image/png".into();
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return "image/jpeg".into();
+    }
+    if bytes.starts_with(b"GIF8") {
+        return "image/gif".into();
+    }
+    if bytes.starts_with(b"BM") {
+        return "image/bmp".into();
+    }
+    mime_from_path(path).unwrap_or_else(|| "image/png".into())
+}
+
+fn mime_from_path(path: &str) -> Option<String> {
+    let ext = path.rsplit('.').next()?.to_ascii_lowercase();
+    Some(
+        match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "svg" => "image/svg+xml",
+            "bmp" => "image/bmp",
+            "tif" | "tiff" => "image/tiff",
+            "webp" => "image/webp",
+            _ => return None,
+        }
+        .into(),
+    )
+}
+
+fn image_ext(mime: &str) -> &'static str {
+    match mime.trim().to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/svg+xml" => "svg",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        "image/webp" => "webp",
+        _ => "png",
+    }
+}
+
+fn format_odf_length(hu: Hu) -> String {
+    if hu == 0 {
+        return "0in".into();
+    }
+    let neg = hu < 0;
+    let hu = hu.unsigned_abs();
+    let inch = HU_PER_INCH as u32;
+    let whole = hu / inch;
+    let rem = hu % inch;
+    let mut s = String::new();
+    if neg {
+        s.push('-');
+    }
+    s.push_str(&whole.to_string());
+    if rem == 0 {
+        s.push_str("in");
+        return s;
+    }
+    let frac = (u64::from(rem) * 10_000) / u64::from(inch);
+    s.push('.');
+    s.push_str(&format!("{frac:04}"));
+    s.push_str("in");
+    s
+}
+
+fn parse_odf_length(s: &str) -> Option<Hu> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let unit_at = s
+        .char_indices()
+        .find(|(_, c)| c.is_ascii_alphabetic())
+        .map(|(i, _)| i)?;
+    let (num, unit) = s.split_at(unit_at);
+    let n = parse_fixed_4(num.trim())?;
+    let unit = unit.trim().to_ascii_lowercase();
+    let hu = match unit.as_str() {
+        "in" | "inch" | "inches" => (i128::from(n) * i128::from(HU_PER_INCH)) / 10_000,
+        "pt" => (i128::from(n) * i128::from(HU_PER_POINT)) / 10_000,
+        "pc" => (i128::from(n) * i128::from(HU_PER_POINT) * 12) / 10_000,
+        "cm" => (i128::from(n) * 36) / 127,
+        "mm" => (i128::from(n) * 18) / 635,
+        "px" => (i128::from(n) * 3) / 400,
+        _ => return None,
+    };
+    Some(hu.clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32)
+}
+
+fn parse_fixed_4(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let neg = s.starts_with('-');
+    let s = s.strip_prefix(['-', '+']).unwrap_or(s);
+    if s.is_empty() {
+        return None;
+    }
+    let (int, frac) = match s.split_once('.') {
+        Some((a, b)) => (a, b),
+        None => (s, ""),
+    };
+    if int.is_empty() && frac.is_empty() {
+        return None;
+    }
+    let mut v: i64 = if int.is_empty() {
+        0
+    } else {
+        int.parse().ok()?
+    };
+    v = v.saturating_mul(10_000);
+    if !frac.is_empty() {
+        let mut place: i64 = 1_000;
+        for ch in frac.chars() {
+            if !ch.is_ascii_digit() {
+                return None;
+            }
+            if place == 0 {
+                continue;
+            }
+            v = v.saturating_add(i64::from(ch as u8 - b'0') * place);
+            place /= 10;
+        }
+    }
+    Some(if neg { -v } else { v })
 }
 
 pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
@@ -1206,5 +1585,83 @@ mod tests {
         assert!(back.plain_text().contains("OpenDocument hello"));
         assert!(back.plain_text().contains('x'));
         assert!(sniff(&write(&doc).unwrap()));
+    }
+
+    #[test]
+    fn roundtrip_keeps_image_bytes() {
+        let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "docs/assets/mark.png must be a PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs.push(Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.to_vec(),
+                mime: "image/png".into(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH,
+                alt_text: Some("mark".into()),
+                wrap: WrapMode::Inline,
+            })),
+        });
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+
+        let xml = content_xml(&doc);
+        assert!(xml.contains("<draw:image"), "{xml}");
+        assert!(xml.contains("Pictures/image1.png"), "{xml}");
+        assert!(xml.contains("xlink:href="), "{xml}");
+        assert!(xml.contains("draw:mime-type=\"image/png\""), "{xml}");
+        assert!(xml.contains("<svg:title>mark</svg:title>"), "{xml}");
+        assert!(xml.contains("text:anchor-type=\"as-char\""), "{xml}");
+
+        let odt = write(&doc).unwrap();
+        assert!(sniff(&odt));
+        let mut zip = ZipArchive::new(Cursor::new(odt.clone())).unwrap();
+        let mut names = Vec::new();
+        for i in 0..zip.len() {
+            names.push(zip.by_index(i).unwrap().name().replace('\\', "/"));
+        }
+        assert!(
+            names.iter().any(|n| n == "Pictures/image1.png"),
+            "{names:?}"
+        );
+        {
+            let mut f = zip.by_name("Pictures/image1.png").unwrap();
+            let mut stored = Vec::new();
+            f.read_to_end(&mut stored).unwrap();
+            assert_eq!(stored.as_slice(), png);
+        }
+        {
+            let mut f = zip.by_name("META-INF/manifest.xml").unwrap();
+            let mut manifest = String::new();
+            f.read_to_string(&mut manifest).unwrap();
+            assert!(
+                manifest.contains("Pictures/image1.png"),
+                "{manifest}"
+            );
+            assert!(manifest.contains("image/png"), "{manifest}");
+        }
+
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image run: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes.as_slice(), png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, HU_PER_INCH);
+        assert_eq!(img.height, HU_PER_INCH);
+        assert_eq!(img.alt_text.as_deref(), Some("mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
     }
 }

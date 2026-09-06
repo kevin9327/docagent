@@ -11,8 +11,8 @@
 use std::io::{Cursor, Read};
 
 use docagent_model::{
-    Block, CharStyle, Diagnostic, Document, InlineObject, LayoutHint, Paragraph, Run, RunContent,
-    Section, Underline, A4_HEIGHT_HU, A4_WIDTH_HU,
+    A4_HEIGHT_HU, A4_WIDTH_HU, Block, BreakKind, CharStyle, Diagnostic, Document, InlineObject,
+    LayoutHint, Paragraph, Run, RunContent, Section, Underline,
 };
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
@@ -92,8 +92,8 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
 
     let mut cur = Cursor::new(body);
     skip_font_lists(&mut cur)?;
-    skip_styles(&mut cur)?;
-    let mut paragraphs = read_paragraphs(&mut cur, &mut diagnostics);
+    let styles = read_styles(&mut cur)?;
+    let mut paragraphs = read_paragraphs(&mut cur, &mut diagnostics, &styles);
     let urls = read_additional_hyperlinks(&mut cur);
     apply_hwp3_hyperlinks(&mut paragraphs, &urls);
 
@@ -164,13 +164,46 @@ fn skip_font_lists(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
     Ok(())
 }
 
-fn skip_styles(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
+fn read_styles(cur: &mut Cursor<&[u8]>) -> Result<Vec<String>, Error> {
     let n = read_u16(cur)?;
-    skip_bytes(cur, (n as usize).saturating_mul(STYLE_LEN))?;
-    Ok(())
+    let mut names = Vec::with_capacity(n as usize);
+    for _ in 0..n {
+        let mut name_buf = [0u8; 20];
+        cur.read_exact(&mut name_buf)?;
+        names.push(decode_hwp3_kchar(&name_buf));
+        skip_bytes(cur, CHAR_SHAPE_LEN + PARA_SHAPE_LEN)?;
+    }
+    Ok(names)
 }
 
-fn read_paragraphs(cur: &mut Cursor<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -> Vec<Block> {
+fn style_kind(name: &str) -> Option<StyleKind> {
+    let n = name.trim();
+    if n.eq_ignore_ascii_case("Quote") || n == "인용" || n == "인용구" || n == "인용문" {
+        Some(StyleKind::Quote)
+    } else if n.eq_ignore_ascii_case("CodeBlock") || n.contains("코드블록") || n == "코드" {
+        Some(StyleKind::CodeBlock)
+    } else if n.eq_ignore_ascii_case("HorizontalLine")
+        || n.contains("가로선")
+        || n.contains("구분선")
+    {
+        Some(StyleKind::Thematic)
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StyleKind {
+    Quote,
+    CodeBlock,
+    Thematic,
+}
+
+fn read_paragraphs(
+    cur: &mut Cursor<&[u8]>,
+    diagnostics: &mut Vec<Diagnostic>,
+    styles: &[String],
+) -> Vec<Block> {
     let mut out = Vec::new();
     loop {
         let start = cur.position() as usize;
@@ -204,9 +237,10 @@ fn read_paragraphs(cur: &mut Cursor<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -
         if skip_bytes(cur, 4).is_err() {
             break;
         }
-        if read_u8(cur).is_err() {
-            break;
-        }
+        let style_index = match read_u8(cur) {
+            Ok(v) => v as usize,
+            Err(_) => break,
+        };
         let mut default_buf = [0u8; CHAR_SHAPE_LEN];
         if cur.read_exact(&mut default_buf).is_err() {
             break;
@@ -241,16 +275,32 @@ fn read_paragraphs(cur: &mut Cursor<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -
                 }
             }
         }
-        let (text, nested, char_styles, hrefs) =
-            read_para_chars(cur, char_count, diagnostics, &default_style, &per_char);
-        if !text.trim().is_empty() {
+        let (text, nested, char_styles, hrefs) = read_para_chars(
+            cur,
+            char_count,
+            diagnostics,
+            &default_style,
+            &per_char,
+            styles,
+        );
+        let kind = styles
+            .get(style_index)
+            .map(|s| s.as_str())
+            .and_then(style_kind);
+        if kind == Some(StyleKind::Thematic) {
+            out.push(Block::Break(BreakKind::Thematic));
+        } else if !text.trim().is_empty() {
             let mut para = Paragraph::from_text("");
             para.runs = coalesce_styled_runs(&text, &char_styles, &hrefs);
             para.layout_hints = hints;
+            para.quote = kind == Some(StyleKind::Quote);
+            para.code_block = kind == Some(StyleKind::CodeBlock);
             out.push(Block::Paragraph(para));
         } else if !hints.is_empty() {
             let mut para = Paragraph::from_text("");
             para.layout_hints = hints;
+            para.quote = kind == Some(StyleKind::Quote);
+            para.code_block = kind == Some(StyleKind::CodeBlock);
             out.push(Block::Paragraph(para));
         }
         out.extend(nested);
@@ -264,6 +314,7 @@ fn read_para_chars(
     diagnostics: &mut Vec<Diagnostic>,
     default_style: &CharStyle,
     per_char: &[CharStyle],
+    named_styles: &[String],
 ) -> (String, Vec<Block>, Vec<CharStyle>, Vec<Option<usize>>) {
     let mut text = String::new();
     let mut nested = Vec::new();
@@ -282,7 +333,7 @@ fn read_para_chars(
             continue;
         }
         if (1..32).contains(&ch) {
-            match skip_control(cur, ch, diagnostics) {
+            match skip_control(cur, ch, diagnostics, named_styles) {
                 Ok((extra_hchars, blocks, link_display)) => {
                     i = i.saturating_add(extra_hchars);
                     nested.extend(blocks);
@@ -383,6 +434,7 @@ fn skip_control(
     cur: &mut Cursor<&[u8]>,
     ch: u16,
     diagnostics: &mut Vec<Diagnostic>,
+    styles: &[String],
 ) -> Result<(u32, Vec<Block>, Option<String>), Error> {
     match ch {
         9 | 18..=21 => {
@@ -417,7 +469,9 @@ fn skip_control(
             skip_bytes(cur, 2)?;
             Ok((1, Vec::new(), None))
         }
-        5 | 6 | 7 | 8 | 10 | 11 | 14 | 15 | 16 | 17 | 29 => skip_object(cur, ch, diagnostics),
+        5 | 6 | 7 | 8 | 10 | 11 | 14 | 15 | 16 | 17 | 29 => {
+            skip_object(cur, ch, diagnostics, styles)
+        }
         _ => {
             skip_bytes(cur, 6)?;
             Ok((3, Vec::new(), None))
@@ -429,6 +483,7 @@ fn skip_object(
     cur: &mut Cursor<&[u8]>,
     ch: u16,
     diagnostics: &mut Vec<Diagnostic>,
+    styles: &[String],
 ) -> Result<(u32, Vec<Block>, Option<String>), Error> {
     let header_val1 = read_u32(cur)?;
     let _close = read_u16(cur)?;
@@ -453,7 +508,7 @@ fn skip_object(
             if other_options & HYPERTEXT_OPTION != 0 {
                 let mut display = String::new();
                 for n in 0..cell_count {
-                    let cells = read_paragraphs(cur, diagnostics);
+                    let cells = read_paragraphs(cur, diagnostics, styles);
                     if n != 0 {
                         continue;
                     }
@@ -463,15 +518,15 @@ fn skip_object(
                         }
                     }
                 }
-                let _caption = read_paragraphs(cur, diagnostics);
+                let _caption = read_paragraphs(cur, diagnostics, styles);
                 if !display.is_empty() {
                     link_display = Some(display);
                 }
             } else {
                 for _ in 0..cell_count {
-                    nested.extend(read_paragraphs(cur, diagnostics));
+                    nested.extend(read_paragraphs(cur, diagnostics, styles));
                 }
-                nested.extend(read_paragraphs(cur, diagnostics));
+                nested.extend(read_paragraphs(cur, diagnostics, styles));
             }
         }
         11 => {
@@ -481,20 +536,20 @@ fn skip_object(
             if n_ext > 0 && n_ext < 16 * 1024 * 1024 {
                 skip_bytes(cur, n_ext as usize)?;
             }
-            nested.extend(read_paragraphs(cur, diagnostics));
+            nested.extend(read_paragraphs(cur, diagnostics, styles));
         }
         14 => skip_bytes(cur, 84)?,
         15 => {
             skip_bytes(cur, 8)?;
-            nested.extend(read_paragraphs(cur, diagnostics));
+            nested.extend(read_paragraphs(cur, diagnostics, styles));
         }
         16 => {
             skip_bytes(cur, 10)?;
-            nested.extend(read_paragraphs(cur, diagnostics));
+            nested.extend(read_paragraphs(cur, diagnostics, styles));
         }
         17 => {
             skip_bytes(cur, 14)?;
-            nested.extend(read_paragraphs(cur, diagnostics));
+            nested.extend(read_paragraphs(cur, diagnostics, styles));
         }
         29 => {
             if header_val1 > 0 && header_val1 < 1_000_000 {
@@ -586,7 +641,9 @@ pub fn encode_johab(c: char) -> u16 {
         let cho = s / (21 * 28);
         let jung = (s % (21 * 28)) / 28;
         let jong = s % 28;
-        const CHO_INV: [u16; 19] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+        const CHO_INV: [u16; 19] = [
+            2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ];
         const JUNG_INV: [u16; 21] = [
             3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21, 22, 23, 26, 27, 28, 29,
         ];
@@ -671,14 +728,22 @@ fn write_bytes(doc: &Document) -> Vec<u8> {
     for _ in 0..7 {
         out.extend_from_slice(&0u16.to_le_bytes());
     }
-    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&4u16.to_le_bytes());
+    out.extend_from_slice(&encode_hwp3_style("Normal", 0, 0, 0));
+    out.extend_from_slice(&encode_hwp3_style("Quote", 350, 0, 1));
+    out.extend_from_slice(&encode_hwp3_style("CodeBlock", 0, 40, 0));
+    out.extend_from_slice(&encode_hwp3_style("HorizontalLine", 0, 0, 1));
     let mut urls = Vec::new();
     if let Some(section) = doc.sections.first() {
         for block in &section.body {
-            if let Block::Paragraph(p) = block
-                && !p.plain_text().trim().is_empty()
-            {
-                write_paragraph(&mut out, p, &mut urls);
+            match block {
+                Block::Paragraph(p) if !p.plain_text().trim().is_empty() => {
+                    write_paragraph(&mut out, p, &mut urls, para_style_id(p));
+                }
+                Block::Break(BreakKind::Thematic) => {
+                    write_paragraph(&mut out, &Paragraph::from_text(" "), &mut urls, 3);
+                }
+                _ => {}
             }
         }
     }
@@ -687,7 +752,30 @@ fn write_bytes(doc: &Document) -> Vec<u8> {
     out
 }
 
-fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, urls: &mut Vec<String>) {
+fn para_style_id(p: &Paragraph) -> u8 {
+    if p.code_block {
+        2
+    } else if p.quote {
+        1
+    } else {
+        0
+    }
+}
+
+fn encode_hwp3_style(name: &str, left_margin: u16, shade: u8, border: u8) -> [u8; STYLE_LEN] {
+    let mut buf = [0u8; STYLE_LEN];
+    let bytes = name.as_bytes();
+    let n = bytes.len().min(20);
+    buf[..n].copy_from_slice(&bytes[..n]);
+    const PS: usize = 20 + CHAR_SHAPE_LEN;
+    buf[PS..PS + 2].copy_from_slice(&left_margin.to_le_bytes());
+    buf[PS + 6..PS + 8].copy_from_slice(&160u16.to_le_bytes());
+    buf[PS + 180] = shade;
+    buf[PS + 181] = border;
+    buf
+}
+
+fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, urls: &mut Vec<String>, style_index: u8) {
     let mut payload = Vec::new();
     let mut char_count = 0u16;
     for run in &para.runs {
@@ -721,7 +809,7 @@ fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, urls: &mut Vec<String>) 
     out.push(0);
     out.push(0);
     out.extend_from_slice(&0u32.to_le_bytes());
-    out.push(0);
+    out.push(style_index);
     out.extend_from_slice(&[0u8; CHAR_SHAPE_LEN]);
     let mut line = [0u8; LINE_INFO_LEN];
     line[4..6].copy_from_slice(&275u16.to_le_bytes());
@@ -1044,7 +1132,9 @@ mod tests {
     #[test]
     fn shipped_read_parses_hangul_hwp3_sample_when_present() {
         let dir = std::env::var("RHWP_DIR").unwrap_or_else(|_| r"C:\Users\swsz9\rhwp".into());
-        let path = std::path::PathBuf::from(dir).join("samples").join("hwp3-sample.hwp");
+        let path = std::path::PathBuf::from(dir)
+            .join("samples")
+            .join("hwp3-sample.hwp");
         let Ok(bytes) = std::fs::read(&path) else {
             return;
         };
@@ -1083,5 +1173,79 @@ mod tests {
     #[test]
     fn rejects_hwp5_signature() {
         assert!(read(b"HWP Document File\0").is_err());
+    }
+
+    #[test]
+    fn roundtrip_keeps_quote() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay is evidence.");
+        p.quote = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        assert!(
+            bytes.windows(b"Quote".len()).any(|w| w == b"Quote"),
+            "style list Quote"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.quote);
+        assert!(p.plain_text().contains("Replay is evidence"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_code_block() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("let n = 1;");
+        p.code_block = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        assert!(
+            bytes.windows(b"CodeBlock".len()).any(|w| w == b"CodeBlock"),
+            "style list CodeBlock"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.code_block);
+        assert!(p.plain_text().contains("let n = 1;"));
+    }
+
+    #[test]
+    fn roundtrip_keeps_thematic_break() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("before")));
+        section.body.push(Block::Break(BreakKind::Thematic));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("after")));
+        doc.sections.push(section);
+        let bytes = write(&doc).expect("write");
+        assert!(
+            bytes
+                .windows(b"HorizontalLine".len())
+                .any(|w| w == b"HorizontalLine"),
+            "style list HorizontalLine"
+        );
+        let back = roundtrip(&doc).expect("roundtrip");
+        assert!(
+            back.sections[0]
+                .body
+                .iter()
+                .any(|b| matches!(b, Block::Break(BreakKind::Thematic))),
+            "{:?}",
+            back.sections[0].body
+        );
+        assert!(back.plain_text().contains("before"));
+        assert!(back.plain_text().contains("after"));
     }
 }

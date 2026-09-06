@@ -19,3 +19,7 @@ cargo test -p docagent-api --test format_hops
 
 Documents with `i % 3 == 0` also carry a table so the table path takes the same hops.
 Global interchange (DOCX, Markdown, ODT) runs first; Hangul codecs follow on the same IR.
+
+Hops prove **plain text** presence. Lists, links, strike, quotes, code, tasks,
+highlight, and super/sub are codec-level round-trips (see [What ships](capabilities.md)),
+not this hop count.
