@@ -36,3 +36,7 @@ Shallow score vs the locked ten. `examples/letter.md` has `![Harbor mark](docs/a
 ## Cycle 51 landing (2026-09-06)
 
 GitHub first screen now uses the refreshed convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) that show the teal harbor mark under the H2. Dropped every stale / no-picture caption. Capsule hashes on README match `letter-capsule.json`. Capsule / determinism / GPU-free kept. Demo-image gap **closed**. Next gap: PDF page looking as dense as WeasyPrint/MinerU — still no invented numbers. No OCR. No wrap. Hangul still **stop deepening**.
+
+## Cycle 52 (2026-09-06)
+
+Committed finished lanes: DOCX `a:blip` + media PNG from `letter.md`; ODT `draw:image` + Pictures/ PNG; demo capsule/prove/`letter.pdf`/`output-*.png` after the 24pt mark scale. Next: landing lockstep README hashes with capsule; PDF page density vs WeasyPrint/MinerU; demo keep assets in lockstep. docx/odt/mdhtml: do not invent work. No OCR. Hangul still **stop deepening**.

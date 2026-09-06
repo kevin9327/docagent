@@ -1,10 +1,12 @@
-//! `examples/letter.md` → ODT must store image bytes under Pictures/
-//! once the markdown contains `![`. Until then this test returns early.
+//! `examples/letter.md` → ODT must emit `draw:image` in content.xml
+//! and store Harbor mark bytes under Pictures/.
 
 use std::io::{Cursor, Read};
 use std::path::Path;
 
 use zip::ZipArchive;
+
+const PNG_MAGIC: &[u8] = &[0x89, b'P', b'N', b'G'];
 
 #[test]
 fn letter_md_odt_stores_picture_bytes() {
@@ -20,6 +22,24 @@ fn letter_md_odt_stores_picture_bytes() {
     assert!(docagent_odt::sniff(&odt), "written bytes must sniff as ODT");
 
     let mut zip = ZipArchive::new(Cursor::new(odt)).expect("odt zip");
+    let mut content = String::new();
+    zip.by_name("content.xml")
+        .expect("content.xml")
+        .read_to_string(&mut content)
+        .unwrap();
+    assert!(
+        content.contains("<draw:image"),
+        "ODT from letter.md must include draw:image: {content}"
+    );
+    assert!(
+        content.contains("Pictures/"),
+        "draw:image must href Pictures/: {content}"
+    );
+    assert!(
+        content.contains("Harbor mark"),
+        "Harbor mark alt must appear on the frame: {content}"
+    );
+
     let mut names = Vec::new();
     for i in 0..zip.len() {
         let name = zip.by_index(i).unwrap().name().replace('\\', "/");
@@ -38,5 +58,9 @@ fn letter_md_odt_stores_picture_bytes() {
             .read_to_end(&mut stored)
             .unwrap();
         assert!(!stored.is_empty(), "{name} must have bytes");
+        assert!(
+            stored.starts_with(PNG_MAGIC),
+            "{name} must be the Harbor PNG"
+        );
     }
 }
