@@ -1,21 +1,19 @@
-# Score vs the locked ten (2026-09-06, shallow)
+# Score vs the locked ten (2026-09-06)
 
 | Axis | DocAgent | Best of the ten | Gap |
 | --- | --- | --- | --- |
-| GitHub first screen | Harbor-mark convert shots under the H2 | MinerU/Docling photos | **closed** |
-| Agent API + capsule | Command + SHA-256×3 | none | none — keep |
-| Same bytes (`prove`) | identical: true | none | none — keep |
-| Demo letter looks real | tightness pass (`288c7ba` + shots) | WeasyPrint / MinerU | **open** — table/paragraph tightness vs WeasyPrint |
-| Images in the demo | letter.md `![` and shots paint the mark | yes | **closed** |
-| DOCX/ODT/MD/HTML/PDF/A | five codecs; PNG/JPEG yes | Pandoc | Hangul images **—**; **stop deepening Hangul** |
+| GitHub first screen | 200px hero + unique-yes `<details>` + trio + hashes **above** vs-ten; Quickstart **below** | MinerU/Docling visual | keep lockstep; hashes = capsule `b468b37f…`; trio/capsule shots still `b867db0a…` (pixels `b867db0aa9125feb…`, lag — not a fake hash) |
+| Agent API + capsule | yes | none | keep |
+| Same bytes (`prove`) | yes | none | keep; prove stays **distinct** (`928b4745…` / `2607bb6f…`) — named on README/docs; do not copy onto capsule |
+| Letter page | 24pt mark under H2, table painted | WeasyPrint | **open** — table/paragraph vs WeasyPrint |
+| Images in demo | yes | Pandoc/python-docx | keep in all five first-class codecs |
+| Hangul | unique yes | none of the ten | **stop deepening** |
 
-**This hour’s six (no trivia, no new IR, no invented numbers, no OCR):**
+## Standing six (always fill; never idle)
 
-1. landing — first screen already shows the mark. Keep hashes lockstep with `letter-capsule.json`. Do not claim the WeasyPrint gap is closed. No OmniDocBench.
-2. pdf — remaining letter-page tightness vs WeasyPrint: table cell padding and paragraph gap after the mark. Heading size/leading already locked — do not rewrite those tests. No wrap-mode. No Hangul.
-3. docx — do not invent work. Picture already `a:blip`.
-4. odt — do not invent work. Picture already `draw:image`.
-5. mdhtml — do not invent work. `![alt]` / `<img>` already round-trip.
-6. demo — re-run `prove` so `letter-prove.json` is from this engine (`plan_hash` still looks stale vs capsule). Keep `letter.*` / `output-*.png` lockstep. Do not fake hashes.
-
-No OmniDocBench. No OCR/VLM. Next gap is WeasyPrint table/paragraph tightness, not another screenshot disclaimer.
+1. **landing** — MinerU-density first screen. Hashes = `letter-capsule.json`. Do not claim WeasyPrint closed.
+2. **pdf** — WeasyPrint letter page: table cell padding, gap after the mark, type. No wrap. No Hangul.
+3. **docx** — `letter.md` → DOCX looks like Word: heading, table, visible `a:blip` image. python-docx/Pandoc axis.
+4. **odt** — `letter.md` → ODT looks like LibreOffice: heading, table, visible `draw:image`.
+5. **mdhtml** — HTML of the letter: `<img>` display size matches the PDF 24pt floor; readable article CSS (WeasyPrint input).
+6. **demo** — convert + prove + `output-*.png` after any engine change. Do not fake hashes.

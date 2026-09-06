@@ -2,6 +2,8 @@
 
 ## Delivery confirmation — order 48291
 
+![Harbor mark](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGUlEQVR42mMQ9vP6TwlmGDVg1IBRA4aLAQAmsKoQ5BRJxgAAAABJRU5ErkJggg==)
+
 6 September 2026
 
 To: operations desk, Duisburg terminal.

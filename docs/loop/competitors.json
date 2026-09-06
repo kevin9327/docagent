@@ -1,8 +1,8 @@
 {
   "locked_at": "2026-09-06",
   "category": "Agent document runtime — flow documents only (not OCR suites, not office GUIs)",
-  "north_star": "A stranger opening github.com/kevin9327/docagent must immediately see picture in, PDF/A out — hero art, a capability matrix, and real convert shots with the teal harbor mark under the H2, at the visual density of MinerU/Docling/Pandoc. First screen: PNG/JPEG in Markdown/HTML/DOCX/ODT become a PDF/A XObject. Capsule hashed. GPU-free. Not OCR. DocAgent wins the agent-runtime axes: Command/Query/Event, capsule hashes, integer layout, byte-identical reruns, GPU-free convert. Hangul is a regional codec, not the first-screen story. Demo-image gap is closed. Next gap: PDF page density vs WeasyPrint/MinerU.",
-  "not_claimed": ["OCR", "VLM", "OmniDocBench"],
+  "north_star": "A stranger opening github.com/kevin9327/docagent must immediately see an agent runtime as dense as MinerU/Docling: 200px hero, badges, one-line runtime strip, collapsed unique-yes details (C/Q/E · capsule SHA-256 ×3 · prove — none of the locked ten), harbor-mark convert trio (teal under H2) and capsule SHA-256 ×3 lockstep with letter-capsule.json ABOVE the vs-the-ten matrix; Command::Convert Quickstart sits BELOW that matrix (MinerU features-before-install). Picture in, PDF/A out. PNG/JPEG in Markdown/HTML/DOCX/ODT become a PDF/A XObject. GPU-free. Not OCR. DocAgent wins Command/Query/Event, capsule hashes, integer layout, byte-identical reruns. Hangul is a regional codec, not the first-screen story. Demo-image gap is closed. Do not claim the WeasyPrint print-CSS tightness gap is closed.",
+  "not_claimed": ["OCR", "VLM", "OmniDocBench", "WeasyPrint print-CSS tightness"],
   "docagent_ships": {
     "runtime": ["Command/Query/Event", "capsule SHA-256 ×3", "byte-identical rerun", "integer layout 1/7200 in", "GPU-free"],
     "flow_marks": ["lists", "links", "strike", "quotes", "code spans", "fenced code", "thematic breaks", "tasks", "highlight", "underline", "superscript", "subscript", "table headers", "images (PNG, JPEG)"],
@@ -15,7 +15,7 @@
       "HTML <img> write and data-URI read (no http src, not HTML5)",
       "DOCX a:blip, ODT draw:image",
       "Hangul images: not yet",
-      "examples/letter.md includes ![Harbor mark](docs/assets/mark.png); first screen is output-trio.png + output-pdf.png + output-html.png + mark.png; teal mark under the H2; README hashes lockstep with letter-capsule.json (output_hash b4b3843b18793d3fa50e43706583fc7bd388f83fef04ecabaccb2cb6cf084fc1); demo-image gap is closed"
+      "examples/letter.md includes ![Harbor mark](docs/assets/mark.png); first screen is 200px hero + badges + unique-yes details + output-trio.png + capsule hashes ABOVE vs-ten, Quickstart BELOW vs-ten; README hashes lockstep with letter-capsule.json (input b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf, plan 4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a, output b468b37f1c3d8da7e4aac7e1a8417b46c29a57863817f9df16e8d4a6cc89f0f8); trio/capsule shots still show b867db0a… (pixels b867db0aa9125feb…) until demo refreshes PNGs — shot lag, not a fake hash; prove stays distinct (928b4745… / 2607bb6f…) — do not copy onto capsule; demo-image gap is closed; WeasyPrint tightness is not claimed closed"
     ]
   },
   "repos": [

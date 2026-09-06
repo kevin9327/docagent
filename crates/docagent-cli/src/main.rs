@@ -15,25 +15,25 @@ struct Cli {
 enum Cmd {
     Convert {
         input: PathBuf,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.pdf")]
         pdf: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.html")]
         html: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.ir.json")]
         ir: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter-capsule.json")]
         capsule: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.docx")]
         docx: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.odt")]
         odt: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.md")]
         md: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.hwp")]
         hwp5: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.hwpx")]
         hwpx: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "docs/assets/letter.hml")]
         hml: Option<PathBuf>,
     },
     /// Convert twice. Exit 0 only if PDF/A, HTML, and capsule hashes match.
@@ -432,5 +432,42 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("![no](missing.png)"), "{out}");
+    }
+
+    #[test]
+    fn convert_bare_flags_default_to_docs_assets() {
+        let cli = Cli::try_parse_from([
+            "docagent",
+            "convert",
+            "examples/letter.md",
+            "--pdf",
+            "--html",
+            "--odt",
+            "--docx",
+            "--capsule",
+        ])
+        .expect("parse convert flags");
+        match cli.cmd {
+            Cmd::Convert {
+                pdf,
+                html,
+                odt,
+                docx,
+                capsule,
+                md,
+                ..
+            } => {
+                assert_eq!(pdf.as_deref(), Some(Path::new("docs/assets/letter.pdf")));
+                assert_eq!(html.as_deref(), Some(Path::new("docs/assets/letter.html")));
+                assert_eq!(odt.as_deref(), Some(Path::new("docs/assets/letter.odt")));
+                assert_eq!(docx.as_deref(), Some(Path::new("docs/assets/letter.docx")));
+                assert_eq!(
+                    capsule.as_deref(),
+                    Some(Path::new("docs/assets/letter-capsule.json"))
+                );
+                assert_eq!(md, None);
+            }
+            _ => panic!("expected convert"),
+        }
     }
 }

@@ -8,11 +8,11 @@ publish = false
 
 [dependencies]
 docagent-font.workspace = true
+docagent-layout.workspace = true
 docagent-paint.workspace = true
 krilla.workspace = true
 
 [dev-dependencies]
-docagent-layout.workspace = true
 docagent-model.workspace = true
 docagent-paint.workspace = true
 

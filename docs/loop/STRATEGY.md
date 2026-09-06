@@ -48,9 +48,9 @@ per lane, from the queue below. Skip a lane if it has no queue item.
 6. **demo** — `docagent convert` + `prove` on `examples/letter.md`; write
    capsule/prove JSON. Do not invent features.
 
-After the demo letter shows an image on GitHub, the next hour’s score may
-unlock: tighter PDF typography vs WeasyPrint, or a second sample. Still no
-Hangul archaeology.
+Never leave a lane empty. If a queue item already shipped, use SCORE.md
+standing six. Idle slots lose to MinerU. 1 out, 1 in — refill the same
+turn a slot hits `done`. Do not wait 15 minutes.
 
 ## Forbidden unless SCORE names it
 

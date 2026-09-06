@@ -1,57 +1,42 @@
-# Dispatcher — 15 minutes, fill empty slots, do not wait
+# Dispatcher — always six live (no 15-minute wait)
 
-You are a **slot filler**, not a six-agent barrier. Finish in a few minutes.
-Do not sit until six children complete.
+You are a **slot filler**. Finish in under two minutes. Never wait for children.
 
 Repo: `C:\Users\swsz9\docagent`
-Read `STRATEGY.md`, `LANES.md`, `STATE.md`, `SCORE.md` (if any).
+Read `STRATEGY.md`, `LANES.md`, `SCORE.md`.
 
-## 1. Hourly score
+## Always six — 1 out, 1 in
 
-If `docs/loop/SCORE.md` is missing or older than 60 minutes, rewrite it from
-STRATEGY.md (shallow). Then choose this hour’s six tasks from the queue.
-Do not invent work.
+There must be **six** `status: running` slots after you return.
+A slot is empty if missing, `done`, or `running` older than 12 minutes.
 
-## 2. Commit whatever is already finished
+Write the slot file `status: running` with `started` = now (UTC) **first**,
+then spawn. Re-read every slot file immediately before spawning — if it
+is already `running` and younger than 12 minutes, skip that lane (another
+filler got there). Never two children on one lane.
 
-If the worktree has lane diffs and no other dispatcher is testing:
+Spawn every remaining empty lane in one parallel wave, then **return**.
+Do not `get_command_or_subagent_output`.
 
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace --offline`
-- If green: one commit, `git push origin master`. Do not wait for empty
-  lanes. Update STATE.md.
+Refill is **immediate**. The 60s scheduler is a safety net only — never
+wait for the next fire if a slot is already empty in this turn.
 
-If tests fail, fix only orchestrator-owned files or revert the broken lane.
-Do not start a six-hour debug.
+Never leave a lane idle because “the feature already shipped”. Use that
+lane’s **standing #1 job** from SCORE.md.
 
-## 3. Fill empty slots immediately (max 6 live)
+Never two children on one lane. Cap 6 running.
 
-Slots live in `docs/loop/slots/<lane>.json`:
+## Hourly score
 
-```json
-{"status":"running","task":"...","started":"ISO-8601"}
-{"status":"done","task":"...","started":"...","ended":"..."}
-```
+If `SCORE.md` is missing or older than 60 minutes, rewrite it shallowly vs
+the ten. Still fill six slots the same firing.
 
-A slot is **empty** if the file is missing, `status` is `done`, or `status`
-is `running` and `started` is older than 20 minutes (stuck).
+## Commit
 
-For each empty lane that has a STRATEGY queue item this hour, spawn **one**
-`general-purpose` child (`isolation` none) and write `status: running`.
-Spawn all empty lanes in **one** parallel wave, then **return**. Do not
-`get_command_or_subagent_output` on them.
+If the worktree has diffs: clippy `-D warnings`, `cargo test --workspace
+--offline`, one commit, push. Do not wait for other lanes.
 
-If a lane has no queue item, leave it empty. Do not give it trivia.
+## Children
 
-Children must: write only their lane paths; not commit; not edit model;
-clipp + test their crate; on finish, set their slot file to `done`.
-
-## 4. Live cap
-
-Never start a child if six slots already show `running` with fresh
-heartbeats. Never spawn two children for the same lane.
-
-## 5. LOCK
-
-Do not use a global LOCK that blocks the whole hour. Per-lane slot files
-only.
+Write only their lane. Do not commit. Set their slot file to `done` when
+finished. No Hangul trivia, no wrap-mode archaeology, no new IR, no OCR.

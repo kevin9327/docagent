@@ -8,10 +8,19 @@ python-docx, LibreOffice.
 This page is the honest matrix. It is not an OCR bake-off. There are no
 OmniDocBench scores, no VLM accuracy claims, and no invented GPU numbers.
 
+**North star:** drop `examples/letter.md` (or DOCX/ODT) that contains a PNG or
+JPEG, and get PDF/A + HTML + Markdown + DOCX + ODT whose bytes match the next
+run, with three hashes in the capsule. The picture is a PDF/A XObject. Not OCR.
+
 First-screen job: **picture in, PDF/A out.** A PNG or JPEG in Markdown, HTML,
 DOCX, or ODT becomes a PDF/A XObject. We embed the file. We do not OCR it.
-The demo convert paints the teal harbor mark under the H2. The demo-image
-gap is **closed**. Capsule hashed. GPU-free.
+The GitHub page leads with a 200px hero, a collapsed unique-yes `<details>`
+(C/Q/E · capsule SHA-256 ×3 · `prove` — none of the locked ten), the harbor-mark
+convert trio (teal under the H2), and the three capsule hashes **above** the
+vs-the-ten matrix. Quickstart (`convert` + `prove` + `Engine`) is **below** that
+matrix — MinerU/Docling visual density for an agent runtime, not an OCR bake-off.
+The demo-image gap is **closed**. Capsule hashed. GPU-free. Print-CSS tightness
+vs WeasyPrint is **not** claimed closed.
 
 ## Runtime axes
 
@@ -33,7 +42,20 @@ not ship that axis as a product feature. Tools are rows.
 | LibreOffice 4.3k | Headless office convert | | | | | **yes** | |
 
 `prove examples/letter.md` is the merge gate: two converts, identical PDF/A + HTML
-bytes, identical input / plan / output SHA-256.
+bytes, identical input / plan / output SHA-256. README hashes lockstep with
+[`letter-capsule.json`](../assets/letter-capsule.json). `prove` writes a separate
+[`letter-prove.json`](../assets/letter-prove.json); those plan/output hashes stay
+**distinct** (`928b4745…` / `2607bb6f…`) from the convert capsule — do not copy
+them onto the README table.
+
+```bash
+cargo run -p docagent-cli -- convert examples/letter.md \
+  --pdf out.pdf --html out.html --odt out.odt --docx out.docx --capsule cap.json
+cargo run -p docagent-cli -- prove examples/letter.md
+```
+
+Every Command writes a capsule. CLI, daemon, MCP, and WIT are thin adapters over
+the same `Engine` (`Convert` | `Import` | `Export` | `LayoutDocument`).
 
 ## Flow marks on the IR
 
@@ -52,18 +74,18 @@ teaser.
 | Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** |
 | Superscript / subscript | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline shift | `w:vertAlign` | Tsuper / Tsub | **yes** |
 | Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | **yes** |
-| Table header row | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** |
 | **Images (PNG, JPEG)** | `![alt](…)` | `<img>` | **XObject** | `a:blip` | `draw:image` | **—** |
+| Table header row | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** |
 
-Images are **yes** (PNG and JPEG) on Markdown, HTML, PDF/A, DOCX, and ODT. They
-stay **—** on Hangul.
+**Images are the first-class row.** PNG and JPEG round-trip on Markdown, HTML,
+PDF/A, DOCX, and ODT. They stay **—** on Hangul. That dash is real.
 
 `examples/letter.md` includes `![Harbor mark](docs/assets/mark.png)`. First-screen
-convert shots — [`output-trio.png`](../assets/output-trio.png),
-[`output-pdf.png`](../assets/output-pdf.png),
-[`output-html.png`](../assets/output-html.png) — show the teal mark under the H2
-on the PDF/A page and the HTML page. The demo-image gap is **closed**. Capsule
-hashes travel with the files.
+convert shot is [`output-trio.png`](../assets/output-trio.png) (PDF/A + HTML +
+capsule, teal mark under the H2, JSON `b468b37f…`; trio/capsule panel still `b867db0a…` — shot lag, not a fake hash). Below-fold
+shots: [`output-pdf.png`](../assets/output-pdf.png),
+[`output-html.png`](../assets/output-html.png). The demo-image gap is **closed**.
+Capsule hashes travel with the files.
 
 ![PDF/A, HTML, and capsule from examples/letter.md — teal harbor mark under the H2](../assets/output-trio.png)
 
@@ -95,6 +117,8 @@ unique **yes** on the runtime matrix stands. Images on Hangul are not claimed.
 - OmniDocBench scores. We do not publish them because we do not compete there.
 - Spreadsheets, slides, a GUI, a cursor, or an undo stack.
 - GPU as a requirement. Layout is integer CPU.
+- WeasyPrint print-CSS tightness. Table/paragraph tightness vs WeasyPrint remains
+  an open gap. Do not read this page as closing it.
 
 Proof files for `examples/letter.md`: [PDF/A](../assets/letter.pdf),
 [HTML](../assets/letter.html), [DOCX](../assets/letter.docx),
@@ -102,4 +126,5 @@ Proof files for `examples/letter.md`: [PDF/A](../assets/letter.pdf),
 [capsule](../assets/letter-capsule.json). SHA-256 lockstep:
 input `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf`,
 plan `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a`,
-output `b4b3843b18793d3fa50e43706583fc7bd388f83fef04ecabaccb2cb6cf084fc1`.
+output `b468b37f1c3d8da7e4aac7e1a8417b46c29a57863817f9df16e8d4a6cc89f0f8`.
+`prove` plan/output hashes stay **distinct** (`928b4745…` / `2607bb6f…`) — not copied onto this capsule.

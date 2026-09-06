@@ -1,43 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="280" viewBox="0 0 1280 280" role="img" aria-label="Picture in: Markdown DOCX ODT HTML with PNG or JPEG. One integer engine. PDF/A out with that picture as an XObject. Three capsule hashes. Not OCR.">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="240" viewBox="0 0 1280 240" role="img" aria-label="Command Convert: Markdown DOCX ODT HTML plus PNG or JPEG into one integer engine. PDF/A XObject out. Three capsule hashes. Prove twice. Not OCR.">
   <defs>
     <linearGradient id="pbg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#071018"/>
       <stop offset="100%" stop-color="#0f172a"/>
     </linearGradient>
   </defs>
-  <rect width="1280" height="280" rx="24" fill="url(#pbg)"/>
-  <text x="40" y="42" fill="#5eead4" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="13" font-weight="700" letter-spacing="3">PICTURE IN · PDF/A OUT · NOT OCR</text>
+  <rect width="1280" height="240" rx="24" fill="url(#pbg)"/>
+  <text x="36" y="32" fill="#5eead4" font-family="ui-sans-serif, Segoe UI, Helvetica, Arial" font-size="12" font-weight="700" letter-spacing="2.5">COMMAND::CONVERT · ONE INTEGER ENGINE · PROVE · NOT OCR</text>
 
   <g font-family="ui-sans-serif, Segoe UI, Helvetica, Arial">
-    <rect x="40" y="70" width="250" height="160" rx="16" fill="#111827" stroke="#1f2937"/>
-    <text x="165" y="104" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="700">INPUT</text>
-    <text x="165" y="136" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">MD · DOCX · ODT</text>
-    <text x="165" y="162" text-anchor="middle" fill="#cbd5e1" font-size="16">HTML + PNG / JPEG</text>
-    <text x="165" y="198" text-anchor="middle" fill="#5eead4" font-size="13">![alt](photo.png)</text>
+    <rect x="36" y="50" width="236" height="148" rx="14" fill="#111827" stroke="#1f2937"/>
+    <text x="154" y="78" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="700">INPUT</text>
+    <text x="154" y="108" text-anchor="middle" fill="#f8fafc" font-size="17" font-weight="800">MD · DOCX · ODT</text>
+    <text x="154" y="132" text-anchor="middle" fill="#cbd5e1" font-size="14">HTML + PNG / JPEG</text>
+    <text x="154" y="160" text-anchor="middle" fill="#5eead4" font-size="12">![Harbor mark](mark.png)</text>
+    <text x="154" y="180" text-anchor="middle" fill="#64748b" font-size="11">people file in</text>
 
-    <polygon points="304,150 332,138 332,162" fill="#2dd4bf"/>
+    <polygon points="284,124 308,114 308,134" fill="#2dd4bf"/>
 
-    <rect x="348" y="70" width="300" height="160" rx="16" fill="#042f2e" stroke="#134e4a"/>
-    <text x="498" y="104" text-anchor="middle" fill="#5eead4" font-size="13" font-weight="700">ONE ENGINE</text>
-    <text x="498" y="140" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">IR + layout</text>
-    <text x="498" y="168" text-anchor="middle" fill="#99f6e4" font-size="16">integer 1/7200 inch</text>
-    <text x="498" y="200" text-anchor="middle" fill="#5eead4" font-size="13">GPU-free · embed, do not OCR</text>
+    <rect x="320" y="50" width="280" height="148" rx="14" fill="#042f2e" stroke="#134e4a"/>
+    <text x="460" y="78" text-anchor="middle" fill="#5eead4" font-size="11" font-weight="700">ENGINE</text>
+    <text x="460" y="108" text-anchor="middle" fill="#f8fafc" font-size="17" font-weight="800">IR + i32 layout</text>
+    <text x="460" y="132" text-anchor="middle" fill="#99f6e4" font-size="14">1/7200 inch · GPU-free</text>
+    <text x="460" y="156" text-anchor="middle" fill="#5eead4" font-size="12">embed the bytes · do not OCR</text>
+    <text x="460" y="180" text-anchor="middle" fill="#64748b" font-size="11">CLI · daemon · MCP · WIT</text>
 
-    <polygon points="662,150 690,138 690,162" fill="#2dd4bf"/>
+    <polygon points="612,124 636,114 636,134" fill="#2dd4bf"/>
 
-    <rect x="706" y="70" width="250" height="160" rx="16" fill="#111827" stroke="#1f2937"/>
-    <text x="831" y="104" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="700">OUTPUT</text>
-    <text x="831" y="136" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">PDF/A</text>
-    <text x="831" y="162" text-anchor="middle" fill="#cbd5e1" font-size="15">teal mark under H2</text>
-    <text x="831" y="190" text-anchor="middle" fill="#cbd5e1" font-size="15">picture as XObject</text>
-    <text x="831" y="214" text-anchor="middle" fill="#64748b" font-size="12">HTML · DOCX · ODT · same bytes</text>
+    <rect x="648" y="50" width="236" height="148" rx="14" fill="#111827" stroke="#1f2937"/>
+    <text x="766" y="78" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="700">OUTPUT</text>
+    <text x="766" y="108" text-anchor="middle" fill="#f8fafc" font-size="17" font-weight="800">PDF/A XObject</text>
+    <text x="766" y="132" text-anchor="middle" fill="#cbd5e1" font-size="13">teal mark under H2</text>
+    <text x="766" y="154" text-anchor="middle" fill="#cbd5e1" font-size="13">HTML · DOCX · ODT · MD</text>
+    <text x="766" y="180" text-anchor="middle" fill="#64748b" font-size="11">same fonts → same bytes</text>
 
-    <polygon points="970,150 998,138 998,162" fill="#2dd4bf"/>
+    <polygon points="896,124 920,114 920,134" fill="#2dd4bf"/>
 
-    <rect x="1014" y="70" width="226" height="160" rx="16" fill="#0b1220" stroke="#2dd4bf"/>
-    <text x="1127" y="104" text-anchor="middle" fill="#5eead4" font-size="13" font-weight="700">CAPSULE</text>
-    <text x="1127" y="140" text-anchor="middle" fill="#f8fafc" font-size="18" font-weight="800">3 × SHA-256</text>
-    <text x="1127" y="168" text-anchor="middle" fill="#99f6e4" font-size="15">input · plan · output</text>
-    <text x="1127" y="200" text-anchor="middle" fill="#64748b" font-size="13">agent-replayable</text>
+    <rect x="932" y="50" width="312" height="148" rx="14" fill="#0b1220" stroke="#2dd4bf"/>
+    <text x="1088" y="78" text-anchor="middle" fill="#5eead4" font-size="11" font-weight="700">CAPSULE · PROVE</text>
+    <text x="1088" y="108" text-anchor="middle" fill="#f8fafc" font-size="16" font-weight="800">SHA-256 ×3</text>
+    <text x="1088" y="132" text-anchor="middle" fill="#99f6e4" font-family="ui-monospace, Consolas, monospace" font-size="12">in b0f44237</text>
+    <text x="1088" y="152" text-anchor="middle" fill="#99f6e4" font-family="ui-monospace, Consolas, monospace" font-size="12">plan 4b7360eb · out b468b37f</text>
+    <text x="1088" y="180" text-anchor="middle" fill="#64748b" font-size="11">letter-capsule.json · replayable</text>
   </g>
 </svg>
