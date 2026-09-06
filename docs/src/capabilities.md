@@ -10,7 +10,8 @@ OmniDocBench scores, no VLM accuracy claims, and no invented GPU numbers.
 
 First-screen job: **picture in, PDF/A out.** A PNG or JPEG in Markdown, HTML,
 DOCX, or ODT becomes a PDF/A XObject. We embed the file. We do not OCR it.
-The demo convert paints the teal harbor mark under the H2.
+The demo convert paints the teal harbor mark under the H2. The demo-image
+gap is **closed**. Capsule hashed. GPU-free.
 
 ## Runtime axes
 
@@ -57,11 +58,18 @@ teaser.
 Images are **yes** (PNG and JPEG) on Markdown, HTML, PDF/A, DOCX, and ODT. They
 stay **—** on Hangul.
 
-`examples/letter.md` includes `![Harbor mark](docs/assets/mark.png)`. Convert
-shots in `docs/assets/output-*.png` show the teal mark under the H2 on the
-PDF/A page and the HTML page. Capsule hashes travel with the files.
+`examples/letter.md` includes `![Harbor mark](docs/assets/mark.png)`. First-screen
+convert shots — [`output-trio.png`](../assets/output-trio.png),
+[`output-pdf.png`](../assets/output-pdf.png),
+[`output-html.png`](../assets/output-html.png) — show the teal mark under the H2
+on the PDF/A page and the HTML page. The demo-image gap is **closed**. Capsule
+hashes travel with the files.
+
+![PDF/A, HTML, and capsule from examples/letter.md — teal harbor mark under the H2](../assets/output-trio.png)
 
 ![PDF/A page from examples/letter.md — teal harbor mark under the H2](../assets/output-pdf.png)
+
+![HTML from examples/letter.md — teal harbor mark under the H2 as img](../assets/output-html.png)
 
 | Placement | What ships |
 | --- | --- |
@@ -91,4 +99,7 @@ unique **yes** on the runtime matrix stands. Images on Hangul are not claimed.
 Proof files for `examples/letter.md`: [PDF/A](../assets/letter.pdf),
 [HTML](../assets/letter.html), [DOCX](../assets/letter.docx),
 [ODT](../assets/letter.odt), [Markdown](../assets/letter.md),
-[capsule](../assets/letter-capsule.json).
+[capsule](../assets/letter-capsule.json). SHA-256 lockstep:
+input `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf`,
+plan `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a`,
+output `f09d223f56e8adec474d9c24c3f0b2667f72104b1f67465f5e63c6c997a19ddf`.

@@ -32,13 +32,22 @@ docagent prove examples/letter.md
 ```
 
 That line is in `examples/letter.md`. Convert paints the teal harbor mark under
-the H2 as a PDF/A XObject. The GitHub shots
-[`output-trio.png`](../assets/output-trio.png) and
-[`output-pdf.png`](../assets/output-pdf.png) are that page.
+the H2 as a PDF/A XObject. First-screen pictures are the harbor-mark convert
+shots plus the mark fixture:
+[`output-trio.png`](../assets/output-trio.png),
+[`output-pdf.png`](../assets/output-pdf.png),
+[`output-html.png`](../assets/output-html.png),
+[`mark.png`](../assets/mark.png).
+The demo-image gap is **closed**. Capsule hashed. GPU-free. Not OCR.
 
 ![PDF/A, HTML, and capsule from examples/letter.md — teal harbor mark under the H2](../assets/output-trio.png)
 
-No GUI. No spreadsheet or presentation models. No OCR scores.
+![PDF/A page from examples/letter.md — teal harbor mark under the H2](../assets/output-pdf.png)
+
+![HTML from examples/letter.md — teal harbor mark under the H2 as img](../assets/output-html.png)
+
+No GUI. No spreadsheet or presentation models. No OCR scores. No OmniDocBench
+numbers.
 
 See [What ships](capabilities.md) for the codec matrix versus MinerU, Docling,
 Pandoc, Marker, Unstructured, PyMuPDF, WeasyPrint, ONLYOFFICE, python-docx, and

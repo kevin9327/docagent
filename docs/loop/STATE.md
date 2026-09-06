@@ -25,13 +25,13 @@ https://github.com/kevin9327/docagent
 
 Orchestrator fans out 6 lanes (LANES.md). One commit after clippy+tests. No overlapping files.
 
-## Cycle 49 landing (2026-09-06)
+## Cycle 49 landing (2026-09-06) — historical
 
-First screen now sells **picture in, PDF/A out**. Hero / pipeline / ships drop wrap-mode and Hangul trivia. Images row: PNG+JPEG **yes** on MD/HTML/PDF/A/DOCX/ODT, Hangul **—**. Demo letter landed `![Harbor mark](docs/assets/mark.png)`; README points at that line and at `docs/assets/mark.png`. `output-*.png` were not rewritten by landing — captions stay honest if those frames are still text-only. No OCR claims.
+First screen sold **picture in, PDF/A out**. Hero / pipeline / ships dropped wrap-mode and Hangul trivia. Images row: PNG+JPEG **yes** on MD/HTML/PDF/A/DOCX/ODT, Hangul **—**. Demo letter landed `![Harbor mark](docs/assets/mark.png)`. Superseded: those convert shots now paint the teal mark; demo-image gap is **closed** (see Cycle 53). No OCR claims.
 
-## Cycle 50 landing (2026-09-06)
+## Cycle 50 landing (2026-09-06) — historical
 
-Shallow score vs the locked ten. `examples/letter.md` has `![Harbor mark](docs/assets/mark.png)`. `output-pdf.png`, `output-html.png`, and `output-trio.png` are still text-only — no Harbor mark painted. Captions on README / intro / capabilities stay honest: GitHub-image gap **open**. Next gap is not WeasyPrint until those shots show the mark. No new IR. No OCR. Hangul still **stop deepening**.
+Shallow score vs the locked ten. `examples/letter.md` has `![Harbor mark](docs/assets/mark.png)`. Superseded: `output-pdf.png`, `output-html.png`, and `output-trio.png` now show the harbor mark under the H2; GitHub-image gap is **closed** (see Cycle 53). No new IR. No OCR. Hangul still **stop deepening**.
 
 ## Cycle 51 landing (2026-09-06)
 
@@ -40,3 +40,11 @@ GitHub first screen now uses the refreshed convert shots (`output-trio.png`, `ou
 ## Cycle 52 (2026-09-06)
 
 Committed finished lanes: DOCX `a:blip` + media PNG from `letter.md`; ODT `draw:image` + Pictures/ PNG; demo capsule/prove/`letter.pdf`/`output-*.png` after the 24pt mark scale. Next: landing lockstep README hashes with capsule; PDF page density vs WeasyPrint/MinerU; demo keep assets in lockstep. docx/odt/mdhtml: do not invent work. No OCR. Hangul still **stop deepening**.
+
+## Cycle 53 landing (2026-09-06)
+
+First screen uses the harbor-mark convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) plus `mark.png`. Dropped stale / no-picture captions and the concept-art JPGs (`convert-story.jpg`, `capsule-page.jpg`) that are not engine output. README capsule hashes lockstep with `letter-capsule.json` (`output_hash` `f09d223f56e8adec474d9c24c3f0b2667f72104b1f67465f5e63c6c997a19ddf`). Capsule / determinism / GPU-free kept. Demo-image gap **closed**. Cycles 49–50 “text-only / gap open” captions are historical. Next gap: PDF page density vs WeasyPrint/MinerU. No OCR. No OmniDocBench numbers. Hangul still **stop deepening**.
+
+## Cycle 54 (2026-09-06)
+
+Committed PDF letter-page density (type, spacing, table) vs WeasyPrint/MinerU plus landing captions/hashes. Demo must refresh `letter.*` / `output-*.png` so GitHub matches the denser page. docx/odt/mdhtml: do not invent work. No OCR. Hangul still **stop deepening**.

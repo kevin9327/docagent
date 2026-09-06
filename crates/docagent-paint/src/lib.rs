@@ -381,6 +381,106 @@ mod tests {
     }
 
     #[test]
+    fn paint_letter_page_uses_dense_type_and_table() {
+        let (w, h) = mark_png_hu();
+        let (ew, eh) = docagent_layout::min_on_page_size(w, h);
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h1 = Paragraph::from_text("Northwind Freight");
+        h1.outline_level = Some(1);
+        h1.runs[0].style.size = 1800;
+        h1.runs[0].style.bold = true;
+        h1.space_after = 400;
+        section.body.push(Block::Paragraph(h1));
+        let mut h2 = Paragraph::from_text("Delivery confirmation");
+        h2.outline_level = Some(2);
+        h2.runs[0].style.size = 1400;
+        h2.runs[0].style.bold = true;
+        h2.space_before = 360;
+        h2.space_after = 240;
+        section.body.push(Block::Paragraph(h2));
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(w, h)];
+        section.body.push(Block::Paragraph(img_p));
+        let mut body = Paragraph::from_text("The shipment left Busan on 4 September");
+        body.space_after = 200;
+        section.body.push(Block::Paragraph(body));
+        let mut table = docagent_model::Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        let h1_size = list.ops.iter().find_map(|op| match op {
+            Op::Text { size, text, .. } if text.contains("Northwind") => Some(*size),
+            _ => None,
+        });
+        let h2_size = list.ops.iter().find_map(|op| match op {
+            Op::Text { size, text, .. } if text.contains("Delivery") => Some(*size),
+            _ => None,
+        });
+        assert!(
+            h1_size.expect("h1") <= docagent_layout::H1_SIZE_MAX_HU,
+            "h1 paint size {h1_size:?}"
+        );
+        assert!(
+            h2_size.expect("h2") <= docagent_layout::H2_SIZE_MAX_HU,
+            "h2 paint size {h2_size:?}"
+        );
+        let image = list.ops.iter().find_map(|op| match op {
+            Op::Image { x, y, w, h, bytes, mime }
+                if bytes.as_slice() == MARK_PNG && mime == "image/png" =>
+            {
+                Some((*x, *y, *w, *h))
+            }
+            _ => None,
+        });
+        let (ix, iy, iw, ih) = image.expect("mark");
+        assert_eq!((iw, ih), (ew, eh));
+        let body = list.ops.iter().find_map(|op| match op {
+            Op::Text { x, y, size, text, .. } if text.contains("shipment") => {
+                Some((*x, *y, *size))
+            }
+            _ => None,
+        });
+        let (bx, by, bsize) = body.expect("body");
+        let img_box = (ix, iy, iw, ih);
+        let body_box = (bx, by.saturating_sub(bsize), 1, bsize.max(1));
+        assert!(
+            by.saturating_sub(bsize) >= iy.saturating_add(ih),
+            "body overlaps mark"
+        );
+        assert!(!boxes_overlap(img_box, body_box));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, w, h, .. }
+                        if *color == [204, 251, 241, 255] && *w > 80 && *h > 80
+                )
+            }),
+            "table header fill missing"
+        );
+        let h1_y = list.ops.iter().find_map(|op| match op {
+            Op::Text { y, text, .. } if text.contains("Northwind") => Some(*y),
+            _ => None,
+        });
+        let h2_y = list.ops.iter().find_map(|op| match op {
+            Op::Text { y, text, .. } if text.contains("Delivery") => Some(*y),
+            _ => None,
+        });
+        let gap = h2_y.expect("h2 y").saturating_sub(h1_y.expect("h1 y"));
+        assert!(
+            gap <= 400
+                + docagent_layout::H1_SIZE_MAX_HU
+                + docagent_layout::H2_SIZE_MAX_HU,
+            "heading stack too airy: {gap}"
+        );
+    }
+
+    #[test]
     fn paint_emits_table_cell_image_ops() {
         let mut doc = Document::new();
         let mut section = Section::default();

@@ -21,6 +21,22 @@ pub const MIN_ROW_REMAINDER_HU: Hu = 0;
 pub const MIN_IMAGE_EDGE_HU: Hu = 24 * HU_PER_POINT;
 const _: () = assert!(MIN_IMAGE_EDGE_HU >= HU_PER_INCH / 4);
 
+/// Body leading cap, percent of font size. WeasyPrint/CSS ~1.45; IR 160% of
+/// (asc+desc) reads double-spaced on a letter page.
+pub const BODY_LEADING_PCT: u16 = 145;
+/// Heading leading, percent of font size.
+pub const HEADING_LEADING_PCT: u16 = 120;
+/// Painted H1 cap (16pt). Markdown IR 18pt is a web size on 10pt body.
+pub const H1_SIZE_MAX_HU: Hu = 16 * HU_PER_POINT;
+/// Painted H2 cap (12pt).
+pub const H2_SIZE_MAX_HU: Hu = 12 * HU_PER_POINT;
+/// Default cell inset X when IR padding is 0 (2.4pt).
+pub const CELL_PAD_X_HU: Hu = 240;
+/// Default cell inset Y when IR padding is 0 (0.8pt).
+pub const CELL_PAD_Y_HU: Hu = 80;
+/// Gap from the heading line box to its rule.
+const HEADING_RULE_GAP_HU: Hu = 40;
+
 /// Raise `width`×`height` so both edges are at least [`MIN_IMAGE_EDGE_HU`].
 pub fn min_on_page_size(width: Hu, height: Hu) -> (Hu, Hu) {
     let short = width.min(height);
@@ -148,6 +164,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
     let mut pages = Vec::new();
     let mut current = empty_page(page.width, page.height);
     let mut y = origin_y;
+    let mut pending_after: Hu = 0;
 
     for item in prepared {
         match item {
@@ -158,7 +175,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                 rule,
                 fills,
             } => {
-                y += space_before;
+                y += space_before.max(pending_after);
                 let mut text_left: Option<Hu> = None;
                 let mut text_right = origin_x;
                 let mut block_bottom = y;
@@ -191,6 +208,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                         block_bottom = y;
                     }
                 }
+                let mut rule_clearance: Hu = 0;
                 if let (Some(rule), Some(left)) = (rule, text_left) {
                     let (rx, rw) = if rule.span_content {
                         (origin_x, content_w)
@@ -199,11 +217,12 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                     };
                     current.strokes.push(RectFrag {
                         x: rx,
-                        y: block_bottom.saturating_add(80),
+                        y: block_bottom.saturating_add(HEADING_RULE_GAP_HU),
                         width: rw,
                         height: rule.thickness,
                         fill: rule.color,
                     });
+                    rule_clearance = HEADING_RULE_GAP_HU.saturating_add(rule.thickness);
                 }
                 for fill in fills {
                     current.strokes.push(RectFrag {
@@ -214,7 +233,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                         fill: fill.fill,
                     });
                 }
-                y += space_after;
+                pending_after = space_after.max(rule_clearance);
             }
             Prepared::Table {
                 rows,
@@ -222,6 +241,8 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                 stroke_w,
                 stroke,
             } => {
+                y += pending_after;
+                pending_after = 0;
                 let table_w: Hu = col_widths.iter().copied().sum();
                 let x0 = origin_x;
                 for (ri, row) in rows.iter().enumerate() {
@@ -250,16 +271,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                         if stroke_w > 0 {
                             push_cell_strokes(&mut current.strokes, x, y, cw, row_h, stroke_w, stroke);
                         }
-                        let mut ly = y + 80;
-                        let mut li = 0;
-                        while let Some((a, b, row_h)) = next_line_row(&cell.lines, li) {
-                            li = b;
-                            for line in &cell.lines[a..b] {
-                                let placed = place_row_frag(line, x + 80, ly);
-                                push_underlined_line(&mut current, placed);
-                            }
-                            ly += row_h;
-                        }
+                        place_cell_lines(&mut current, cell, x, y);
                         x += cw;
                     }
                     y += row_h;
@@ -322,6 +334,7 @@ fn place_prepared_band(
     page_h: Hu,
 ) {
     let mut y = origin_y.max(0);
+    let mut pending_after: Hu = 0;
     for item in items {
         match item {
             Prepared::Lines {
@@ -331,7 +344,7 @@ fn place_prepared_band(
                 rule,
                 fills,
             } => {
-                y = y.saturating_add(*space_before);
+                y = y.saturating_add((*space_before).max(pending_after));
                 let mut text_left: Option<Hu> = None;
                 let mut text_right = origin_x;
                 let mut block_bottom = y;
@@ -360,6 +373,7 @@ fn place_prepared_band(
                         block_bottom = y;
                     }
                 }
+                let mut rule_clearance: Hu = 0;
                 if let (Some(rule), Some(left)) = (rule.as_ref(), text_left) {
                     let (rx, rw) = if rule.span_content {
                         (origin_x, content_w)
@@ -368,11 +382,12 @@ fn place_prepared_band(
                     };
                     page.strokes.push(RectFrag {
                         x: rx,
-                        y: block_bottom.saturating_add(80),
+                        y: block_bottom.saturating_add(HEADING_RULE_GAP_HU),
                         width: rw,
                         height: rule.thickness,
                         fill: rule.color,
                     });
+                    rule_clearance = HEADING_RULE_GAP_HU.saturating_add(rule.thickness);
                 }
                 for fill in fills {
                     page.strokes.push(RectFrag {
@@ -383,7 +398,7 @@ fn place_prepared_band(
                         fill: fill.fill,
                     });
                 }
-                y = y.saturating_add(*space_after);
+                pending_after = (*space_after).max(rule_clearance);
             }
             Prepared::Table {
                 rows,
@@ -391,6 +406,8 @@ fn place_prepared_band(
                 stroke_w,
                 stroke,
             } => {
+                y = y.saturating_add(pending_after);
+                pending_after = 0;
                 let x0 = origin_x;
                 for row in rows {
                     let row_h = row
@@ -419,16 +436,7 @@ fn place_prepared_band(
                         if *stroke_w > 0 {
                             push_cell_strokes(&mut page.strokes, x, y, cw, row_h, *stroke_w, *stroke);
                         }
-                        let mut ly = y + 80;
-                        let mut li = 0;
-                        while let Some((a, b, row_h)) = next_line_row(&cell.lines, li) {
-                            li = b;
-                            for line in &cell.lines[a..b] {
-                                let placed = place_row_frag(line, x + 80, ly);
-                                push_underlined_line(page, placed);
-                            }
-                            ly = ly.saturating_add(row_h);
-                        }
+                        place_cell_lines(page, cell, x, y);
                         x += cw;
                     }
                     y = y.saturating_add(row_h);
@@ -476,6 +484,19 @@ fn place_row_frag(line: &LineFrag, origin_x: Hu, y: Hu) -> LineFrag {
         placed.height = placed.height.max(img.height);
     }
     placed
+}
+
+fn place_cell_lines(page: &mut PageFrag, cell: &PreparedCell, x: Hu, y: Hu) {
+    let mut ly = y.saturating_add(cell.pad_top);
+    let mut li = 0;
+    while let Some((a, b, row_h)) = next_line_row(&cell.lines, li) {
+        li = b;
+        for line in &cell.lines[a..b] {
+            let placed = place_row_frag(line, x.saturating_add(cell.pad_left), ly);
+            push_underlined_line(page, placed);
+        }
+        ly = ly.saturating_add(row_h);
+    }
 }
 
 fn push_underlined_line(page: &mut PageFrag, placed: LineFrag) {
@@ -601,6 +622,46 @@ struct PreparedCell {
     lines: Vec<LineFrag>,
     height: Hu,
     header: bool,
+    pad_left: Hu,
+    pad_top: Hu,
+}
+
+fn heading_display_size(level: Option<u8>, ir: Hu) -> Hu {
+    let ir = ir.max(1);
+    match level {
+        Some(1) => ir.min(H1_SIZE_MAX_HU),
+        Some(2) => ir.min(H2_SIZE_MAX_HU),
+        Some(n) if n >= 3 => ir.min(DEFAULT_FONT_SIZE_HU.saturating_add(100)),
+        _ => ir,
+    }
+}
+
+fn paragraph_leading(fonts: &FontSet, p: &Paragraph, size: Hu) -> Hu {
+    let natural = line_height(fonts, size, 100);
+    match p.line_spacing {
+        LineSpacing::Absolute(hu) => hu.max(1),
+        LineSpacing::AtLeast(hu) => natural.max(hu).max(1),
+        LineSpacing::Percent(v) => {
+            let cap = if p.outline_level.is_some() {
+                HEADING_LEADING_PCT
+            } else {
+                BODY_LEADING_PCT
+            };
+            let pct = v.max(100).min(cap);
+            let css = i32::try_from(i64::from(size.max(1)) * i64::from(pct) / 100).unwrap_or(i32::MAX);
+            css.max(natural).max(1)
+        }
+    }
+}
+
+fn cell_pads(cell: &docagent_model::TableCell) -> (Hu, Hu, Hu, Hu) {
+    let p = cell.padding;
+    (
+        if p.left > 0 { p.left } else { CELL_PAD_X_HU },
+        if p.right > 0 { p.right } else { CELL_PAD_X_HU },
+        if p.top > 0 { p.top } else { CELL_PAD_Y_HU },
+        if p.bottom > 0 { p.bottom } else { CELL_PAD_Y_HU },
+    )
 }
 
 fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
@@ -715,30 +776,14 @@ fn marker_advance(size: Hu, glyph_w: Hu, box_mark: bool) -> Hu {
 
 fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>, Vec<RectFrag>) {
     let (text, mut spans) = collect_runs(p);
-    let size = p
-        .runs
-        .first()
-        .map(|r| r.style.size)
-        .unwrap_or(DEFAULT_FONT_SIZE_HU);
-    let spacing_pct = match p.line_spacing {
-        LineSpacing::Percent(v) => v,
-        LineSpacing::Absolute(hu) => {
-            if size == 0 {
-                160
-            } else {
-                ((i64::from(hu) * 100) / i64::from(size.max(1))) as u16
-            }
-        }
-        LineSpacing::AtLeast(hu) => {
-            let pct = ((i64::from(hu) * 100) / i64::from(size.max(1))) as u16;
-            pct.max(100)
-        }
-    };
-    let lh = match p.line_spacing {
-        LineSpacing::Absolute(hu) => hu.max(1),
-        LineSpacing::AtLeast(hu) => line_height(fonts, size, 100).max(hu),
-        LineSpacing::Percent(_) => line_height(fonts, size, spacing_pct),
-    };
+    let size = heading_display_size(
+        p.outline_level,
+        p.runs
+            .first()
+            .map(|r| r.style.size)
+            .unwrap_or(DEFAULT_FONT_SIZE_HU),
+    );
+    let lh = paragraph_leading(fonts, p, size);
     let baseline = (lh * 4) / 5;
     let marker = list_marker(p);
     let glyph_w = marker
@@ -1242,7 +1287,8 @@ fn prepare_table(table: &Table, fonts: &FontSet, width: Hu) -> Prepared {
         let header = row.header || ri < table.header_row_count as usize;
         for (ci, cell) in row.cells.iter().enumerate() {
             let cw = *col_widths.get(ci).unwrap_or(&10000);
-            let inner = (cw - cell.padding.left - cell.padding.right - 160).max(1);
+            let (pad_l, pad_r, pad_t, pad_b) = cell_pads(cell);
+            let inner = (cw - pad_l - pad_r).max(1);
             let mut lines = Vec::new();
             for block in &cell.blocks {
                 if let Block::Paragraph(p) = block {
@@ -1250,15 +1296,14 @@ fn prepare_table(table: &Table, fonts: &FontSet, width: Hu) -> Prepared {
                     lines.extend(cell_lines);
                 }
             }
-            let height = lines.iter().map(|l| l.height).sum::<i32>()
-                + cell.padding.top
-                + cell.padding.bottom
-                + 160;
+            let height = lines.iter().map(|l| l.height).sum::<i32>() + pad_t + pad_b;
             let height = row.height.unwrap_or(height).max(height);
             cells.push(PreparedCell {
                 lines,
                 height,
                 header,
+                pad_left: pad_l,
+                pad_top: pad_t,
             });
         }
         rows.push(cells);
@@ -1317,6 +1362,7 @@ pub fn table_row_heights(tree: &FragmentTree) -> Vec<Hu> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use docagent_font::line_height;
     use docagent_model::{
         HeaderFooter, NumberFormat, NumberingRef, Paragraph, Section, Table, DEFAULT_MARGIN_HU,
     };
@@ -2182,6 +2228,179 @@ mod tests {
             !boxes_overlap(img_box, heading_box),
             "image {img_box:?} overlaps heading {heading_box:?}"
         );
+        let h1_rule = page.strokes.iter().find(|s| {
+            s.fill == [19, 78, 74, 255] && s.height == 200 && s.width > 1000
+        });
+        if let Some(rule) = h1_rule {
+            let rule_box = (rule.x, rule.y, rule.width.max(1), rule.height.max(1));
+            assert!(
+                !boxes_overlap(img_box, rule_box),
+                "image {img_box:?} overlaps heading rule {rule_box:?}"
+            );
+        }
+    }
+
+    fn letter_page(img_w: Hu, img_h: Hu) -> Document {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h1 = Paragraph::from_text("Northwind Freight");
+        h1.outline_level = Some(1);
+        h1.runs[0].style.size = 1800;
+        h1.runs[0].style.bold = true;
+        h1.space_after = 400;
+        section.body.push(Block::Paragraph(h1));
+        let mut h2 = Paragraph::from_text("Delivery confirmation — order 48291");
+        h2.outline_level = Some(2);
+        h2.runs[0].style.size = 1400;
+        h2.runs[0].style.bold = true;
+        h2.space_before = 360;
+        h2.space_after = 240;
+        section.body.push(Block::Paragraph(h2));
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(img_w, img_h)];
+        section.body.push(Block::Paragraph(img_p));
+        let mut body = Paragraph::from_text(
+            "The shipment left Busan on 4 September and is booked on the 11 September rail window.",
+        );
+        body.space_after = 200;
+        section.body.push(Block::Paragraph(body));
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into(), "Proof".into()],
+            vec!["Input".into(), "letter.md".into(), "input SHA-256".into()],
+        ]);
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        doc
+    }
+
+    #[test]
+    fn letter_page_type_spacing_and_table_are_dense() {
+        let (w, h) = mark_png_hu();
+        let (ew, eh) = min_on_page_size(w, h);
+        let tree = layout_document(&letter_page(w, h), &FontSet::bundled());
+        let page = &tree.pages[0];
+        let h1 = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("Northwind"))
+            .expect("h1");
+        let h2 = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("Delivery"))
+            .expect("h2");
+        let img_line = page
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("mark");
+        let body = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("shipment"))
+            .expect("body");
+        assert!(h1.font_size <= H1_SIZE_MAX_HU, "h1 size {}", h1.font_size);
+        assert!(h2.font_size <= H2_SIZE_MAX_HU, "h2 size {}", h2.font_size);
+        assert_eq!(body.font_size, DEFAULT_FONT_SIZE_HU);
+        let h1_lh_cap = i32::try_from(
+            i64::from(h1.font_size) * i64::from(HEADING_LEADING_PCT) / 100,
+        )
+        .unwrap_or(i32::MAX);
+        let h2_lh_cap = i32::try_from(
+            i64::from(h2.font_size) * i64::from(HEADING_LEADING_PCT) / 100,
+        )
+        .unwrap_or(i32::MAX);
+        let body_lh_cap = i32::try_from(
+            i64::from(body.font_size) * i64::from(BODY_LEADING_PCT) / 100,
+        )
+        .unwrap_or(i32::MAX);
+        assert!(
+            h1.height <= h1_lh_cap.max(line_height(&FontSet::bundled(), h1.font_size, 100)),
+            "h1 leading {}",
+            h1.height
+        );
+        assert!(
+            h2.height <= h2_lh_cap.max(line_height(&FontSet::bundled(), h2.font_size, 100)),
+            "h2 leading {}",
+            h2.height
+        );
+        assert!(
+            body.height <= body_lh_cap.max(line_height(&FontSet::bundled(), body.font_size, 100)),
+            "body leading {}",
+            body.height
+        );
+        let heading_gap = h2.y.saturating_sub(h1.y.saturating_add(h1.height));
+        assert!(
+            heading_gap <= 400,
+            "h1/h2 gap {heading_gap} must collapse, not sum 400+360"
+        );
+        assert!(
+            heading_gap >= HEADING_RULE_GAP_HU.saturating_add(200),
+            "h1 rule must fit in the gap {heading_gap}"
+        );
+        let img_box = img_line.image_box().expect("image box");
+        assert_eq!(img_box, (img_line.x, img_line.y, ew, eh));
+        let h1_box = (h1.x, h1.y, h1.width.max(1), h1.height.max(1));
+        let h2_box = (h2.x, h2.y, h2.width.max(1), h2.height.max(1));
+        let body_box = (body.x, body.y, body.width.max(1), body.height.max(1));
+        assert!(!boxes_overlap(img_box, h1_box), "mark overlaps h1");
+        assert!(!boxes_overlap(img_box, h2_box), "mark overlaps h2");
+        assert!(!boxes_overlap(img_box, body_box), "mark overlaps body");
+        assert!(
+            body.y >= img_line.y.saturating_add(eh),
+            "body y {} overlaps mark y {} height {eh}",
+            body.y,
+            img_line.y
+        );
+        for stroke in &page.strokes {
+            if stroke.height <= 0 || stroke.width <= 0 {
+                continue;
+            }
+            let sb = (stroke.x, stroke.y, stroke.width, stroke.height);
+            if stroke.fill == [19, 78, 74, 255] && stroke.height == 200 {
+                assert!(!boxes_overlap(img_box, sb), "mark overlaps h1 rule {sb:?}");
+            }
+            if stroke.fill == [13, 148, 136, 255] && stroke.height == 100 {
+                assert!(!boxes_overlap(img_box, sb), "mark overlaps h2 rule {sb:?}");
+            }
+        }
+        let rows = table_row_heights(&tree);
+        assert!(rows.len() >= 6, "header+body cells: {rows:?}");
+        let row_cap = body
+            .height
+            .saturating_add(CELL_PAD_Y_HU.saturating_mul(2))
+            .saturating_add(40);
+        for h in &rows {
+            assert!(
+                *h <= row_cap,
+                "table row {h} taller than {row_cap} (leading + cell pad)"
+            );
+            assert!(*h > CELL_PAD_Y_HU, "empty table row {h}");
+        }
+        let headers = page
+            .rects
+            .iter()
+            .filter(|r| r.fill == [204, 251, 241, 255])
+            .count();
+        assert_eq!(headers, 3, "header cells missing teal fill");
+        let hop = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("Hop"))
+            .expect("header text");
+        let input = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("Input"))
+            .expect("body cell");
+        assert!(
+            hop.x >= page.rects[0].x.saturating_add(CELL_PAD_X_HU),
+            "header text must sit in cell pad, x {} cell {}",
+            hop.x,
+            page.rects[0].x
+        );
+        assert!(input.y > hop.y, "body row must follow header");
     }
 
     #[test]
@@ -2331,7 +2550,7 @@ mod tests {
         let tree = layout_document(&doc, &FontSet::bundled());
         let page = &tree.pages[0];
         let cell_w = page.rects.first().map(|r| r.width).expect("cell fill");
-        let inner = (cell_w - 160).max(1);
+        let inner = (cell_w - CELL_PAD_X_HU.saturating_mul(2)).max(1);
         let frag = page
             .lines
             .iter()

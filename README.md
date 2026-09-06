@@ -36,18 +36,23 @@ Same fonts → same bytes. Agents call <code>Command::Convert</code>. We embed t
 docagent convert examples/letter.md --pdf out.pdf --html out.html --capsule cap.json
 ```
 
-<p align="center"><sub>That line is in <code>examples/letter.md</code>. Convert paints the teal harbor mark under the H2 as a PDF/A XObject. Not a scan. Not a VLM guess. Not OmniDocBench.</sub></p>
+<p align="center"><sub>That line is in <code>examples/letter.md</code>. Convert paints the teal harbor mark under the H2 as a PDF/A XObject. The demo-image gap is <strong>closed</strong>. Not a scan. Not a VLM guess. Not OmniDocBench.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-trio.png" alt="Real convert of examples/letter.md: PDF/A page with the teal harbor mark under the H2, semantic HTML with the same mark, capsule SHA-256 ×3" width="100%">
 </p>
-<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. The teal harbor mark sits under the H2 on the page.<br>
-<strong>Images row:</strong> PNG + JPEG are <strong>yes</strong> on Markdown / HTML / PDF/A / DOCX / ODT (PDF/A XObject, DOCX <code>a:blip</code>, ODT <code>draw:image</code>, HTML <code>&lt;img&gt;</code>). Hangul images are <strong>—</strong>.</sub></p>
+<p align="center"><sub>Harbor-mark convert shots — actual engine output of <code>examples/letter.md</code>: PDF/A, HTML, capsule. The teal mark sits under the H2 on the page. Capsule hashed. GPU-free.<br>
+<strong>Images row:</strong> PNG + JPEG are <strong>yes</strong> on Markdown / HTML / PDF/A / DOCX / ODT (PDF/A XObject, DOCX <code>a:blip</code>, ODT <code>draw:image</code>, HTML <code>&lt;img&gt;</code>). Hangul images are <strong>—</strong>. Demo-image gap <strong>closed</strong>.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page from examples/letter.md — teal harbor mark under the H2 as a PDF/A XObject" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. The teal mark is under <em>Delivery confirmation — order 48291</em>. GPU-free. Same fonts → same bytes.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. The teal harbor mark is under <em>Delivery confirmation — order 48291</em>. GPU-free. Same fonts → same bytes.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/output-html.png" alt="Semantic HTML from examples/letter.md — teal harbor mark under the H2 as an img" width="100%">
+</p>
+<p align="center"><sub>HTML from the same IR. The teal harbor mark is under the H2 as <code>&lt;img&gt;</code>. <code>read</code> recovers data-URI images. Not HTML5. GPU-free.</sub></p>
 
 ---
 
@@ -102,7 +107,7 @@ No OmniDocBench numbers live on this page.
 **North star:** drop `examples/letter.md` (or DOCX/ODT) that contains a PNG or JPEG, and get PDF/A + HTML + Markdown + DOCX + ODT whose bytes match the next run, with three hashes in the capsule. The picture is a PDF/A XObject. Not OCR.
 
 Images: **yes** PNG + JPEG on Markdown / HTML / PDF/A / DOCX / ODT. **—** on Hangul.
-The demo letter is `![Harbor mark](docs/assets/mark.png)`. Convert shots on this page show the teal mark under the H2.
+The demo letter is `![Harbor mark](docs/assets/mark.png)`. First-screen convert shots (`output-trio.png`, `output-pdf.png`, `output-html.png`) show the teal mark under the H2. The demo-image gap is **closed**.
 
 ## What ships
 
@@ -123,7 +128,7 @@ Honest codec coverage — not a wishlist. Full table: [`docs/src/capabilities.md
 | **Images (PNG, JPEG)** | `![alt](…)` | `<img>` | **XObject** | `a:blip` | `draw:image` | **—** |
 | Table header | GFM `\| --- \|` | `<th>` / `<thead>` | header fill | `w:tblHeader` | `THcell` | **yes** |
 
-**Images are the first-class row.** PNG and JPEG round-trip on Markdown, HTML, PDF/A, DOCX, and ODT. They stay **—** on Hangul. That dash is real. The demo letter is `![Harbor mark](docs/assets/mark.png)` — picture in. PDF/A out paints it as an XObject under the H2.
+**Images are the first-class row.** PNG and JPEG round-trip on Markdown, HTML, PDF/A, DOCX, and ODT. They stay **—** on Hangul. That dash is real. The demo letter is `![Harbor mark](docs/assets/mark.png)` — picture in. PDF/A out paints it as an XObject under the H2. First-screen shots are those convert bytes. Demo-image gap **closed**.
 
 HTML `read` recovers data-URI `<img>`, lists, `<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, and `<mark>` into the same IR. `http(s):` `src` is skipped. This is not a full HTML5 engine.
 
@@ -161,15 +166,15 @@ let out = engine.execute(Command::Convert {
 Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/letter.md) (PDF/A + HTML) produced the same files. The test is `letter_md_is_byte_identical_across_two_runs`.
 
 <p align="center">
-  <img src="docs/assets/output-rerun.png" alt="Two converts of examples/letter.md with identical input, plan, and output SHA-256 hashes" width="100%">
+  <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>Run 1 and run 2. <code>identical: true</code>. PDF bytes equal. HTML bytes equal. GPU-free. Deterministic.</sub></p>
+<p align="center"><sub>Capsule from <code>examples/letter.md</code>: input / plan / output SHA-256. Two converts, same fonts, same bytes. GPU-free. Deterministic. Not OCR.</sub></p>
 
 | Hash | SHA-256 |
 | --- | --- |
 | input | `b0f4423728db4238779b3bf6cbd238d4d0d637f733c078322be6ff23398bbcdf` |
 | plan | `4b7360eb1b7a9bec20cc35d5c79f2156c22d2712ab62ededfb60e328b8f16d3a` |
-| output | `9f5df3a92ef707fade241aac183d90e21c50922bacf76d2ad13eb282a63bebfd` |
+| output | `f09d223f56e8adec474d9c24c3f0b2667f72104b1f67465f5e63c6c997a19ddf` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this.
 
@@ -177,25 +182,7 @@ These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json)
 
 Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/letter.pdf) · [HTML](docs/assets/letter.html) · [DOCX](docs/assets/letter.docx) · [ODT](docs/assets/letter.odt) · [Markdown](docs/assets/letter.md) · [capsule JSON](docs/assets/letter-capsule.json).
 
-<p align="center">
-  <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter, teal harbor mark under the H2" width="100%">
-</p>
-<p align="center"><sub>HTML from the same IR. The teal mark is under the H2 as <code>&lt;img&gt;</code>. <code>read</code> recovers data-URI images. Not HTML5. GPU-free.</sub></p>
-
-<p align="center">
-  <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
-</p>
-<p align="center"><sub>Capsule: input / plan / output SHA-256. Replay is evidence.</sub></p>
-
-<p align="center">
-  <img src="docs/assets/convert-story.jpg" alt="Picture in, PDF/A out: a photograph becomes a PDF/A page; the metal token is the capsule" width="100%">
-</p>
-<p align="center"><sub>Picture in → PDF/A out. The metal token is the capsule: three SHA-256 hashes an agent can replay. Not a scanner.</sub></p>
-
-<p align="center">
-  <img src="docs/assets/capsule-page.jpg" alt="Laid-out page with a picture, bound to a three-hash capsule chain" width="100%">
-</p>
-<p align="center"><sub>One layout pass. The picture is in the page. Input, plan, and output each get a hash. Same fonts, same bytes.</sub></p>
+First-screen pictures are the harbor-mark convert shots plus the mark fixture: [`output-trio.png`](docs/assets/output-trio.png) · [`output-pdf.png`](docs/assets/output-pdf.png) · [`output-html.png`](docs/assets/output-html.png) · [`mark.png`](docs/assets/mark.png). The teal mark is under the H2. Demo-image gap **closed**.
 
 | Surface | What it is |
 | --- | --- |

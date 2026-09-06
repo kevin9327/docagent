@@ -1094,6 +1094,97 @@ mod tests {
         );
     }
 
+    #[test]
+    fn letter_page_pdfa_keeps_dense_type_table_and_mark() {
+        let (w, h) = mark_png_hu();
+        let (ew, eh) = docagent_layout::min_on_page_size(w, h);
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h1 = Paragraph::from_text("Northwind Freight");
+        h1.outline_level = Some(1);
+        h1.runs[0].style.size = 1800;
+        h1.runs[0].style.bold = true;
+        h1.space_after = 400;
+        section.body.push(Block::Paragraph(h1));
+        let mut h2 = Paragraph::from_text("Delivery confirmation");
+        h2.outline_level = Some(2);
+        h2.runs[0].style.size = 1400;
+        h2.runs[0].style.bold = true;
+        h2.space_before = 360;
+        h2.space_after = 240;
+        section.body.push(Block::Paragraph(h2));
+        let mut img_p = Paragraph::from_text("");
+        img_p.runs = vec![mark_run(w, h)];
+        section.body.push(Block::Paragraph(img_p));
+        let mut body = Paragraph::from_text("The shipment left Busan on 4 September");
+        body.space_after = 200;
+        section.body.push(Block::Paragraph(body));
+        let mut table = docagent_model::Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let fonts = FontSet::bundled();
+        let list = paint(&layout_document(&doc, &fonts));
+        let h1_size = list.ops.iter().find_map(|op| match op {
+            Op::Text { size, text, .. } if text.contains("Northwind") => Some(*size),
+            _ => None,
+        });
+        assert!(
+            h1_size.expect("h1") <= docagent_layout::H1_SIZE_MAX_HU,
+            "h1 size {h1_size:?}"
+        );
+        let image = list.ops.iter().find_map(|op| match op {
+            Op::Image { x, y, w, h, bytes, mime }
+                if bytes.as_slice() == MARK_PNG && mime == "image/png" =>
+            {
+                Some((*x, *y, *w, *h))
+            }
+            _ => None,
+        });
+        let (_ix, iy, iw, ih) = image.expect("mark");
+        assert_eq!((iw, ih), (ew, eh));
+        let body = list.ops.iter().find_map(|op| match op {
+            Op::Text { y, size, text, .. } if text.contains("shipment") => Some((*y, *size)),
+            _ => None,
+        });
+        let (by, bsize) = body.expect("body");
+        assert!(
+            by.saturating_sub(bsize) >= iy.saturating_add(ih),
+            "body overlaps mark at y {iy}"
+        );
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *h == 200 && *w > 1000
+                )
+            }),
+            "h1 rule missing"
+        );
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, w, h, .. }
+                        if *color == [204, 251, 241, 255] && *w > 80 && *h > 80
+                )
+            }),
+            "table header fill missing"
+        );
+        let pdf = to_pdfa(&list, &fonts).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf));
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(
+            has_image_xobject(&s),
+            "letter PNG XObject missing"
+        );
+    }
+
     fn has_image_xobject(s: &str) -> bool {
         (s.contains("/Subtype /Image") || s.contains("/Subtype/Image"))
             && (s.contains("/Type /XObject") || s.contains("/Type/XObject"))

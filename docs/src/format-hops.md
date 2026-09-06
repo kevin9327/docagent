@@ -26,7 +26,8 @@ breaks, tasks, highlight, super/sub, table headers, and PNG / JPEG images
 [What ships](capabilities.md)), not this hop count.
 
 A PNG or JPEG in Markdown, HTML, DOCX, or ODT becomes a PDF/A XObject. The demo
-letter paints the teal harbor mark under the H2. That is picture in, PDF/A out —
+letter paints the teal harbor mark under the H2. First-screen convert shots show
+that mark. The demo-image gap is **closed**. That is picture in, PDF/A out —
 not a hop count, and not OCR.
 
 HTML `read` recovers `<img src="data:…">`; that is not a hop count and not an
