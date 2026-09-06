@@ -1149,4 +1149,31 @@ mod tests {
             s.chars().take(400).collect::<String>()
         );
     }
+
+    #[test]
+    fn section_header_embeds_in_pdfa() {
+        let mut doc = Document::new();
+        let mut section = Section {
+            header: Some(docagent_model::HeaderFooter {
+                blocks: vec![Block::Paragraph(Paragraph::from_text("HEAD"))],
+                different_first: None,
+                different_odd_even: None,
+            }),
+            ..Section::default()
+        };
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("body")));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops
+                .iter()
+                .any(|op| matches!(op, Op::Text { text, .. } if text.contains("HEAD"))),
+            "paint must emit header text"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+    }
 }

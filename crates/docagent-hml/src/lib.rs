@@ -145,10 +145,10 @@ fn charshape_head(styles: &[CharStyle]) -> String {
     }
     s.push_str("</CHARSHAPELIST>");
     s.push_str(
-        r#"<PARASHAPELIST Count="5"><PARASHAPE Id="0"/><PARASHAPE Id="1"><PARAMARGIN Left="1400"/><PARABORDER BorderFill="1" Left="1"/></PARASHAPE><PARASHAPE Id="2"><PARABORDER BorderFill="2" Fill="1"/></PARASHAPE><PARASHAPE Id="3"><PARABORDER BorderFill="3" Bottom="1"/></PARASHAPE><PARASHAPE Id="4"/></PARASHAPELIST>"#,
+        r#"<PARASHAPELIST Count="7"><PARASHAPE Id="0"/><PARASHAPE Id="1"><PARAMARGIN Left="1400"/><PARABORDER BorderFill="1" Left="1"/></PARASHAPE><PARASHAPE Id="2"><PARABORDER BorderFill="2" Fill="1"/></PARASHAPE><PARASHAPE Id="3"><PARABORDER BorderFill="3" Bottom="1"/></PARASHAPE><PARASHAPE Id="4"/><PARASHAPE Id="5"/><PARASHAPE Id="6"/></PARASHAPELIST>"#,
     );
     s.push_str(
-        r#"<STYLELIST Count="5"><STYLE Id="0" Name="Normal" EngName="Normal" Type="Para" ParaShape="0"/><STYLE Id="1" Name="Quote" EngName="Quote" Type="Para" ParaShape="1"/><STYLE Id="2" Name="CodeBlock" EngName="CodeBlock" Type="Para" ParaShape="2"/><STYLE Id="3" Name="HorizontalLine" EngName="HorizontalLine" Type="Para" ParaShape="3"/><STYLE Id="4" Name="Task" EngName="Task" Type="Para" ParaShape="4"/></STYLELIST></MAPPINGTABLE></HEAD>"#,
+        r#"<STYLELIST Count="7"><STYLE Id="0" Name="Normal" EngName="Normal" Type="Para" ParaShape="0"/><STYLE Id="1" Name="Quote" EngName="Quote" Type="Para" ParaShape="1"/><STYLE Id="2" Name="CodeBlock" EngName="CodeBlock" Type="Para" ParaShape="2"/><STYLE Id="3" Name="HorizontalLine" EngName="HorizontalLine" Type="Para" ParaShape="3"/><STYLE Id="4" Name="Task" EngName="Task" Type="Para" ParaShape="4"/><STYLE Id="5" Name="Bullet" EngName="Bullet" Type="Para" ParaShape="5"/><STYLE Id="6" Name="Number" EngName="Number" Type="Para" ParaShape="6"/></STYLELIST></MAPPINGTABLE></HEAD>"#,
     );
     s
 }
@@ -181,10 +181,13 @@ fn para_style_id(p: &Paragraph) -> u32 {
         2
     } else if p.quote {
         1
-    } else if task_prefix(p).is_some() {
-        4
     } else {
-        0
+        match p.numbering.as_ref().and_then(|n| n.format) {
+            Some(NumberFormat::Task) => 4,
+            Some(NumberFormat::Bullet) => 5,
+            Some(NumberFormat::Decimal) => 6,
+            _ => 0,
+        }
     }
 }
 
@@ -200,10 +203,23 @@ fn task_prefix(p: &Paragraph) -> Option<&'static str> {
     })
 }
 
-fn apply_task_paragraph(p: &mut Paragraph, from_style: bool) {
+fn strip_decimal_prefix(text: &str) -> Option<(u32, String)> {
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == 0 || i + 2 > bytes.len() || &bytes[i..i + 2] != b". " {
+        return None;
+    }
+    let n = text[..i].parse().ok()?;
+    Some((n, text[i + 2..].to_string()))
+}
+
+fn apply_list_paragraph(p: &mut Paragraph, kind: Option<StyleKind>) {
     let level = p.numbering.as_ref().map(|n| n.level).unwrap_or(0);
     let mut checked = false;
-    let mut found = from_style;
+    let mut is_task = kind == Some(StyleKind::Task);
     if let Some(run) = p.runs.first_mut()
         && let RunContent::Text(text) = &mut run.content
     {
@@ -212,16 +228,66 @@ fn apply_task_paragraph(p: &mut Paragraph, from_style: bool) {
         if is_checked || is_unchecked {
             *text = text[4..].to_string();
             checked = is_checked;
-            found = true;
+            is_task = true;
         }
     }
-    if found {
+    if is_task {
         p.numbering = Some(NumberingRef {
             definition_id: 2,
             level,
             start: checked.then_some(1),
             format: Some(NumberFormat::Task),
         });
+        return;
+    }
+    if matches!(
+        kind,
+        Some(StyleKind::Quote | StyleKind::CodeBlock | StyleKind::Thematic)
+    ) {
+        return;
+    }
+    if let Some(run) = p.runs.first_mut()
+        && let RunContent::Text(text) = &mut run.content
+    {
+        if let Some(rest) = text.strip_prefix("• ") {
+            *text = rest.to_string();
+            p.numbering = Some(NumberingRef {
+                definition_id: 0,
+                level,
+                start: None,
+                format: Some(NumberFormat::Bullet),
+            });
+            return;
+        }
+        if let Some((start, rest)) = strip_decimal_prefix(text) {
+            *text = rest;
+            p.numbering = Some(NumberingRef {
+                definition_id: 1,
+                level,
+                start: Some(start),
+                format: Some(NumberFormat::Decimal),
+            });
+            return;
+        }
+    }
+    match kind {
+        Some(StyleKind::Bullet) => {
+            p.numbering = Some(NumberingRef {
+                definition_id: 0,
+                level,
+                start: None,
+                format: Some(NumberFormat::Bullet),
+            });
+        }
+        Some(StyleKind::Number) => {
+            p.numbering = Some(NumberingRef {
+                definition_id: 1,
+                level,
+                start: Some(1),
+                format: Some(NumberFormat::Decimal),
+            });
+        }
+        _ => {}
     }
 }
 
@@ -597,6 +663,8 @@ enum StyleKind {
     CodeBlock,
     Thematic,
     Task,
+    Bullet,
+    Number,
 }
 
 fn style_kind(name: &str) -> Option<StyleKind> {
@@ -612,6 +680,10 @@ fn style_kind(name: &str) -> Option<StyleKind> {
         Some(StyleKind::Thematic)
     } else if n.eq_ignore_ascii_case("Task") || n == "할 일" || n == "작업" {
         Some(StyleKind::Task)
+    } else if n.eq_ignore_ascii_case("Bullet") || n == "글머리" || n == "목록" {
+        Some(StyleKind::Bullet)
+    } else if n.eq_ignore_ascii_case("Number") || n == "번호" || n == "문단번호" {
+        Some(StyleKind::Number)
     } else {
         None
     }
@@ -631,7 +703,7 @@ fn flush_p(body: &mut Vec<Block>, runs: &mut Vec<Run>, kind: &mut Option<StyleKi
     p.runs = std::mem::take(runs);
     p.quote = kind == Some(StyleKind::Quote);
     p.code_block = kind == Some(StyleKind::CodeBlock);
-    apply_task_paragraph(&mut p, kind == Some(StyleKind::Task));
+    apply_list_paragraph(&mut p, kind);
     body.push(Block::Paragraph(p));
 }
 
@@ -878,6 +950,64 @@ mod tests {
             Some((Some(NumberFormat::Task), None))
         );
         assert_eq!(p.plain_text(), "Hope");
+    }
+
+    #[test]
+    fn roundtrip_keeps_bullet_list() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Receiving dock is clear");
+        p.numbering = Some(NumberingRef {
+            definition_id: 0,
+            level: 0,
+            start: None,
+            format: Some(NumberFormat::Bullet),
+        });
+        let xml = p_xml(&p, &[CharStyle::default()]);
+        assert!(xml.contains(r#"Style="5""#), "{xml}");
+        assert!(!xml.contains("• "), "{xml}");
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains(r#"EngName="Bullet""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("bullet");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+            Some((Some(NumberFormat::Bullet), 0, None))
+        );
+        assert_eq!(p.plain_text(), "Receiving dock is clear");
+    }
+
+    #[test]
+    fn roundtrip_keeps_decimal_list() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Hash the input");
+        p.numbering = Some(NumberingRef {
+            definition_id: 1,
+            level: 0,
+            start: Some(1),
+            format: Some(NumberFormat::Decimal),
+        });
+        let xml = p_xml(&p, &[CharStyle::default()]);
+        assert!(xml.contains(r#"Style="6""#), "{xml}");
+        assert!(!xml.contains("1. "), "{xml}");
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains(r#"EngName="Number""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("decimal");
+        };
+        assert_eq!(
+            p.numbering.as_ref().map(|n| (n.format, n.level, n.start)),
+            Some((Some(NumberFormat::Decimal), 0, Some(1)))
+        );
+        assert_eq!(p.plain_text(), "Hash the input");
     }
 
     #[test]

@@ -818,7 +818,7 @@ fn parse_table(cur: &mut Cursor<'_>) -> Table {
                 ..
             }) if name == "tr" => {
                 if !self_closing {
-                    rows.push(parse_tr(cur));
+                    rows.push(parse_tr(cur, false));
                 }
             }
             Some(Token::Open {
@@ -826,8 +826,8 @@ fn parse_table(cur: &mut Cursor<'_>) -> Table {
                 self_closing,
                 ..
             }) if matches!(name.as_str(), "thead" | "tbody" | "tfoot") => {
-                if self_closing {
-                    continue;
+                if !self_closing {
+                    parse_table_rows(cur, &name, &mut rows, name == "thead");
                 }
             }
             Some(Token::Open {
@@ -842,7 +842,7 @@ fn parse_table(cur: &mut Cursor<'_>) -> Table {
             Some(Token::Close { .. } | Token::Text(_)) => {}
         }
     }
-    let header_row_count = u8::from(rows.first().is_some_and(|r| r.header));
+    let header_row_count = rows.iter().take_while(|r| r.header).count() as u8;
     Table {
         rows,
         borders: docagent_model::TableBorders::default(),
@@ -856,9 +856,42 @@ fn parse_table(cur: &mut Cursor<'_>) -> Table {
     }
 }
 
-fn parse_tr(cur: &mut Cursor<'_>) -> TableRow {
+fn parse_table_rows(
+    cur: &mut Cursor<'_>,
+    until: &str,
+    rows: &mut Vec<TableRow>,
+    header_section: bool,
+) {
+    loop {
+        match cur.next() {
+            None => break,
+            Some(Token::Close { name }) if name == until => break,
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) if name == "tr" => {
+                if !self_closing {
+                    rows.push(parse_tr(cur, header_section));
+                }
+            }
+            Some(Token::Open {
+                name,
+                self_closing,
+                ..
+            }) => {
+                if !self_closing && !is_void(&name) {
+                    let _ = parse_blocks(cur, &name);
+                }
+            }
+            Some(Token::Close { .. } | Token::Text(_)) => {}
+        }
+    }
+}
+
+fn parse_tr(cur: &mut Cursor<'_>, header_section: bool) -> TableRow {
     let mut cells = Vec::new();
-    let mut header = false;
+    let mut header = header_section;
     loop {
         match cur.next() {
             None => break,
@@ -1329,6 +1362,38 @@ mod tests {
     }
 
     #[test]
+    fn read_roundtrips_table_header() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![
+            vec!["Hop".into(), "File".into()],
+            vec!["Input".into(), "letter.md".into()],
+        ]);
+        table.rows[0].header = true;
+        table.header_row_count = 1;
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<th>Hop</th>"), "{html}");
+        assert!(html.contains("<td>Input</td>"), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let t = first_table(&back);
+        assert!(t.rows[0].header);
+        assert!(!t.rows[1].header);
+        assert!(t.header_row_count >= 1);
+    }
+
+    #[test]
+    fn read_honors_thead_rows() {
+        let html = b"<table><thead><tr><td>Hop</td><td>File</td></tr></thead><tbody><tr><td>Input</td><td>letter.md</td></tr></tbody></table>";
+        let doc = read(html).expect("html");
+        let t = first_table(&doc);
+        assert!(t.rows[0].header);
+        assert!(!t.rows[1].header);
+        assert!(t.header_row_count >= 1);
+    }
+
+    #[test]
     fn headings_are_semantic() {
         let mut doc = Document::new();
         let mut section = Section::default();
@@ -1649,6 +1714,17 @@ mod tests {
             }
         }
         panic!("no paragraph");
+    }
+
+    fn first_table(doc: &Document) -> &Table {
+        for section in &doc.sections {
+            for block in &section.body {
+                if let Block::Table(t) = block {
+                    return t;
+                }
+            }
+        }
+        panic!("no table");
     }
 
     fn numbered_paras(doc: &Document) -> Vec<&Paragraph> {

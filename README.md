@@ -13,7 +13,7 @@
 
 <p align="center"><b>Deterministic convert. Three-hash capsule. GPU-free.</b><br>
 Same fonts → same PDF/A bytes. One integer engine. Agents call <code>Command::Convert</code>, not a GUI.<br>
-DOCX · ODT · Markdown · HTML · PDF/A — PNG + JPEG (PDF float, DOCX wrapSquare, ODT cell). Hangul is a codec, not the product name.</p>
+DOCX · ODT · Markdown · HTML · PDF/A — PNG + JPEG (PDF float + cell, DOCX wrapSquare + behindDoc, ODT cell + nested lists). Hangul is a codec, not the product name.</p>
 
 <p align="center">
   <a href="#install--run">Install</a> ·
@@ -26,18 +26,18 @@ DOCX · ODT · Markdown · HTML · PDF/A — PNG + JPEG (PDF float, DOCX wrapSqu
 ---
 
 <p align="center">
-  <img src="docs/assets/pipeline.svg" alt="Input formats → one integer engine → PDF/A HTML DOCX wrapSquare ODT cell PNG JPEG float XObject → capsule hashes" width="100%">
+  <img src="docs/assets/pipeline.svg" alt="Input formats → one integer engine → PDF/A HTML DOCX wrapSquare behindDoc ODT nested lists cell PNG JPEG float and cell XObject → capsule hashes" width="100%">
 </p>
 
 <p align="center">
-  <img src="docs/assets/ships.svg" alt="Shipped IR marks: lists, links, strike, quotes, code, thematic, tasks, highlight, super/sub, underline, PNG/JPEG images, table headers. PDF float XObject and cell images, DOCX wrapSquare and behindDoc, ODT nested lists and cell images. HTML reads img data-URI, lists, blockquote, pre, a, mark — not HTML5. Hangul CHAR_SHAPE, hyperlinks, Quote, CodeBlock, HorizontalLine, Task, highlight shade, table headers except HWP 3. Dashes on Hangul: images, lists. No OCR or OmniDocBench." width="100%">
+  <img src="docs/assets/ships.svg" alt="Shipped IR marks: lists, links, strike, quotes, code, thematic, tasks, highlight, super/sub, underline, PNG/JPEG images, table headers. PDF float XObject, cell images, page header/footer. DOCX wrapSquare, behindDoc, inFront. ODT nested lists, tight wrap, cell images. HTML reads img data-URI, lists, table headers, blockquote, pre, a, mark — not HTML5. Hangul CHAR_SHAPE, hyperlinks, Quote, CodeBlock, HorizontalLine, Task, highlight shade, Bullet/Number lists, table headers except HWP 3. Dash on Hangul: images. No OCR or OmniDocBench." width="100%">
 </p>
 
 <p align="center">
   <img src="docs/assets/output-trio.png" alt="Real convert of examples/letter.md: PDF/A page, semantic HTML, capsule SHA-256 ×3" width="100%">
 </p>
 <p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. Not mockups. This fixture has no image.<br>
-PNG + JPEG on MD / HTML / PDF/A (float XObject, cell images) / DOCX (<code>wrapSquare</code>, <code>behindDoc</code>) / ODT (cell <code>draw:image</code>, nested lists). HTML <code>read</code> of <code>&lt;img data:…&gt;</code>, lists, <code>&lt;blockquote&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;a href&gt;</code>, <code>&lt;mark&gt;</code> — not HTML5. Hangul Quote / CodeBlock / HorizontalLine / Task / CHAR_SHAPE highlight / table headers (not HWP 3). Not Hangul images or first-class lists.</sub></p>
+PNG + JPEG on MD / HTML / PDF/A (float XObject, cell images, page header/footer) / DOCX (<code>wrapSquare</code>, <code>behindDoc</code>, in-front) / ODT (cell <code>draw:image</code>, nested lists, tight wrap). HTML <code>read</code> of <code>&lt;img data:…&gt;</code>, lists, <code>&lt;th&gt;</code>, <code>&lt;blockquote&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;a href&gt;</code>, <code>&lt;mark&gt;</code> — not HTML5. Hangul Quote / CodeBlock / HorizontalLine / Task / CHAR_SHAPE highlight / Bullet / Number / table headers (not HWP 3). Not Hangul images.</sub></p>
 
 ## Why this exists
 
@@ -51,8 +51,8 @@ Pandoc, python-docx, WeasyPrint, ONLYOFFICE, and LibreOffice turn documents into
 | Proof it ran the same file | capsule: input / plan / output SHA-256 |
 | Same fonts → same PDF twice | integer layout at 1/7200 inch |
 | Word, LibreOffice, Markdown, print | DOCX · ODT · MD · HTML · PDF/A |
-| Images on those five codecs | PNG + JPEG: `![alt]`, `<img data:…>`, PDF/A float XObject, DOCX `wp:wrapSquare`, ODT cell `draw:image` |
-| HTML an agent can import | `read` recovers data-URI `<img>`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>` — not HTML5 |
+| Images on those five codecs | PNG + JPEG: `![alt]`, `<img data:…>`, PDF/A float + cell XObject, DOCX `wp:wrapSquare` + `behindDoc`, ODT cell `draw:image` + nested `text:list` |
+| HTML an agent can import | `read` recovers data-URI `<img>`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>` — not HTML5 |
 | Korean public files without a second product | HWP · HWPX · HML · HWP 3 on the same IR |
 | No GPU bill, no VLM drift | CPU, deterministic |
 
@@ -80,10 +80,10 @@ No OmniDocBench numbers live on this page.
 | [LibreOffice](https://github.com/LibreOffice/core) 4.3k | Headless office convert | | | | | **yes** | |
 
 **North star:** drop `examples/letter.md` (or DOCX/ODT) and get PDF/A + HTML + Markdown + DOCX + ODT whose bytes match the next run, with three hashes in the capsule.
-Images: **yes** PNG + JPEG on Markdown / HTML / PDF/A / DOCX / ODT — PDF float XObject, DOCX `wp:wrapSquare`, ODT cell `draw:image`. **—** on Hangul. `letter.md` itself still has no image.
-HTML: `read` recovers `<img src="data:…">`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>` (Pandoc-class import). Not a full HTML5 engine.
-Hangul CHAR_SHAPE (incl. shade highlight), hyperlinks, Quote / CodeBlock / HorizontalLine / Task: **yes** on HWP 5 + HWPX + HML + HWP 3.
-Hangul LineSeg vs rhwp is a regional CI track, not this page.
+Images: **yes** PNG + JPEG on Markdown / HTML / PDF/A / DOCX / ODT — PDF float + cell XObject, DOCX `wp:wrapSquare` + `behindDoc`, ODT cell `draw:image` + nested lists. **—** on Hangul. `letter.md` itself still has no image.
+HTML: `read` recovers `<img src="data:…">`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<blockquote>`, `<pre>`, `<a href>`, `<mark>` (Pandoc-class import). Not a full HTML5 engine.
+Hangul CHAR_SHAPE (incl. shade highlight), hyperlinks, Quote / CodeBlock / HorizontalLine / Task, table headers: **yes** (headers not HWP 3).
+Hangul **—**: images. LineSeg vs rhwp is a regional CI track, not this page.
 
 ## What ships
 
@@ -91,7 +91,7 @@ Honest codec coverage — not a wishlist. Full table: [`docs/src/capabilities.md
 
 | Mark | Markdown | HTML | PDF/A | DOCX | ODT | Hangul |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| Lists (ul/ol, nested) | **yes** | **yes** | markers | `w:numPr` | `text:list` | — |
+| Lists (ul/ol, nested) | **yes** | `read` ul/ol/tasks | markers | `w:numPr` | nested `text:list` | **yes** · Bullet / Number |
 | Links | `[text](url)` | `<a href>` | URI `/Link` | `w:hyperlink` | `text:a` | `%hlk` / `HYPERLINK` / TagID 3 |
 | Strike | `~~text~~` | `<s>` | fill | `w:strike` | line-through | CHAR_SHAPE (not HWP 3) |
 | Quotes | `>` | `<blockquote>` | quote bar | Quote | Quote | **yes** · Quote style |
@@ -101,14 +101,14 @@ Honest codec coverage — not a wishlist. Full table: [`docs/src/capabilities.md
 | Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** · CHAR_SHAPE shade |
 | Super / sub | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline | `w:vertAlign` | Tsuper / Tsub | CHAR_SHAPE |
 | Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | CHAR_SHAPE |
-| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | XObject · float | `a:blip` · wrapSquare | `draw:image` · cell | — |
+| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | XObject · float · cell | `a:blip` · wrapSquare · behindDoc | `draw:image` · cell | — |
 | Table header | GFM `\| --- \|` | `<th>` | header fill | `w:tblHeader` | `THcell` | **yes** · not HWP 3 |
 
-Hangul CHAR_SHAPE maps bold / italic / underline / super / sub on HWP 5, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 attr bits (HWP 3 has no strike bit). Highlight is CHAR_SHAPE shade (HWP 5 shade RGB, HWPX `hh:shade`, HML `SHADECOLOR`, HWP 3 shade ratio). Table header rows round-trip on HWP 5 / HWPX / HML (HWP 3 has no header primitive). Hyperlinks: HWP 5 `%hlk`, HWPX `hp:fieldBegin type="HYPERLINK"`, HML `FIELDBEGIN Type="Hyperlink"`, HWP 3 control-10 + additional-info TagID 3. Para styles `Quote`, `CodeBlock`, `HorizontalLine`, and `Task` (`[x]` / `[ ]`) round-trip on all four Hangul codecs. Images and first-class lists do not.
+Hangul CHAR_SHAPE maps bold / italic / underline / super / sub on HWP 5, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 attr bits (HWP 3 has no strike bit). Highlight is CHAR_SHAPE shade (HWP 5 shade RGB, HWPX `hh:shade`, HML `SHADECOLOR`, HWP 3 shade ratio). Table header rows round-trip on HWP 5 / HWPX / HML (HWP 3 has no header primitive). Hyperlinks: HWP 5 `%hlk`, HWPX `hp:fieldBegin type="HYPERLINK"`, HML `FIELDBEGIN Type="Hyperlink"`, HWP 3 control-10 + additional-info TagID 3. Para styles `Quote`, `CodeBlock`, `HorizontalLine`, `Task` (`[x]` / `[ ]`), `Bullet`, and `Number` round-trip on all four Hangul codecs. Images do not.
 
 HTML `read` recovers `<img src="data:image/png|jpeg;base64,…">`, `<ul>`/`<ol>`/`<ul class="tasks">`, `<blockquote>`, `<pre>`, `<a href>`, and `<mark>` into the same IR (Pandoc-class import). Write emits those tags. `http(s):` `src` is skipped. This is not a full HTML5 engine: no CSS layout, no JavaScript, no remote fetch. `examples/letter.md` has no image, so the convert shots below do not show one.
 
-PDF `Block::Float(Float::Image)` and table-cell images layout and paint as PDF/A XObjects; oversized images clamp to content width. DOCX `WrapMode::Square` / `Behind` round-trip as `wp:wrapSquare` / `wp:wrapNone`+behindDoc. ODT writes `draw:image` inside table cells and nested `<text:list>` inside `<text:list-item>`.
+PDF `Block::Float(Float::Image)` and table-cell `InlineObject::Image` layout and paint as PDF/A XObjects; oversized floats clamp to content width; cell images clamp to cell width. DOCX `WrapMode::Square` / `Behind` round-trip as `wp:wrapSquare` / `wp:wrapNone`+behindDoc. ODT writes `draw:image` inside table cells and nested `<text:list>` inside `<text:list-item>`.
 
 No spreadsheet. No slides. No cursor. No undo stack. Flow documents only.
 
@@ -163,12 +163,12 @@ Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/lette
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. List markers, task boxes, links, strike, quote bars, code fills, highlight, rules, and header cells are painted fills. Superscripts/subscripts shift the baseline. Bold is a second fill; italic is a 0.20 shear. PNG and JPEG, when present, are PDF/A XObjects — including <code>Block::Float</code> images. This letter fixture has none. GPU-free. Same fonts → same bytes.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. List markers, task boxes, links, strike, quote bars, code fills, highlight, rules, and header cells are painted fills. Superscripts/subscripts shift the baseline. Bold is a second fill; italic is a 0.20 shear. PNG and JPEG, when present, are PDF/A XObjects — <code>Block::Float</code> and table-cell images. This letter fixture has none. GPU-free. Same fonts → same bytes.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
 </p>
-<p align="center"><sub>HTML from the same IR: headings, quotes, tables, nested lists, tasks, bold, italic, strike, code, fence, rule, highlight, underline, super/sub, and links. Write emits <code>&lt;img src="data:…"&gt;</code>, <code>&lt;blockquote&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;a href&gt;</code>, <code>&lt;mark&gt;</code>; <code>read</code> recovers those tags. The letter fixture has no image. Not HTML5.</sub></p>
+<p align="center"><sub>HTML from the same IR: headings, quotes, tables, nested lists, tasks, bold, italic, strike, code, fence, rule, highlight, underline, super/sub, and links. Write emits <code>&lt;img src="data:…"&gt;</code>, lists, <code>&lt;blockquote&gt;</code>, <code>&lt;pre&gt;</code>, <code>&lt;a href&gt;</code>, <code>&lt;mark&gt;</code>; <code>read</code> recovers those tags plus <code>&lt;ul&gt;</code>/<code>&lt;ol&gt;</code>/<code>&lt;ul class="tasks"&gt;</code>. The letter fixture has no image. Not HTML5.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
@@ -189,11 +189,11 @@ Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/lette
 | --- | --- |
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
-| **PDF/A** | Archival print from the integer plan. PNG and JPEG are XObjects, including `Block::Float(Float::Image)`. Oversized floats clamp to content width. Two runs, same fonts, same bytes. |
+| **PDF/A** | Archival print from the integer plan. PNG and JPEG are XObjects, including `Block::Float(Float::Image)` and table-cell images. Oversized floats clamp to content width; cell images clamp to cell width. Two runs, same fonts, same bytes. |
 | **DOCX / ODT** | Word and LibreOffice files. Headings, lists, links, strike, quotes, code, tasks, highlight, underline, super/sub, table headers, PNG + JPEG (`a:blip` / `draw:image`). DOCX `wrapSquare` / `behindDoc`. ODT nested lists + cell images + `svg:desc` alt. |
-| **Markdown / HTML** | Agent-native text and semantic HTML. Markdown `![alt](src "title")`. HTML write emits `<img src="data:…">`, lists, `<blockquote>`, `<pre>`, `<a href>`, `<mark>`; `read` recovers those tags. Not HTML5. |
+| **Markdown / HTML** | Agent-native text and semantic HTML. Markdown `![alt](src "title")`. HTML write emits `<img src="data:…">`, lists, `<blockquote>`, `<pre>`, `<a href>`, `<mark>`; `read` recovers those tags plus `<ul>`/`<ol>`/`<ul class="tasks">`. Not HTML5. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
-| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. CHAR_SHAPE (including shade highlight), hyperlinks, Quote / CodeBlock / Task styles, HorizontalLine thematic breaks, and table headers (not HWP 3). Still **—**: images, first-class lists. |
+| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. CHAR_SHAPE (including shade highlight), hyperlinks, Quote / CodeBlock / Task / Bullet / Number styles, HorizontalLine thematic breaks, and table headers (not HWP 3). Still **—**: images. |
 
 ## Command / Query / Event
 

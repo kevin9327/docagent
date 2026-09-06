@@ -7,8 +7,9 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, BorderStyle, BreakKind, Document, Float, Hu, Hu64, InlineObject, LineSpacing,
-    NumberFormat, Paragraph, RunContent, Section, Table, DEFAULT_FONT_SIZE_HU,
+    Alignment, Block, BorderStyle, BreakKind, Document, Float, HeaderFooter, Hu, Hu64,
+    InlineObject, LineSpacing, NumberFormat, Paragraph, RunContent, Section, Table,
+    DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
 
@@ -238,7 +239,168 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
         }
     }
     pages.push(current);
+    // Stamp after body so pagination still sees a fresh page as empty.
+    stamp_header_footer(section, fonts, content_w, origin_x, &mut pages);
     pages
+}
+
+fn prepare_header_footer(hf: &HeaderFooter, fonts: &FontSet, width: Hu) -> Vec<Prepared> {
+    hf.blocks
+        .par_iter()
+        .map(|block| prepare_block(block, fonts, width))
+        .collect()
+}
+
+fn stamp_header_footer(
+    section: &Section,
+    fonts: &FontSet,
+    content_w: Hu,
+    origin_x: Hu,
+    pages: &mut [PageFrag],
+) {
+    let page = &section.page;
+    let header = section
+        .header
+        .as_ref()
+        .map(|hf| prepare_header_footer(hf, fonts, content_w));
+    let footer = section
+        .footer
+        .as_ref()
+        .map(|hf| prepare_header_footer(hf, fonts, content_w));
+    if header.is_none() && footer.is_none() {
+        return;
+    }
+    let header_y = page.margin_top.saturating_sub(page.header_distance).max(0);
+    let footer_y = page.height.saturating_sub(page.margin_bottom).max(0);
+    for frag in pages {
+        if let Some(items) = header.as_deref() {
+            place_prepared_band(frag, items, origin_x, header_y, content_w, page.height);
+        }
+        if let Some(items) = footer.as_deref() {
+            place_prepared_band(frag, items, origin_x, footer_y, content_w, page.height);
+        }
+    }
+}
+
+fn place_prepared_band(
+    page: &mut PageFrag,
+    items: &[Prepared],
+    origin_x: Hu,
+    origin_y: Hu,
+    content_w: Hu,
+    page_h: Hu,
+) {
+    let mut y = origin_y.max(0);
+    for item in items {
+        match item {
+            Prepared::Lines {
+                lines,
+                space_before,
+                space_after,
+                rule,
+                fills,
+            } => {
+                y = y.saturating_add(*space_before);
+                let mut text_left: Option<Hu> = None;
+                let mut text_right = origin_x;
+                let mut block_bottom = y;
+                let mut first_line_y = y;
+                let mut saw_line = false;
+                for line in lines {
+                    if y >= page_h {
+                        break;
+                    }
+                    let mut placed = line.clone();
+                    placed.x = origin_x.saturating_add(placed.x);
+                    placed.y = y;
+                    if !saw_line {
+                        first_line_y = y;
+                        saw_line = true;
+                    }
+                    if placed.width > 0 {
+                        text_left = Some(text_left.map_or(placed.x, |l| l.min(placed.x)));
+                        text_right = text_right.max(placed.x.saturating_add(placed.width));
+                    }
+                    y = y.saturating_add(placed.height);
+                    if placed.height > 0 {
+                        block_bottom = y;
+                    }
+                    push_underlined_line(page, placed);
+                }
+                if let (Some(rule), Some(left)) = (rule.as_ref(), text_left) {
+                    let (rx, rw) = if rule.span_content {
+                        (origin_x, content_w)
+                    } else {
+                        (left, (text_right - left).max(1))
+                    };
+                    page.strokes.push(RectFrag {
+                        x: rx,
+                        y: block_bottom.saturating_add(80),
+                        width: rw,
+                        height: rule.thickness,
+                        fill: rule.color,
+                    });
+                }
+                for fill in fills {
+                    page.strokes.push(RectFrag {
+                        x: origin_x.saturating_add(fill.x),
+                        y: first_line_y.saturating_add(fill.y),
+                        width: fill.width,
+                        height: fill.height,
+                        fill: fill.fill,
+                    });
+                }
+                y = y.saturating_add(*space_after);
+            }
+            Prepared::Table {
+                rows,
+                col_widths,
+                stroke_w,
+                stroke,
+            } => {
+                let x0 = origin_x;
+                for row in rows {
+                    let row_h = row
+                        .iter()
+                        .map(|c| c.height)
+                        .max()
+                        .unwrap_or(0)
+                        .max(MIN_ROW_REMAINDER_HU);
+                    if y >= page_h {
+                        break;
+                    }
+                    let mut x = x0;
+                    for (ci, cell) in row.iter().enumerate() {
+                        let cw = *col_widths.get(ci).unwrap_or(&10000);
+                        page.rects.push(RectFrag {
+                            x,
+                            y,
+                            width: cw,
+                            height: row_h,
+                            fill: if cell.header {
+                                [204, 251, 241, 255]
+                            } else {
+                                [255, 255, 255, 255]
+                            },
+                        });
+                        if *stroke_w > 0 {
+                            push_cell_strokes(&mut page.strokes, x, y, cw, row_h, *stroke_w, *stroke);
+                        }
+                        let mut ly = y + 80;
+                        for line in &cell.lines {
+                            let mut placed = line.clone();
+                            placed.x = x + 80 + line.x;
+                            placed.y = ly;
+                            ly = ly.saturating_add(line.height);
+                            push_underlined_line(page, placed);
+                        }
+                        x += cw;
+                    }
+                    y = y.saturating_add(row_h);
+                }
+            }
+        }
+    }
 }
 
 fn empty_page(width: Hu, height: Hu) -> PageFrag {
@@ -1083,7 +1245,17 @@ pub fn table_row_heights(tree: &FragmentTree) -> Vec<Hu> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docagent_model::{NumberFormat, NumberingRef, Paragraph, Section, Table};
+    use docagent_model::{
+        HeaderFooter, NumberFormat, NumberingRef, Paragraph, Section, Table, DEFAULT_MARGIN_HU,
+    };
+
+    fn hf(text: &str) -> HeaderFooter {
+        HeaderFooter {
+            blocks: vec![Block::Paragraph(Paragraph::from_text(text))],
+            different_first: None,
+            different_odd_even: None,
+        }
+    }
 
     #[test]
     fn layout_uses_integer_hwpunit_only() {
@@ -1961,5 +2133,75 @@ mod tests {
         );
         assert!(img.height > 0);
         assert_eq!(img.bytes, MARK_PNG);
+    }
+
+    #[test]
+    fn section_header_appears_on_each_page() {
+        let mut doc = Document::new();
+        let mut section = Section {
+            header: Some(hf("HEAD")),
+            ..Section::default()
+        };
+        for _ in 0..80 {
+            section
+                .body
+                .push(Block::Paragraph(Paragraph::from_text("body line")));
+        }
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        assert!(
+            tree.pages.len() >= 2,
+            "need a second page, got {}",
+            tree.pages.len()
+        );
+        for (i, page) in tree.pages.iter().enumerate() {
+            let head = page
+                .lines
+                .iter()
+                .find(|l| l.text.contains("HEAD"))
+                .unwrap_or_else(|| panic!("HEAD missing on page {i}"));
+            assert!(head.y >= 0, "header y {} off page", head.y);
+            assert!(head.y < page.height, "header y {} past page", head.y);
+            assert!(
+                head.y < DEFAULT_MARGIN_HU,
+                "header y {} not in top margin",
+                head.y
+            );
+            assert!(
+                page.lines.iter().any(|l| l.text.contains("body line")),
+                "body dropped on page {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn section_footer_appears_on_page() {
+        let mut doc = Document::new();
+        let mut section = Section {
+            footer: Some(hf("FOOT")),
+            ..Section::default()
+        };
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("body line")));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let foot = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("FOOT"))
+            .expect("FOOT missing");
+        assert!(foot.y >= 0);
+        assert!(foot.y < page.height);
+        assert!(
+            foot.y >= page.height.saturating_sub(DEFAULT_MARGIN_HU),
+            "footer y {} not in bottom margin",
+            foot.y
+        );
+        assert!(
+            page.lines.iter().any(|l| l.text.contains("body line")),
+            "body dropped"
+        );
     }
 }

@@ -23,9 +23,11 @@ Global interchange (DOCX, Markdown, ODT) runs first; Hangul codecs follow on the
 Hops prove **plain text** presence. Lists, links, strike, quotes, code, thematic
 breaks, tasks, highlight, super/sub, table headers, and PNG / JPEG images
 (Markdown / HTML / PDF/A / DOCX / ODT) are codec-level round-trips (see
-[What ships](capabilities.md)), not this hop count. PDF float XObjects, DOCX
-`wp:wrapSquare`, and ODT cell `draw:image` are also codec-level, not hop counts.
-HTML `read` recovers `<img src="data:…">`, `<blockquote>`, `<pre>`, `<a href>`,
-and `<mark>`; that is not a hop count and not an HTML5 engine.
+[What ships](capabilities.md)), not this hop count. PDF float and cell XObjects,
+DOCX `wp:wrapSquare` / `behindDoc`, ODT nested `text:list` and cell `draw:image`
+are also codec-level, not hop counts.
+HTML `read` recovers `<img src="data:…">`, `<ul>`/`<ol>`/`<ul class="tasks">`,
+`<th>`/`<thead>`, `<blockquote>`, `<pre>`, `<a href>`, and `<mark>`; that is not a hop count and
+not an HTML5 engine.
 Hangul Quote / CodeBlock / HorizontalLine / Task hop as para styles; highlight hops as CHAR_SHAPE shade.
-Hangul table headers hop on HWP 5 / HWPX / HML (not HWP 3). Hangul images and first-class lists do not.
+Hangul table headers hop on HWP 5 / HWPX / HML (not HWP 3). Hangul Bullet / Number lists hop as para styles. Hangul images do not.
