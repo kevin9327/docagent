@@ -171,6 +171,7 @@ struct InlineMarks {
     mark: bool,
     under: bool,
     super_: bool,
+    sub_: bool,
 }
 
 fn parse_runs(text: &str) -> Vec<Run> {
@@ -195,6 +196,7 @@ fn parse_runs(text: &str) -> Vec<Run> {
             run.style.underline = docagent_model::Underline::Single;
         }
         run.style.superscript = marks.super_;
+        run.style.subscript = marks.sub_;
         runs.push(run);
     };
     while i < chars.len() {
@@ -239,6 +241,12 @@ fn parse_runs(text: &str) -> Vec<Run> {
         if !marks.code && chars[i] == '^' {
             flush(&mut runs, &mut buf, marks);
             marks.super_ = !marks.super_;
+            i += 1;
+            continue;
+        }
+        if !marks.code && chars[i] == '~' {
+            flush(&mut runs, &mut buf, marks);
+            marks.sub_ = !marks.sub_;
             i += 1;
             continue;
         }
@@ -499,12 +507,18 @@ fn write_runs(p: &Paragraph) -> String {
                 if run.style.superscript {
                     s.push('^');
                 }
+                if run.style.subscript {
+                    s.push('~');
+                }
                 if run.style.code {
                     s.push('`');
                 }
                 s.push_str(t);
                 if run.style.code {
                     s.push('`');
+                }
+                if run.style.subscript {
+                    s.push('~');
                 }
                 if run.style.superscript {
                     s.push('^');
@@ -699,6 +713,28 @@ mod tests {
         let back = String::from_utf8(write(&doc).unwrap()).unwrap();
         assert!(back.contains("PDF/^A^"), "{back}");
         assert!(!back.contains("^the"), "{back}");
+    }
+
+    #[test]
+    fn subscripts_roundtrip() {
+        let src = b"Wet cargo is H~2~O only.\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.subscript && matches!(&r.content, RunContent::Text(t) if t == "2")
+        }));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(back.contains("H~2~O"), "{back}");
+        assert!(!back.contains("~Wet"), "{back}");
+        let strike = read(b"Agents ~~guess~~.\n").unwrap();
+        let Block::Paragraph(p) = &strike.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.strike && !r.style.subscript && matches!(&r.content, RunContent::Text(t) if t == "guess")
+        }));
     }
 
     #[test]

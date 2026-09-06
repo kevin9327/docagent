@@ -300,6 +300,7 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                     || run.style.highlight.is_some()
                     || run.style.underline != Underline::None
                     || run.style.superscript
+                    || run.style.subscript
                     || sz != default_sz
                 {
                     s.push_str("<w:rPr>");
@@ -317,6 +318,8 @@ fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
                     }
                     if run.style.superscript {
                         s.push_str(r#"<w:vertAlign w:val="superscript"/>"#);
+                    } else if run.style.subscript {
+                        s.push_str(r#"<w:vertAlign w:val="subscript"/>"#);
                     }
                     if run.style.code {
                         s.push_str(
@@ -410,6 +413,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
     let mut run_mark = false;
     let mut run_under = false;
     let mut run_super = false;
+    let mut run_sub = false;
     let mut run_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
@@ -483,7 +487,9 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_under = !v.eq_ignore_ascii_case("none");
                     }
                     "vertAlign" if in_rpr => {
-                        run_super = attr(&e, "val").as_deref() == Some("superscript");
+                        let v = attr(&e, "val");
+                        run_super = v.as_deref() == Some("superscript");
+                        run_sub = v.as_deref() == Some("subscript");
                     }
                     "sz" if in_rpr => {
                         if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<i32>().ok()) {
@@ -503,6 +509,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_mark = false;
                         run_under = false;
                         run_super = false;
+                        run_sub = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -521,6 +528,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_mark = false;
                         run_under = false;
                         run_super = false;
+                        run_sub = false;
                         run_size = None;
                         run_text.clear();
                     }
@@ -594,6 +602,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                                 highlight: run_mark,
                                 underline: run_under,
                                 superscript: run_super,
+                                subscript: run_sub,
                                 size: run_size,
                             },
                             hyperlink_target.as_deref(),
@@ -606,6 +615,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                         run_mark = false;
                         run_under = false;
                         run_super = false;
+                        run_sub = false;
                         run_size = None;
                     }
                     "hyperlink" => {
@@ -623,6 +633,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
                                 highlight: run_mark,
                                 underline: run_under,
                                 superscript: run_super,
+                                subscript: run_sub,
                                 size: run_size,
                             },
                             hyperlink_target.as_deref(),
@@ -708,6 +719,7 @@ fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Docum
             highlight: run_mark,
             underline: run_under,
             superscript: run_super,
+            subscript: run_sub,
             size: run_size,
         },
         hyperlink_target.as_deref(),
@@ -748,6 +760,7 @@ struct RunMarks {
     highlight: bool,
     underline: bool,
     superscript: bool,
+    subscript: bool,
     size: Option<i32>,
 }
 
@@ -771,6 +784,7 @@ fn flush_run(runs: &mut Vec<Run>, text: &mut String, marks: RunMarks, href: Opti
         run.style.underline = Underline::Single;
     }
     run.style.superscript = marks.superscript;
+    run.style.subscript = marks.subscript;
     if let Some(sz) = marks.size {
         run.style.size = sz;
     }
@@ -1028,6 +1042,25 @@ mod tests {
         };
         assert!(p.runs.iter().any(|r| {
             r.style.superscript && matches!(&r.content, RunContent::Text(t) if t == "A")
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_subscript() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("2");
+        p.runs[0].style.subscript = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains(r#"w:val="subscript""#), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.subscript && matches!(&r.content, RunContent::Text(t) if t == "2")
         }));
     }
 

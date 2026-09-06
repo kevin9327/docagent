@@ -1,26 +1,26 @@
 # DocAgent #1 loop state
 
-Last cycle: 31 (2026-09-06) — superscripts as a smaller raised face
+Last cycle: 32 (2026-09-06) — subscripts as a smaller lowered face
 
 ## Public GitHub page (priority 0)
 
 The page strangers see is `https://github.com/kevin9327/docagent`.
 
 Shipped this cycle:
-- `CharStyle.superscript` lays out at 2/3 size on a baseline raised by 1/3 em.
-- Markdown reads/writes `^text^`. HTML emits `<sup>`. DOCX keeps `w:vertAlign superscript`. ODT keeps `Tsuper` `style:text-position="super 58%"`.
-- Fixture: `PDF/^A^` in the body, table, nested list, and closer so the GitHub PDF/HTML shots show a raised A.
+- `CharStyle.subscript` lays out at 2/3 size on a baseline lowered by 1/5 em.
+- Markdown reads/writes `~text~` (after `~~strike~~`). HTML emits `<sub>`. DOCX keeps `w:vertAlign subscript`. ODT keeps `Tsub` `style:text-position="sub 58%"`.
+- Fixture: `H~2~O` in the body, nested list, and closer so the GitHub PDF/HTML shots show a lowered 2 next to PDF/^A^.
 
 Verified hashes (engine 0.1.0, letter.md → PDF/A + HTML):
-- input  `66fc8acacb0a2231ab4fd16812bc822e9d88a47f239b0d5ce9099462238e0444`
+- input  `927baa86fcdc5d76a72cfbcc8ee32ac3cadbcefb2505bc4bb80b335a14ddef74`
 - plan   `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63`
-- output `c25dd17979888427f4572e1bb08397d0527cc7e8d485d05676fd65e2a7dd82d7`
+- output `fa51b7d4611202e46c63d21102874259c6167e006c4d7573fc2825deffae2213`
 
-Plan hash matches cycle 21–30. Input and output hashes changed with the fixture and smaller raised glyphs.
+Plan hash matches cycle 21–31. Input and output hashes changed with the fixture and smaller lowered glyphs.
 
 ## Next
 
-1. Hangul codec hyperlinks / strikethrough / quotes / code / breaks / tasks / highlights / underlines / superscripts, or inline images.
+1. Hangul codec hyperlinks / strikethrough / quotes / code / breaks / tasks / highlights / underlines / superscripts / subscripts, or inline images.
 2. Keep visual density at or above MinerU/Docling for an *agent document runtime*.
 
 ## Rule

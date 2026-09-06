@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, BreakKind, Color, Document, InlineObject, NumberFormat, NumberingRef,
-    Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, Underline, HU_PER_POINT,
+    Alignment, Block, BreakKind, CharStyle, Color, Document, InlineObject, NumberFormat,
+    NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, Underline,
+    HU_PER_POINT,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -88,6 +89,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut span_mark = false;
     let mut span_under = false;
     let mut span_super = false;
+    let mut span_sub = false;
     let mut span_size: Option<i32> = None;
     let mut para_bold = false;
     let mut para_italic = false;
@@ -96,6 +98,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut para_mark = false;
     let mut para_under = false;
     let mut para_super = false;
+    let mut para_sub = false;
     let mut para_size: Option<i32> = None;
     let mut run_text = String::new();
     let mut para_runs: Vec<Run> = Vec::new();
@@ -138,7 +141,9 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             style_bits.underline |= s != "none";
                         }
                         if let Some(p) = attr(&e, "text-position") {
-                            style_bits.superscript |= p.trim().to_ascii_lowercase().starts_with("super");
+                            let p = p.trim().to_ascii_lowercase();
+                            style_bits.superscript |= p.starts_with("super");
+                            style_bits.subscript |= p.starts_with("sub");
                         }
                         if let Some(bg) = attr(&e, "background-color") {
                             let bg = bg.trim();
@@ -175,6 +180,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         para_mark = st.highlight;
                         para_under = st.underline;
                         para_super = st.superscript;
+                        para_sub = st.subscript;
                         para_size = st.size;
                         span_bold = para_bold;
                         span_italic = para_italic;
@@ -183,6 +189,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         span_mark = para_mark;
                         span_under = para_under;
                         span_super = para_super;
+                        span_sub = para_sub;
                         span_size = para_size;
                     }
                     "a" if in_p => {
@@ -197,6 +204,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                                 highlight: span_mark,
                                 underline: span_under,
                                 superscript: span_super,
+                                subscript: span_sub,
                                 size: span_size,
                             },
                             None,
@@ -215,6 +223,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                                 highlight: span_mark,
                                 underline: span_under,
                                 superscript: span_super,
+                                subscript: span_sub,
                                 size: span_size,
                             },
                             None,
@@ -228,6 +237,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             span_mark = st.highlight;
                             span_under = st.underline;
                             span_super = st.superscript;
+                            span_sub = st.subscript;
                             span_size = st.size.or(para_size);
                         } else {
                             span_bold = para_bold;
@@ -237,6 +247,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             span_mark = para_mark;
                             span_under = para_under;
                             span_super = para_super;
+                            span_sub = para_sub;
                             span_size = para_size;
                         }
                     }
@@ -282,6 +293,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                                 highlight: span_mark,
                                 underline: span_under,
                                 superscript: span_super,
+                                subscript: span_sub,
                                 size: span_size,
                             },
                             None,
@@ -293,6 +305,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         span_mark = para_mark;
                         span_under = para_under;
                         span_super = para_super;
+                        span_sub = para_sub;
                         span_size = para_size;
                     }
                     "a" if in_p => {
@@ -307,6 +320,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                                 highlight: span_mark,
                                 underline: span_under,
                                 superscript: span_super,
+                                subscript: span_sub,
                                 size: span_size,
                             },
                             a_href.as_deref(),
@@ -326,6 +340,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                                 highlight: span_mark,
                                 underline: span_under,
                                 superscript: span_super,
+                                subscript: span_sub,
                                 size: span_size,
                             },
                             a_href.take().as_deref(),
@@ -434,6 +449,7 @@ struct StyleBits {
     highlight: bool,
     underline: bool,
     superscript: bool,
+    subscript: bool,
     size: Option<i32>,
 }
 
@@ -473,6 +489,7 @@ fn flush_odt_run(runs: &mut Vec<Run>, text: &mut String, bits: StyleBits, href: 
         run.style.underline = Underline::Single;
     }
     run.style.superscript = bits.superscript;
+    run.style.subscript = bits.subscript;
     if let Some(sz) = bits.size {
         run.style.size = sz;
     }
@@ -555,15 +572,7 @@ fn odt_runs(p: &Paragraph) -> String {
                     continue;
                 }
                 let escaped = xml_escape(t);
-                if let Some(style) = odt_span_style(
-                    run.style.bold,
-                    run.style.italic,
-                    run.style.strike,
-                    run.style.code,
-                    run.style.highlight.is_some(),
-                    run.style.underline != Underline::None,
-                    run.style.superscript,
-                ) {
+                if let Some(style) = odt_span_style(&run.style) {
                     s.push_str(r#"<text:span text:style-name=""#);
                     s.push_str(style);
                     s.push_str(r#"">"#);
@@ -678,32 +687,27 @@ fn content_xml(doc: &Document) -> String {
         }
     }
     format!(
-        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="HorizontalLine" style:family="paragraph"><style:paragraph-properties fo:border-bottom="0.02in solid #134e4a" fo:margin-top="0.15in" fo:margin-bottom="0.15in"/></style:style><style:style style:name="CodeBlock" style:family="paragraph"><style:paragraph-properties fo:background-color="#ccfbf1" fo:padding="0.1in"/><style:text-properties fo:font-family="Consolas"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><style:style style:name="Tmark" style:family="text"><style:text-properties fo:background-color="#fde68a"/></style:style><style:style style:name="Tunder" style:family="text"><style:text-properties style:text-underline-style="solid"/></style:style><style:style style:name="Tsuper" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
+        r##"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:border-left="0.02in solid #134e4a" fo:padding-left="0.1in" fo:margin-left="0.1in"/></style:style><style:style style:name="HorizontalLine" style:family="paragraph"><style:paragraph-properties fo:border-bottom="0.02in solid #134e4a" fo:margin-top="0.15in" fo:margin-bottom="0.15in"/></style:style><style:style style:name="CodeBlock" style:family="paragraph"><style:paragraph-properties fo:background-color="#ccfbf1" fo:padding="0.1in"/><style:text-properties fo:font-family="Consolas"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><style:style style:name="Tstrike" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style><style:style style:name="Tbstrike" style:family="text"><style:text-properties fo:font-weight="bold" style:text-line-through-style="solid"/></style:style><style:style style:name="Tistrike" style:family="text"><style:text-properties fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tbistrike" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-line-through-style="solid"/></style:style><style:style style:name="Tcode" style:family="text"><style:text-properties fo:background-color="#ccfbf1" fo:font-family="Consolas"/></style:style><style:style style:name="Tmark" style:family="text"><style:text-properties fo:background-color="#fde68a"/></style:style><style:style style:name="Tunder" style:family="text"><style:text-properties style:text-underline-style="solid"/></style:style><style:style style:name="Tsuper" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style><style:style style:name="Tsub" style:family="text"><style:text-properties style:text-position="sub 58%"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"##
     )
 }
 
-fn odt_span_style(
-    bold: bool,
-    italic: bool,
-    strike: bool,
-    code: bool,
-    highlight: bool,
-    underline: bool,
-    superscript: bool,
-) -> Option<&'static str> {
-    if code {
+fn odt_span_style(style: &CharStyle) -> Option<&'static str> {
+    if style.code {
         return Some("Tcode");
     }
-    if highlight {
+    if style.highlight.is_some() {
         return Some("Tmark");
     }
-    if underline {
+    if style.underline != Underline::None {
         return Some("Tunder");
     }
-    if superscript {
+    if style.superscript {
         return Some("Tsuper");
     }
-    match (bold, italic, strike) {
+    if style.subscript {
+        return Some("Tsub");
+    }
+    match (style.bold, style.italic, style.strike) {
         (false, false, false) => None,
         (true, false, false) => Some("Tbold"),
         (false, true, false) => Some("Titalic"),
@@ -847,6 +851,26 @@ mod tests {
         };
         assert!(p.runs.iter().any(|r| {
             r.style.superscript && matches!(&r.content, RunContent::Text(t) if t == "A")
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_subscript() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("2");
+        p.runs[0].style.subscript = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("Tsub"), "{xml}");
+        assert!(xml.contains("text-position=\"sub"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.subscript && matches!(&r.content, RunContent::Text(t) if t == "2")
         }));
     }
 

@@ -579,6 +579,13 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                     rs,
                     baseline.saturating_sub(size / 3),
                 )
+            } else if span.subscript {
+                let rs = (size.saturating_mul(2) / 3).max(1);
+                (
+                    shape(fonts, &slice, rs).width,
+                    rs,
+                    baseline.saturating_add(size / 5),
+                )
             } else {
                 let w: i32 = shaped.advances.get(s..e).unwrap_or(&[]).iter().sum();
                 (w, size, baseline)
@@ -723,6 +730,7 @@ struct RunSpan {
     code: bool,
     highlight: bool,
     superscript: bool,
+    subscript: bool,
     href: Option<String>,
 }
 
@@ -754,6 +762,7 @@ fn run_spans(p: &Paragraph) -> Vec<RunSpan> {
             code: run.style.code,
             highlight: run.style.highlight.is_some(),
             superscript: run.style.superscript,
+            subscript: run.style.subscript,
             href,
         });
         i += n;
@@ -1168,6 +1177,38 @@ mod tests {
             raised.y + raised.baseline < base.y + base.baseline,
             "super baseline {} vs {}",
             raised.y + raised.baseline,
+            base.y + base.baseline
+        );
+    }
+
+    #[test]
+    fn subscripts_shrink_and_lower() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("H");
+        let mut sub = docagent_model::Run::text("2");
+        sub.style.subscript = true;
+        p.runs.push(sub);
+        p.runs.push(docagent_model::Run::text("O"));
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        let base = page
+            .lines
+            .iter()
+            .find(|l| l.text == "H")
+            .expect("base");
+        let lowered = page
+            .lines
+            .iter()
+            .find(|l| l.text == "2")
+            .expect("sub");
+        assert!(lowered.font_size < base.font_size, "sub size {} vs {}", lowered.font_size, base.font_size);
+        assert!(
+            lowered.y + lowered.baseline > base.y + base.baseline,
+            "sub baseline {} vs {}",
+            lowered.y + lowered.baseline,
             base.y + base.baseline
         );
     }
