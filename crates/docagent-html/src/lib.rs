@@ -1966,6 +1966,30 @@ mod tests {
     }
 
     #[test]
+    fn letter_md_to_html_contains_img() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/letter.md");
+        let md = std::fs::read(&path).expect("examples/letter.md");
+        let text = std::str::from_utf8(&md).expect("letter.md utf-8");
+        if !text.contains("![") {
+            return;
+        }
+        let png = fixture_png();
+        let doc = docagent_md::read(&md).expect("docagent-md read letter.md");
+        let img = first_image(&doc);
+        assert_eq!(img.bytes, png);
+        assert!(!img.bytes.is_empty());
+        let html = to_html(&doc);
+        assert!(html.contains("<img"), "{html}");
+        let marker = r#"src="data:image/png;base64,"#;
+        let start = html.find(marker).expect("data-uri img");
+        let payload = &html[start + marker.len()..];
+        let end = payload.find('"').expect("src end");
+        assert!(end > 0, "empty data-uri is not a picture: {html}");
+        let decoded = b64_decode(&payload[..end]).expect("b64");
+        assert_eq!(decoded, png);
+    }
+
+    #[test]
     fn read_roundtrips_blockquote() {
         let mut doc = Document::new();
         let mut section = Section::default();

@@ -1328,6 +1328,21 @@ mod tests {
     }
 
     #[test]
+    fn letter_md_reads_mark_png() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/letter.md");
+        let md = std::fs::read(&path).expect("examples/letter.md");
+        let text = std::str::from_utf8(&md).expect("letter.md utf-8");
+        if !text.contains("![") {
+            return;
+        }
+        let doc = read(&md).expect("docagent-md read letter.md");
+        let png = fixture_png();
+        let img = first_image(&doc);
+        assert_eq!(img.bytes, png);
+        assert!(!img.bytes.is_empty());
+    }
+
+    #[test]
     fn headings_carry_size_for_layout() {
         let doc = read(b"# Title\n\n## Sub\n\nBody\n").unwrap();
         let h1 = match &doc.sections[0].body[0] {

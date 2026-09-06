@@ -10,5 +10,8 @@ publish = false
 docagent-model.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+docagent-md.workspace = true
+
 [lints]
 workspace = true
