@@ -313,6 +313,32 @@ mod tests {
     }
 
     #[test]
+    fn hyperlink_underline_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let list = paint(&layout_document(&doc, &FontSet::bundled()));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *h == 80 && *w > 80
+                )
+            }),
+            "hyperlink underline must paint a fill"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(claims_pdfa(&pdf));
+    }
+
+    #[test]
     fn synthetic_bold_changes_pdf_bytes() {
         fn pdf_for(bold: bool) -> Vec<u8> {
             let mut doc = Document::new();

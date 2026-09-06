@@ -42,6 +42,7 @@ pub struct LineFrag {
     pub font_size: Hu,
     pub bold: bool,
     pub italic: bool,
+    pub underline: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,7 +127,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                     if placed.height > 0 {
                         block_bottom = y;
                     }
-                    current.lines.push(placed);
+                    push_underlined_line(&mut current, placed);
                 }
                 if let (Some(rule), Some(left)) = (rule, text_left) {
                     let (rx, rw) = if rule.span_content {
@@ -193,7 +194,7 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                             placed.x = x + 80 + line.x;
                             placed.y = ly;
                             ly += line.height;
-                            current.lines.push(placed);
+                            push_underlined_line(&mut current, placed);
                         }
                         x += cw;
                     }
@@ -216,6 +217,19 @@ fn empty_page(width: Hu, height: Hu) -> PageFrag {
         rects: Vec::new(),
         strokes: Vec::new(),
     }
+}
+
+fn push_underlined_line(page: &mut PageFrag, placed: LineFrag) {
+    if placed.underline && placed.width > 0 {
+        page.strokes.push(RectFrag {
+            x: placed.x,
+            y: placed.y.saturating_add(placed.baseline).saturating_add(40),
+            width: placed.width,
+            height: 80,
+            fill: [19, 78, 74, 255],
+        });
+    }
+    page.lines.push(placed);
 }
 
 fn push_cell_strokes(
@@ -379,6 +393,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
             font_size: size,
             bold: false,
             italic: false,
+            underline: false,
         });
         if bullet {
             fills.push(bullet_fill(p.indent_left, baseline, size));
@@ -405,10 +420,11 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 font_size: size,
                 bold: false,
                 italic: false,
+                underline: false,
             });
             x += marker_w;
         }
-        for (rs, re, bold, italic) in &spans {
+        for (rs, re, bold, italic, underline) in &spans {
             let s = (*rs).max(a);
             let e = (*re).min(b);
             if s >= e {
@@ -426,6 +442,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 font_size: size,
                 bold: *bold,
                 italic: *italic,
+                underline: *underline,
             });
             x += w;
         }
@@ -448,6 +465,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
                 font_size: size,
                 bold: false,
                 italic: false,
+                underline: false,
             });
         }
         out.extend(row);
@@ -466,15 +484,21 @@ fn bullet_fill(x: Hu, baseline: Hu, size: Hu) -> RectFrag {
     }
 }
 
-fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool)> {
+fn run_spans(p: &Paragraph) -> Vec<(usize, usize, bool, bool, bool)> {
     let mut i = 0usize;
     let mut out = Vec::new();
     for run in &p.runs {
-        let RunContent::Text(t) = &run.content else {
+        let t = run.display_text();
+        if t.is_empty() {
             continue;
-        };
+        }
         let n = t.chars().count();
-        out.push((i, i + n, run.style.bold, run.style.italic));
+        let underline = run.style.underline != docagent_model::Underline::None
+            || matches!(
+                &run.content,
+                RunContent::Inline(docagent_model::InlineObject::Hyperlink { .. })
+            );
+        out.push((i, i + n, run.style.bold, run.style.italic, underline));
         i += n;
     }
     out
@@ -820,6 +844,29 @@ mod tests {
                 .any(|s| s.fill == [19, 78, 74, 255] && s.width == s.height && s.width >= 160),
             "bullet marker fill missing: {:?}",
             tree.pages[0].strokes
+        );
+    }
+
+    #[test]
+    fn hyperlinks_emit_underline_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![docagent_model::Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        assert!(page.lines.iter().any(|l| l.text.contains("DocAgent") && l.underline));
+        assert!(
+            page.strokes
+                .iter()
+                .any(|s| s.fill == [19, 78, 74, 255] && s.height == 80 && s.width > 80),
+            "hyperlink underline missing: {:?}",
+            page.strokes
         );
     }
 

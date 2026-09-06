@@ -403,9 +403,7 @@ impl Paragraph {
     pub fn plain_text(&self) -> String {
         let mut s = String::new();
         for run in &self.runs {
-            if let RunContent::Text(t) = &run.content {
-                s.push_str(t);
-            }
+            s.push_str(run.display_text());
         }
         s
     }
@@ -464,6 +462,26 @@ impl Run {
             style: CharStyle::default(),
             content: RunContent::Text(text.into()),
         }
+    }
+
+    pub fn display_text(&self) -> &str {
+        match &self.content {
+            RunContent::Text(t) => t,
+            RunContent::Inline(InlineObject::Hyperlink { display, .. }) => display,
+            RunContent::Inline(_) => "",
+        }
+    }
+
+    pub fn hyperlink(display: impl Into<String>, target: impl Into<String>) -> Self {
+        let mut run = Self {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Hyperlink {
+                target: target.into(),
+                display: display.into(),
+            }),
+        };
+        run.style.underline = Underline::Single;
+        run
     }
 }
 

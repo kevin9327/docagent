@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, Document, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section,
-    Table, TableCell, TableRow, HU_PER_POINT,
+    Alignment, Block, Document, InlineObject, NumberFormat, NumberingRef, Paragraph, Run,
+    RunContent, Section, Table, TableCell, TableRow, HU_PER_POINT,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -93,6 +93,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_blocks: Vec<Block> = Vec::new();
     let mut list_stack: Vec<ListCtx> = Vec::new();
+    let mut a_href: Option<String> = None;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
@@ -133,6 +134,17 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                         span_italic = para_italic;
                         span_size = para_size;
                     }
+                    "a" if in_p => {
+                        flush_odt_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            span_bold,
+                            span_italic,
+                            span_size,
+                            None,
+                        );
+                        a_href = attr(&e, "href");
+                    }
                     "span" if in_p => {
                         flush_odt_run(
                             &mut para_runs,
@@ -140,6 +152,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             span_bold,
                             span_italic,
                             span_size,
+                            None,
                         );
                         let key = attr(&e, "style-name").unwrap_or_default();
                         if let Some(st) = styles.get(&key).copied() {
@@ -189,10 +202,22 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             span_bold,
                             span_italic,
                             span_size,
+                            None,
                         );
                         span_bold = para_bold;
                         span_italic = para_italic;
                         span_size = para_size;
+                    }
+                    "a" if in_p => {
+                        flush_odt_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            span_bold,
+                            span_italic,
+                            span_size,
+                            a_href.as_deref(),
+                        );
+                        a_href = None;
                     }
                     "p" | "h" => {
                         in_p = false;
@@ -202,6 +227,7 @@ fn parse_content_xml(xml: &str) -> Result<Document, Error> {
                             span_bold,
                             span_italic,
                             span_size,
+                            a_href.take().as_deref(),
                         );
                         if !para_runs.is_empty() {
                             let mut p = Paragraph::from_text("");
@@ -317,11 +343,16 @@ fn flush_odt_run(
     bold: bool,
     italic: bool,
     size: Option<i32>,
+    href: Option<&str>,
 ) {
     if text.is_empty() {
         return;
     }
-    let mut run = Run::text(std::mem::take(text));
+    let mut run = if let Some(url) = href.filter(|u| !u.is_empty()) {
+        Run::hyperlink(std::mem::take(text), url)
+    } else {
+        Run::text(std::mem::take(text))
+    };
     run.style.bold = bold;
     run.style.italic = italic;
     if let Some(sz) = size {
@@ -356,30 +387,39 @@ fn odt_para(p: &Paragraph) -> String {
 fn odt_runs(p: &Paragraph) -> String {
     let mut s = String::new();
     for run in &p.runs {
-        let RunContent::Text(t) = &run.content else {
-            continue;
-        };
-        if t.is_empty() {
-            continue;
-        }
-        let escaped = xml_escape(t);
-        match (run.style.bold, run.style.italic) {
-            (true, true) => {
-                s.push_str(r#"<text:span text:style-name="Tbi">"#);
-                s.push_str(&escaped);
-                s.push_str("</text:span>");
+        match &run.content {
+            RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
+                s.push_str(r#"<text:a xlink:href=""#);
+                s.push_str(&xml_escape(target));
+                s.push_str(r#"">"#);
+                s.push_str(&xml_escape(display));
+                s.push_str("</text:a>");
             }
-            (true, false) => {
-                s.push_str(r#"<text:span text:style-name="Tbold">"#);
-                s.push_str(&escaped);
-                s.push_str("</text:span>");
+            RunContent::Text(t) => {
+                if t.is_empty() {
+                    continue;
+                }
+                let escaped = xml_escape(t);
+                match (run.style.bold, run.style.italic) {
+                    (true, true) => {
+                        s.push_str(r#"<text:span text:style-name="Tbi">"#);
+                        s.push_str(&escaped);
+                        s.push_str("</text:span>");
+                    }
+                    (true, false) => {
+                        s.push_str(r#"<text:span text:style-name="Tbold">"#);
+                        s.push_str(&escaped);
+                        s.push_str("</text:span>");
+                    }
+                    (false, true) => {
+                        s.push_str(r#"<text:span text:style-name="Titalic">"#);
+                        s.push_str(&escaped);
+                        s.push_str("</text:span>");
+                    }
+                    (false, false) => s.push_str(&escaped),
+                }
             }
-            (false, true) => {
-                s.push_str(r#"<text:span text:style-name="Titalic">"#);
-                s.push_str(&escaped);
-                s.push_str("</text:span>");
-            }
-            (false, false) => s.push_str(&escaped),
+            RunContent::Inline(_) => {}
         }
     }
     s
@@ -481,7 +521,7 @@ fn content_xml(doc: &Document) -> String {
         }
     }
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:automatic-styles><style:style style:name="Heading1" style:family="paragraph"><style:text-properties fo:font-size="18pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading2" style:family="paragraph"><style:text-properties fo:font-size="14pt" fo:font-weight="bold"/></style:style><style:style style:name="Heading3" style:family="paragraph"><style:text-properties fo:font-size="12pt" fo:font-weight="bold"/></style:style><style:style style:name="Tbold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="Titalic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Tbi" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style><text:list-style style:name="Lbullet"><text:list-level-style-bullet text:level="1" text:bullet-char="•"><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="2" text:bullet-char="•"><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-bullet><text:list-level-style-bullet text:level="3" text:bullet-char="•"><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-bullet></text:list-style><text:list-style style:name="Lnumber"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.25in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="2" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.5in" text:min-label-width="0.25in"/></text:list-level-style-number><text:list-level-style-number text:level="3" style:num-format="1" style:num-suffix="."><style:list-level-properties text:space-before="0.75in" text:min-label-width="0.25in"/></text:list-level-style-number></text:list-style></office:automatic-styles><office:body><office:text>{body}</office:text></office:body></office:document-content>"#
     )
 }
 
@@ -624,6 +664,31 @@ mod tests {
                 (Some(NumberFormat::Decimal), 0, Some(2)),
             ]
         );
+    }
+
+    #[test]
+    fn roundtrip_keeps_hyperlink() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = content_xml(&doc);
+        assert!(xml.contains("xlink:href="), "{xml}");
+        assert!(xml.contains("<text:a"), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
     }
 
     #[test]

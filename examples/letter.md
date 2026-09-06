@@ -29,4 +29,4 @@ Agent replay:
    - HTML
 3. Compare the capsule
 
-DocAgent runtime — DOCX · ODT · Markdown · HTML · PDF/A
+[DocAgent](https://github.com/kevin9327/docagent) runtime — DOCX · ODT · Markdown · HTML · PDF/A

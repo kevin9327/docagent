@@ -173,7 +173,7 @@ h1 {{ font-family: Segoe UI, sans-serif; font-size:22px; margin:10px 0 18px; col
 </style></head>
 <body><main>
 <div class="kicker">CAPSULE · SHA-256 ×3</div>
-<h1>letter.md → PDF/A + HTML + ODT + DOCX</h1>
+<h1>letter.md → PDF/A + HTML</h1>
 <div class="row"><div class="key">input_hash</div><div class="val">{cap["input_hash"]}</div></div>
 <div class="row"><div class="key">plan_hash</div><div class="val">{cap["plan_hash"]}</div></div>
 <div class="row"><div class="key">output_hash</div><div class="val">{cap["output_hash"]}</div></div>

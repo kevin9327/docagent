@@ -5,7 +5,8 @@
 #![forbid(unsafe_code)]
 
 use docagent_model::{
-    Block, Document, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section, Table,
+    Block, Document, InlineObject, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section,
+    Table,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -122,6 +123,14 @@ fn parse_runs(text: &str) -> Vec<Run> {
         runs.push(run);
     };
     while i < chars.len() {
+        if chars[i] == '['
+            && let Some((display, target, next)) = parse_md_link(&chars, i)
+        {
+            flush(&mut runs, &mut buf, bold, italic);
+            runs.push(Run::hyperlink(display, target));
+            i = next;
+            continue;
+        }
         if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
             flush(&mut runs, &mut buf, bold, italic);
             bold = !bold;
@@ -284,29 +293,64 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
     Ok(out.into_bytes())
 }
 
+fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    if start >= chars.len() || chars[start] != '[' {
+        return None;
+    }
+    let mut j = start + 1;
+    while j < chars.len() && chars[j] != ']' {
+        j += 1;
+    }
+    if j + 1 >= chars.len() || chars[j] != ']' || chars[j + 1] != '(' {
+        return None;
+    }
+    let display: String = chars[start + 1..j].iter().collect();
+    let mut k = j + 2;
+    while k < chars.len() && chars[k] != ')' {
+        k += 1;
+    }
+    if k >= chars.len() || chars[k] != ')' {
+        return None;
+    }
+    let target: String = chars[j + 2..k].iter().collect();
+    if display.is_empty() || target.is_empty() {
+        return None;
+    }
+    Some((display, target, k + 1))
+}
+
 fn write_runs(p: &Paragraph) -> String {
     let mut s = String::new();
     for run in &p.runs {
-        let RunContent::Text(t) = &run.content else {
-            continue;
-        };
-        if t.is_empty() {
-            continue;
-        }
-        if run.style.bold && run.style.italic {
-            s.push_str("***");
-            s.push_str(t);
-            s.push_str("***");
-        } else if run.style.bold {
-            s.push_str("**");
-            s.push_str(t);
-            s.push_str("**");
-        } else if run.style.italic {
-            s.push('_');
-            s.push_str(t);
-            s.push('_');
-        } else {
-            s.push_str(t);
+        match &run.content {
+            RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
+                s.push('[');
+                s.push_str(display);
+                s.push_str("](");
+                s.push_str(target);
+                s.push(')');
+            }
+            RunContent::Text(t) => {
+                if t.is_empty() {
+                    continue;
+                }
+                if run.style.bold && run.style.italic {
+                    s.push_str("***");
+                    s.push_str(t);
+                    s.push_str("***");
+                } else if run.style.bold {
+                    s.push_str("**");
+                    s.push_str(t);
+                    s.push_str("**");
+                } else if run.style.italic {
+                    s.push('_');
+                    s.push_str(t);
+                    s.push('_');
+                } else {
+                    s.push_str(t);
+                }
+            }
+            RunContent::Inline(_) => {}
         }
     }
     s
@@ -465,6 +509,25 @@ mod tests {
         assert!(back.contains("**two**"), "{back}");
         assert!(back.contains("_four_"), "{back}");
         assert!(!back.contains("**one"), "{back}");
+    }
+
+    #[test]
+    fn hyperlinks_roundtrip() {
+        let src = b"[DocAgent](https://github.com/kevin9327/docagent) runtime\n";
+        let doc = read(src).unwrap();
+        let Block::Paragraph(p) = &doc.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
+        let back = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(
+            back.contains("[DocAgent](https://github.com/kevin9327/docagent)"),
+            "{back}"
+        );
     }
 
     #[test]

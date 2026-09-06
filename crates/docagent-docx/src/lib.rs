@@ -5,12 +5,13 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, Diagnostic, DiagnosticCode, Document, NumberFormat, NumberingRef, Paragraph,
-    Run, RunContent, Section, Severity, Table, TableCell, TableRow, DEFAULT_FONT_SIZE_HU,
-    hu_to_twips, twips_to_hu,
+    Alignment, Block, Diagnostic, DiagnosticCode, Document, InlineObject, NumberFormat,
+    NumberingRef, Paragraph, Run, RunContent, Section, Severity, Table, TableCell, TableRow,
+    DEFAULT_FONT_SIZE_HU, hu_to_twips, twips_to_hu,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -45,6 +46,12 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
         return Err(Error::NotDocx);
     }
     let mut zip = ZipArchive::new(Cursor::new(bytes.to_vec()))?;
+    let mut rels = HashMap::new();
+    if let Ok(mut f) = zip.by_name("word/_rels/document.xml.rels") {
+        let mut rels_xml = String::new();
+        f.read_to_string(&mut rels_xml)?;
+        rels = parse_rels(&rels_xml);
+    }
     let mut xml = String::new();
     {
         let mut f = zip
@@ -52,7 +59,34 @@ pub fn read(bytes: &[u8]) -> Result<Document, Error> {
             .map_err(|_| Error::NotDocx)?;
         f.read_to_string(&mut xml)?;
     }
-    parse_document_xml(&xml)
+    parse_document_xml(&xml, &rels)
+}
+
+fn parse_rels(xml: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e) | Event::Empty(e)) => {
+                if local_name(&e) == "Relationship" {
+                    let id = attr(&e, "Id").or_else(|| attr(&e, "id"));
+                    let target = attr(&e, "Target").or_else(|| attr(&e, "target"));
+                    let ty = attr(&e, "Type").or_else(|| attr(&e, "type")).unwrap_or_default();
+                    if ty.contains("hyperlink")
+                        && let (Some(id), Some(target)) = (id, target)
+                    {
+                        map.insert(id, target);
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    map
 }
 
 pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
@@ -69,9 +103,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
             br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
         )?;
         zip.start_file("word/_rels/document.xml.rels", deflated)?;
-        zip.write_all(
-            br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#,
-        )?;
+        zip.write_all(document_rels(doc).as_bytes())?;
         zip.start_file("word/styles.xml", deflated)?;
         zip.write_all(STYLES_XML.as_bytes())?;
         zip.start_file("word/numbering.xml", deflated)?;
@@ -83,23 +115,70 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, Error> {
     Ok(cursor.into_inner())
 }
 
+fn document_rels(doc: &Document) -> String {
+    let mut s = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>"#,
+    );
+    let mut i = 3u32;
+    for target in hyperlink_targets(doc) {
+        s.push_str(&format!(
+            r#"<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{}" TargetMode="External"/>"#,
+            xml_escape(&target)
+        ));
+        i += 1;
+    }
+    s.push_str("</Relationships>");
+    s
+}
+
+fn hyperlink_targets(doc: &Document) -> Vec<String> {
+    let mut out = Vec::new();
+    for section in &doc.sections {
+        collect_hyperlinks(&section.body, &mut out);
+    }
+    out
+}
+
+fn collect_hyperlinks(blocks: &[Block], out: &mut Vec<String>) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(p) => {
+                for run in &p.runs {
+                    if let RunContent::Inline(InlineObject::Hyperlink { target, .. }) = &run.content {
+                        out.push(target.clone());
+                    }
+                }
+            }
+            Block::Table(t) => {
+                for row in &t.rows {
+                    for cell in &row.cells {
+                        collect_hyperlinks(&cell.blocks, out);
+                    }
+                }
+            }
+            Block::Float(_) | Block::Break(_) => {}
+        }
+    }
+}
+
 fn document_xml(doc: &Document) -> String {
     let mut s = String::from(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>"#,
     );
     let sections = if doc.sections.is_empty() {
         vec![Section::default()]
     } else {
         doc.sections.clone()
     };
+    let mut link_i = 0u32;
     for (si, section) in sections.iter().enumerate() {
         if section.body.is_empty() {
             s.push_str("<w:p><w:r><w:t/></w:r></w:p>");
         } else {
             for block in &section.body {
                 match block {
-                    Block::Paragraph(p) => s.push_str(&p_xml(p)),
-                    Block::Table(t) => s.push_str(&tbl_xml(t)),
+                    Block::Paragraph(p) => s.push_str(&p_xml(p, &mut link_i)),
+                    Block::Table(t) => s.push_str(&tbl_xml(t, &mut link_i)),
                     Block::Float(_) | Block::Break(_) => s.push_str("<w:p/>"),
                 }
             }
@@ -144,7 +223,7 @@ fn half_points_to_hu(hp: i32) -> i32 {
 
 const NUMBERING_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%2."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%3."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#;
 
-fn p_xml(p: &Paragraph) -> String {
+fn p_xml(p: &Paragraph, link_i: &mut u32) -> String {
     let mut s = String::from("<w:p>");
     let heading = p.outline_level.filter(|l| *l > 0);
     let num = p.numbering.as_ref();
@@ -170,32 +249,46 @@ fn p_xml(p: &Paragraph) -> String {
     }
     let mut wrote = false;
     for run in &p.runs {
-        let RunContent::Text(t) = &run.content else {
-            continue;
-        };
-        if t.is_empty() {
-            continue;
+        match &run.content {
+            RunContent::Inline(InlineObject::Hyperlink { display, .. }) => {
+                if display.is_empty() {
+                    continue;
+                }
+                *link_i += 1;
+                let rid = *link_i + 2;
+                s.push_str(&format!(r#"<w:hyperlink r:id="rId{rid}">"#));
+                s.push_str(r#"<w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">"#);
+                s.push_str(&xml_escape(display));
+                s.push_str("</w:t></w:r></w:hyperlink>");
+                wrote = true;
+            }
+            RunContent::Text(t) => {
+                if t.is_empty() {
+                    continue;
+                }
+                s.push_str("<w:r>");
+                let sz = hu_to_half_points(run.style.size);
+                let default_sz = hu_to_half_points(DEFAULT_FONT_SIZE_HU);
+                if run.style.bold || run.style.italic || sz != default_sz {
+                    s.push_str("<w:rPr>");
+                    if run.style.bold {
+                        s.push_str("<w:b/>");
+                    }
+                    if run.style.italic {
+                        s.push_str("<w:i/>");
+                    }
+                    if sz != default_sz {
+                        s.push_str(&format!(r#"<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>"#));
+                    }
+                    s.push_str("</w:rPr>");
+                }
+                s.push_str("<w:t xml:space=\"preserve\">");
+                s.push_str(&xml_escape(t));
+                s.push_str("</w:t></w:r>");
+                wrote = true;
+            }
+            RunContent::Inline(_) => {}
         }
-        s.push_str("<w:r>");
-        let sz = hu_to_half_points(run.style.size);
-        let default_sz = hu_to_half_points(DEFAULT_FONT_SIZE_HU);
-        if run.style.bold || run.style.italic || sz != default_sz {
-            s.push_str("<w:rPr>");
-            if run.style.bold {
-                s.push_str("<w:b/>");
-            }
-            if run.style.italic {
-                s.push_str("<w:i/>");
-            }
-            if sz != default_sz {
-                s.push_str(&format!(r#"<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>"#));
-            }
-            s.push_str("</w:rPr>");
-        }
-        s.push_str("<w:t xml:space=\"preserve\">");
-        s.push_str(&xml_escape(t));
-        s.push_str("</w:t></w:r>");
-        wrote = true;
     }
     if !wrote {
         s.push_str("<w:r><w:t/></w:r>");
@@ -204,7 +297,7 @@ fn p_xml(p: &Paragraph) -> String {
     s
 }
 
-fn tbl_xml(table: &Table) -> String {
+fn tbl_xml(table: &Table, link_i: &mut u32) -> String {
     let mut s = String::from("<w:tbl><w:tblPr/><w:tblGrid>");
     if let Some(row) = table.rows.first() {
         for cell in &row.cells {
@@ -225,7 +318,7 @@ fn tbl_xml(table: &Table) -> String {
             let mut wrote_p = false;
             for b in &cell.blocks {
                 if let Block::Paragraph(p) = b {
-                    s.push_str(&p_xml(p));
+                    s.push_str(&p_xml(p, link_i));
                     wrote_p = true;
                 }
             }
@@ -246,7 +339,7 @@ fn xml_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn parse_document_xml(xml: &str) -> Result<Document, Error> {
+fn parse_document_xml(xml: &str, rels: &HashMap<String, String>) -> Result<Document, Error> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut buf = Vec::new();
@@ -270,6 +363,7 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
     let mut cur_row: Vec<TableCell> = Vec::new();
     let mut cell_blocks: Vec<Block> = Vec::new();
     let mut cell_width = 10000i32;
+    let mut hyperlink_target: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -305,6 +399,10 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                         if let Some(v) = attr(&e, "val").and_then(|v| v.parse::<i32>().ok()) {
                             run_size = Some(half_points_to_hu(v));
                         }
+                    }
+                    "hyperlink" => {
+                        let id = attr(&e, "id").unwrap_or_default();
+                        hyperlink_target = rels.get(&id).cloned();
                     }
                     "r" => {
                         in_run = true;
@@ -385,11 +483,15 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                             run_bold,
                             run_italic,
                             run_size,
+                            hyperlink_target.as_deref(),
                         );
                         in_run = false;
                         run_bold = false;
                         run_italic = false;
                         run_size = None;
+                    }
+                    "hyperlink" => {
+                        hyperlink_target = None;
                     }
                     "p" => {
                         flush_run(
@@ -398,6 +500,7 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
                             run_bold,
                             run_italic,
                             run_size,
+                            hyperlink_target.as_deref(),
                         );
                         if let Some(p) = take_para(
                             &mut para_runs,
@@ -464,6 +567,7 @@ fn parse_document_xml(xml: &str) -> Result<Document, Error> {
         run_bold,
         run_italic,
         run_size,
+        hyperlink_target.as_deref(),
     );
     if let Some(p) = take_para(
         &mut para_runs,
@@ -495,11 +599,16 @@ fn flush_run(
     bold: bool,
     italic: bool,
     size: Option<i32>,
+    href: Option<&str>,
 ) {
     if text.is_empty() {
         return;
     }
-    let mut run = Run::text(std::mem::take(text));
+    let mut run = if let Some(url) = href.filter(|u| !u.is_empty()) {
+        Run::hyperlink(std::mem::take(text), url)
+    } else {
+        Run::text(std::mem::take(text))
+    };
     run.style.bold = bold;
     run.style.italic = italic;
     if let Some(sz) = size {
@@ -573,6 +682,18 @@ fn attr(e: &BytesStart<'_>, key: &str) -> Option<String> {
             e.try_get_attribute(format!("w:{key}"))
                 .ok()
                 .flatten()
+                .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        })
+        .or_else(|| {
+            e.try_get_attribute(format!("r:{key}"))
+                .ok()
+                .flatten()
+                .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        })
+        .or_else(|| {
+            e.attributes()
+                .filter_map(|a| a.ok())
+                .find(|a| a.key.local_name().as_ref() == key.as_bytes())
                 .map(|a| String::from_utf8_lossy(&a.value).into_owned())
         })
 }
@@ -652,7 +773,9 @@ pub fn roundtrip(doc: &Document) -> Result<Document, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docagent_model::{LayoutHint, NumberFormat, NumberingRef, Paragraph, Run};
+    use docagent_model::{
+        InlineObject, LayoutHint, NumberFormat, NumberingRef, Paragraph, Run, RunContent,
+    };
 
     #[test]
     fn roundtrip_keeps_bold_and_italic() {
@@ -744,6 +867,34 @@ mod tests {
                 (Some(NumberFormat::Decimal), 0, Some(2)),
             ]
         );
+    }
+
+    #[test]
+    fn roundtrip_keeps_hyperlink() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = document_xml(&doc);
+        assert!(xml.contains("w:hyperlink"), "{xml}");
+        assert!(xml.contains("w:u"), "{xml}");
+        let rels = document_rels(&doc);
+        assert!(rels.contains("hyperlink"), "{rels}");
+        assert!(rels.contains("https://github.com/kevin9327/docagent"), "{rels}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("para");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
     }
 
     #[test]
