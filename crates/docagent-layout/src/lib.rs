@@ -420,7 +420,16 @@ fn task_checked(p: &Paragraph) -> bool {
 }
 
 fn bullet_disc(size: Hu) -> Hu {
-    (size / 5).max(160)
+    // ~0.75em so PDF/A markers read as discs/boxes, not 2pt dots.
+    (size.saturating_mul(3) / 4).max(400)
+}
+
+fn marker_advance(size: Hu, glyph_w: Hu, box_mark: bool) -> Hu {
+    if box_mark {
+        bullet_disc(size).saturating_add(240).max(glyph_w)
+    } else {
+        glyph_w
+    }
 }
 
 fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>, Vec<RectFrag>) {
@@ -451,7 +460,7 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     };
     let baseline = (lh * 4) / 5;
     let marker = list_marker(p);
-    let marker_w = marker
+    let glyph_w = marker
         .as_deref()
         .map(|m| shape(fonts, m, size).width)
         .unwrap_or(0);
@@ -462,6 +471,10 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     } else {
         0
     };
+    let bullet = is_bullet(p);
+    let task = is_task(p);
+    let box_mark = bullet || task;
+    let marker_w = marker_advance(size, glyph_w, box_mark);
     let usable = (width - p.indent_left - quote_pad - p.indent_right - marker_w).max(1);
     let shaped = shape(fonts, &text, size);
     let ranges = break_lines(text.clone(), shaped.advances.clone(), usable);
@@ -469,9 +482,6 @@ fn layout_paragraph(p: &Paragraph, fonts: &FontSet, width: Hu) -> (Vec<LineFrag>
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut fills = Vec::new();
-    let bullet = is_bullet(p);
-    let task = is_task(p);
-    let box_mark = bullet || task;
     if ranges.is_empty() {
         out.push(LineFrag {
             x: p.indent_left + quote_pad,
@@ -1076,7 +1086,7 @@ mod tests {
             tree.pages[0]
                 .strokes
                 .iter()
-                .any(|s| s.fill == [19, 78, 74, 255] && s.width == s.height && s.width >= 160),
+                .any(|s| s.fill == [19, 78, 74, 255] && s.width == s.height && s.width >= 400),
             "bullet marker fill missing: {:?}",
             tree.pages[0].strokes
         );
@@ -1107,7 +1117,7 @@ mod tests {
         assert!(edges >= 4, "unchecked box missing edges: {:?}", open.pages[0].strokes);
         let done = tree_for(true);
         let inner = done.pages[0].strokes.iter().any(|s| {
-            s.fill == [19, 78, 74, 255] && s.width == s.height && s.width >= 40 && s.width < 160
+            s.fill == [19, 78, 74, 255] && s.width == s.height && s.width >= 200
         });
         assert!(inner, "checked inner fill missing: {:?}", done.pages[0].strokes);
         let joined: String = done.pages[0]

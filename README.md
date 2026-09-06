@@ -91,7 +91,7 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 | --- | --- |
 | input | `fc05a776bdbb0032bf9f30793238977d5b357ca9b4c777429c19e3c9aa0570d0` |
 | plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
-| output | `7ba3af100a56906d0443f16f5246f558de7f02b2b95d6692fbcc25935ddf1d4f` |
+| output | `0c4e99dd5b810ec13631ac472ac79b85108a106c2a8f44759404eb1ead8973f5` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this. We do not ship OmniDocBench numbers.
 
@@ -110,7 +110,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. Heading rules, list markers, task boxes, hyperlink underlines, plain underlines, strikethrough, quote bars, code-span and fenced-block backgrounds, highlight marks, and thematic rules are painted fills, not glyphs. Links are URI <code>/Link</code> annotations (click the last line). Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. Heading rules, list markers, font-sized task boxes, hyperlink underlines, plain underlines, strikethrough, quote bars, code-span and fenced-block backgrounds, highlight marks, and thematic rules are painted fills, not glyphs. Links are URI <code>/Link</code> annotations (click the last line). Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
@@ -136,7 +136,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | --- | --- |
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
-| **PDF/A** | Archival print. Heading rules, list markers, task boxes, hyperlink underlines, plain underlines, strikethrough, quote bars, code-span and fenced-block backgrounds, highlight marks, thematic rules, and table fills are `FillRect`s. Links are URI `/Link` annotations. Two runs, same fonts, same bytes. |
+| **PDF/A** | Archival print. Heading rules, list markers, font-sized task boxes, hyperlink underlines, plain underlines, strikethrough, quote bars, code-span and fenced-block backgrounds, highlight marks, thematic rules, and table fills are `FillRect`s. Links are URI `/Link` annotations. Two runs, same fonts, same bytes. |
 | **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h` with `fo:font-size` 18pt/14pt. Quotes as `w:pStyle Quote` + `text:p` Quote with a left border. Fenced code as `CodeBlock` with a teal shade. Highlights as `w:highlight yellow` and `Tmark` `#fde68a`. Underlines as `w:u` and `Tunder`. Thematic breaks as `HorizontalLine` with a bottom border. Lists as `w:numPr` and `text:list`. Tasks keep `[x]` / `[ ]` markers. Links as `w:hyperlink` and `text:a`. Runs keep `w:b`/`w:i`/`w:strike` and `text-line-through` in body and table cells. |
 | **Markdown** | Pipe tables write a GFM separator after the header. Cells keep `**bold**` / `_italic_`. Links write `[text](url)`. Strikethrough writes `~~text~~`. Quotes write `> text`. Code writes `` `text` ``. Fences write ` ``` `. Highlights write `==text==`. Underlines write `__text__`. Tasks write `- [x]` / `- [ ]`. Thematic breaks write `---`. |
 | **HTML** | Semantic HTML an agent can read back. Quotes are `<blockquote>`. Fenced code is `<pre><code>`. Tasks are disabled checkboxes. Table cells keep `<strong>`/`<em>`. Links are `<a href>`. Strikethrough is `<s>`. Code is `<code>`. Highlights are `<mark>`. Underlines are `<u>`. Thematic breaks are `<hr/>`. |
