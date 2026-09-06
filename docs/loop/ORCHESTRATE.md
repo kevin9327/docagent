@@ -1,39 +1,57 @@
-# DocAgent #1 loop — 6-way fan-out
+# Dispatcher — 15 minutes, fill empty slots, do not wait
 
-You are the orchestrator. Do not implement codecs yourself unless a lane fails.
+You are a **slot filler**, not a six-agent barrier. Finish in a few minutes.
+Do not sit until six children complete.
 
 Repo: `C:\Users\swsz9\docagent`
-Read `docs/loop/LANES.md` and `docs/loop/STATE.md` first.
+Read `STRATEGY.md`, `LANES.md`, `STATE.md`, `SCORE.md` (if any).
 
-## Fan-out (required)
+## 1. Hourly score
 
-Spawn **exactly 6** `general-purpose` subagents in **one** parallel wave (`isolation` none).
-Each prompt names one lane from LANES.md, exclusive write paths, and one concrete gap vs the locked ten (MinerU, Docling, Pandoc, Marker, Unstructured, PyMuPDF, WeasyPrint, ONLYOFFICE, python-docx, LibreOffice).
+If `docs/loop/SCORE.md` is missing or older than 60 minutes, rewrite it from
+STRATEGY.md (shallow). Then choose this hour’s six tasks from the queue.
+Do not invent work.
 
-Rules for children:
-- Work only in `C:\Users\swsz9\docagent`.
-- Do not commit or push.
-- Do not edit `crates/docagent-model` (IR already has `ImageData`, `Hyperlink`, quote, code_block, Task, Thematic).
-- Do not edit `examples/letter.md`.
-- `cargo test -p <their-crate> --offline` must pass.
-- `cargo clippy -p <their-crate> --all-targets -- -D warnings` must pass.
-- If blocked, write why and stop. Do not steal another lane.
+## 2. Commit whatever is already finished
 
-Default lane tasks when STATE says Hangul links are done:
+If the worktree has lane diffs and no other dispatcher is testing:
 
-1. **landing** — Honest README matrix vs the ten; keep visual density. Do not invent OCR scores.
-2. **pdf** — Layout + PDF/A paint `InlineObject::Image` (width/height in HWPUNIT).
-3. **docx** — Read/write `ImageData` through OOXML drawing/blip.
-4. **odt** — Read/write `ImageData` through `draw:image`.
-5. **mdhtml** — Markdown `![alt](…)` and HTML `<img>`.
-6. **hangul** — Quotes / code_block / thematic breaks on HWP5+HWPX+HML+HWP3 (not images unless trivial).
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace --offline`
+- If green: one commit, `git push origin master`. Do not wait for empty
+  lanes. Update STATE.md.
 
-If a lane’s feature already ships, pick the next gap **inside that lane’s files only**.
+If tests fail, fix only orchestrator-owned files or revert the broken lane.
+Do not start a six-hour debug.
 
-## After all six return
+## 3. Fill empty slots immediately (max 6 live)
 
-1. `cargo clippy --workspace --all-targets -- -D warnings`
-2. `cargo test --workspace --offline`
-3. If green: one commit covering all lane diffs, `git push origin master`, `gh run list --limit 1`. Fix red CI before the cycle ends.
-4. Update `docs/loop/STATE.md` with cycle number and what each lane shipped.
-5. Never spawn a second wave in the same firing.
+Slots live in `docs/loop/slots/<lane>.json`:
+
+```json
+{"status":"running","task":"...","started":"ISO-8601"}
+{"status":"done","task":"...","started":"...","ended":"..."}
+```
+
+A slot is **empty** if the file is missing, `status` is `done`, or `status`
+is `running` and `started` is older than 20 minutes (stuck).
+
+For each empty lane that has a STRATEGY queue item this hour, spawn **one**
+`general-purpose` child (`isolation` none) and write `status: running`.
+Spawn all empty lanes in **one** parallel wave, then **return**. Do not
+`get_command_or_subagent_output` on them.
+
+If a lane has no queue item, leave it empty. Do not give it trivia.
+
+Children must: write only their lane paths; not commit; not edit model;
+clipp + test their crate; on finish, set their slot file to `done`.
+
+## 4. Live cap
+
+Never start a child if six slots already show `running` with fresh
+heartbeats. Never spawn two children for the same lane.
+
+## 5. LOCK
+
+Do not use a global LOCK that blocks the whole hour. Per-lane slot files
+only.
