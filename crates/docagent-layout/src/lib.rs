@@ -7,7 +7,7 @@
 
 use docagent_font::{line_height, shape, FontSet};
 use docagent_model::{
-    Alignment, Block, BorderStyle, BreakKind, Document, Hu, Hu64, InlineObject, LineSpacing,
+    Alignment, Block, BorderStyle, BreakKind, Document, Float, Hu, Hu64, InlineObject, LineSpacing,
     NumberFormat, Paragraph, RunContent, Section, Table, DEFAULT_FONT_SIZE_HU,
 };
 use rayon::prelude::*;
@@ -402,6 +402,7 @@ fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
                 fill: [19, 78, 74, 255],
             }],
         },
+        Block::Float(Float::Image(img)) => prepare_float_image(img, width),
         Block::Float(_) | Block::Break(_) => Prepared::Lines {
             lines: Vec::new(),
             space_before: 0,
@@ -409,6 +410,48 @@ fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
             rule: None,
             fills: Vec::new(),
         },
+    }
+}
+
+fn prepare_float_image(img: &docagent_model::ImageData, max_w: Hu) -> Prepared {
+    if img.width <= 0 || img.height <= 0 {
+        return Prepared::Lines {
+            lines: Vec::new(),
+            space_before: 0,
+            space_after: 0,
+            rule: None,
+            fills: Vec::new(),
+        };
+    }
+    let mut image = InlineImage {
+        bytes: img.bytes.clone(),
+        mime: img.mime.clone(),
+        width: img.width,
+        height: img.height,
+    };
+    clamp_inline_image(&mut image, max_w);
+    Prepared::Lines {
+        lines: vec![LineFrag {
+            x: 0,
+            y: 0,
+            width: image.width,
+            height: image.height,
+            baseline: image.height,
+            text: String::new(),
+            font_size: DEFAULT_FONT_SIZE_HU,
+            bold: false,
+            italic: false,
+            underline: false,
+            strike: false,
+            code: false,
+            highlight: false,
+            href: None,
+            image: Some(image),
+        }],
+        space_before: 0,
+        space_after: 0,
+        rule: None,
+        fills: Vec::new(),
     }
 }
 
@@ -1770,6 +1813,72 @@ mod tests {
             .iter()
             .find(|l| l.image.is_some())
             .expect("image run skipped");
+        assert!(
+            frag.width <= content_w,
+            "frag.width {} exceeds content width {}",
+            frag.width,
+            content_w
+        );
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.width, frag.width);
+        assert!(img.width <= content_w);
+        assert_eq!(
+            img.height,
+            (i64::from(10_000) * i64::from(img.width) / 50_000) as i32
+        );
+        assert!(img.height > 0);
+    }
+
+    fn mark_image(width: Hu, height: Hu) -> docagent_model::ImageData {
+        docagent_model::ImageData {
+            bytes: MARK_PNG.to_vec(),
+            mime: "image/png".into(),
+            width,
+            height,
+            alt_text: Some("mark".into()),
+            wrap: docagent_model::WrapMode::Square,
+        }
+    }
+
+    #[test]
+    fn float_image_yields_line_with_payload() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Float(Float::Image(mark_image(1600, 1600))));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let frag = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("float image dropped");
+        assert_eq!(frag.width, 1600);
+        assert!(frag.height >= 1600, "line height {}", frag.height);
+        let img = frag.image.as_ref().expect("payload");
+        assert_eq!(img.bytes, MARK_PNG);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 1600);
+        assert_eq!(img.height, 1600);
+        assert!(frag.text.is_empty());
+    }
+
+    #[test]
+    fn oversized_float_image_clamps_to_content_width() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let content_w = section.page.content_width();
+        section
+            .body
+            .push(Block::Float(Float::Image(mark_image(50_000, 10_000))));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let frag = tree.pages[0]
+            .lines
+            .iter()
+            .find(|l| l.image.is_some())
+            .expect("float image dropped");
         assert!(
             frag.width <= content_w,
             "frag.width {} exceeds content width {}",

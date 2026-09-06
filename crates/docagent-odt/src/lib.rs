@@ -133,9 +133,11 @@ fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<D
     let mut in_header_rows = false;
     let mut in_frame = false;
     let mut in_frame_title = false;
+    let mut in_frame_desc = false;
     let mut frame_width: Option<Hu> = None;
     let mut frame_height: Option<Hu> = None;
-    let mut frame_alt = String::new();
+    let mut frame_title = String::new();
+    let mut frame_desc = String::new();
     let mut frame_as_char = true;
     let mut frame_style: Option<String> = None;
     let mut image_href: Option<String> = None;
@@ -330,9 +332,11 @@ fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<D
                         }
                         in_frame = true;
                         in_frame_title = false;
+                        in_frame_desc = false;
                         frame_width = attr(&e, "width").as_deref().and_then(parse_odf_length);
                         frame_height = attr(&e, "height").as_deref().and_then(parse_odf_length);
-                        frame_alt.clear();
+                        frame_title.clear();
+                        frame_desc.clear();
                         frame_as_char = attr(&e, "anchor-type").as_deref() == Some("as-char");
                         frame_style = attr(&e, "style-name");
                         image_href = None;
@@ -342,7 +346,8 @@ fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<D
                         image_href = attr(&e, "href");
                         image_mime = attr(&e, "mime-type");
                     }
-                    "title" | "desc" if in_frame => in_frame_title = true,
+                    "title" if in_frame => in_frame_title = true,
+                    "desc" if in_frame => in_frame_desc = true,
                     _ => {}
                 }
             }
@@ -498,7 +503,8 @@ fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<D
                             ..Table::from_cells(Vec::new())
                         }));
                     }
-                    "title" | "desc" if in_frame => in_frame_title = false,
+                    "title" if in_frame => in_frame_title = false,
+                    "desc" if in_frame => in_frame_desc = false,
                     "frame" => {
                         let wrap = if frame_as_char {
                             WrapMode::Inline
@@ -514,7 +520,10 @@ fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<D
                             image_href.take(),
                             image_mime.take(),
                             (frame_width.take(), frame_height.take()),
-                            std::mem::take(&mut frame_alt),
+                            take_frame_alt(
+                                std::mem::take(&mut frame_title),
+                                std::mem::take(&mut frame_desc),
+                            ),
                             wrap,
                         ) {
                             let run = Run {
@@ -535,6 +544,7 @@ fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<D
                         }
                         in_frame = false;
                         in_frame_title = false;
+                        in_frame_desc = false;
                     }
                     _ => {}
                 }
@@ -542,7 +552,10 @@ fn parse_content_xml(xml: &str, pictures: &HashMap<String, Vec<u8>>) -> Result<D
             Ok(Event::Text(t)) => {
                 if in_frame_title {
                     let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
-                    frame_alt.push_str(&decoded);
+                    frame_title.push_str(&decoded);
+                } else if in_frame_desc {
+                    let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
+                    frame_desc.push_str(&decoded);
                 } else if in_p && !in_frame {
                     let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
                     run_text.push_str(&decoded);
@@ -945,15 +958,27 @@ fn push_odt_image(s: &mut String, img: &ImageData, pics: &mut Vec<PicturePart>) 
     s.push_str(&format_odf_length(h));
     s.push_str(r#"">"#);
     if let Some(alt) = img.alt_text.as_deref().filter(|a| !a.is_empty()) {
+        let escaped = xml_escape(alt);
         s.push_str("<svg:title>");
-        s.push_str(&xml_escape(alt));
+        s.push_str(&escaped);
         s.push_str("</svg:title>");
+        s.push_str("<svg:desc>");
+        s.push_str(&escaped);
+        s.push_str("</svg:desc>");
     }
     s.push_str(r#"<draw:image xlink:href=""#);
     s.push_str(&xml_escape(&path));
     s.push_str(r#"" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type=""#);
     s.push_str(&xml_escape(&mime));
     s.push_str(r#""/></draw:frame>"#);
+}
+
+fn take_frame_alt(title: String, desc: String) -> String {
+    let title = title.trim();
+    if !title.is_empty() {
+        return title.to_string();
+    }
+    desc.trim().to_string()
 }
 
 fn take_frame_image(
@@ -1904,5 +1929,315 @@ mod tests {
             assert_eq!(img.height, HU_PER_INCH);
             assert_eq!(img.alt_text.as_deref(), Some("wrapped"));
         }
+    }
+
+    #[test]
+    fn roundtrip_keeps_cell_image() {
+        let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "docs/assets/mark.png must be a PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["plain".into()]]);
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.to_vec(),
+                mime: "image/png".into(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH,
+                alt_text: Some("cell mark".into()),
+                wrap: WrapMode::Inline,
+            })),
+        }];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let xml = content_xml(&doc);
+        let cell_start = xml
+            .find("<table:table-cell")
+            .expect("table cell in content.xml");
+        let cell_xml = &xml[cell_start..];
+        let cell_end = cell_xml
+            .find("</table:table-cell>")
+            .expect("table cell close");
+        let cell_xml = &cell_xml[..cell_end];
+        assert!(cell_xml.contains("<draw:frame"), "{cell_xml}");
+        assert!(cell_xml.contains("<draw:image"), "{cell_xml}");
+        assert!(cell_xml.contains("Pictures/image1.png"), "{cell_xml}");
+        assert!(cell_xml.contains("xlink:href="), "{cell_xml}");
+        assert!(
+            cell_xml.contains("draw:mime-type=\"image/png\""),
+            "{cell_xml}"
+        );
+        assert!(
+            cell_xml.contains("<svg:title>cell mark</svg:title>"),
+            "{cell_xml}"
+        );
+        assert!(
+            cell_xml.contains("<svg:desc>cell mark</svg:desc>"),
+            "{cell_xml}"
+        );
+        assert!(
+            cell_xml.contains("text:anchor-type=\"as-char\""),
+            "{cell_xml}"
+        );
+
+        let odt = write(&doc).unwrap();
+        assert!(sniff(&odt));
+        let mut zip = ZipArchive::new(Cursor::new(odt.clone())).unwrap();
+        let mut names = Vec::new();
+        for i in 0..zip.len() {
+            names.push(zip.by_index(i).unwrap().name().replace('\\', "/"));
+        }
+        assert!(
+            names.iter().any(|n| n == "Pictures/image1.png"),
+            "{names:?}"
+        );
+        {
+            let mut f = zip.by_name("Pictures/image1.png").unwrap();
+            let mut stored = Vec::new();
+            f.read_to_end(&mut stored).unwrap();
+            assert_eq!(stored.as_slice(), png);
+        }
+        {
+            let mut f = zip.by_name("META-INF/manifest.xml").unwrap();
+            let mut manifest = String::new();
+            f.read_to_string(&mut manifest).unwrap();
+            assert!(manifest.contains("Pictures/image1.png"), "{manifest}");
+            assert!(manifest.contains("image/png"), "{manifest}");
+        }
+
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table {:?}", back.sections[0].body);
+        };
+        let Block::Paragraph(cell) = &t.rows[0].cells[0].blocks[0] else {
+            panic!("cell para {:?}", t.rows[0].cells[0].blocks);
+        };
+        let Some(img) = cell.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing cell image run: {:?}", cell.runs);
+        };
+        assert_eq!(img.bytes.as_slice(), png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, HU_PER_INCH);
+        assert_eq!(img.height, HU_PER_INCH);
+        assert_eq!(img.alt_text.as_deref(), Some("cell mark"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    #[test]
+    fn roundtrip_keeps_cell_jpeg_image() {
+        assert!(
+            JPEG_1X1.starts_with(&[0xFF, 0xD8, 0xFF]),
+            "JPEG_1X1 must start with FF D8 FF"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["plain".into()]]);
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: JPEG_1X1.to_vec(),
+                mime: "image/jpeg".into(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH / 2,
+                alt_text: Some("cell jpeg".into()),
+                wrap: WrapMode::Inline,
+            })),
+        }];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let xml = content_xml(&doc);
+        let cell_start = xml
+            .find("<table:table-cell")
+            .expect("table cell in content.xml");
+        let cell_xml = &xml[cell_start..];
+        let cell_end = cell_xml
+            .find("</table:table-cell>")
+            .expect("table cell close");
+        let cell_xml = &cell_xml[..cell_end];
+        assert!(cell_xml.contains("<draw:frame"), "{cell_xml}");
+        assert!(cell_xml.contains("<draw:image"), "{cell_xml}");
+        assert!(
+            cell_xml.contains("Pictures/image1.jpg") || cell_xml.contains("Pictures/image1.jpeg"),
+            "{cell_xml}"
+        );
+        assert!(
+            cell_xml.contains("draw:mime-type=\"image/jpeg\""),
+            "{cell_xml}"
+        );
+        assert!(
+            cell_xml.contains("<svg:title>cell jpeg</svg:title>"),
+            "{cell_xml}"
+        );
+
+        let odt = write(&doc).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(odt.clone())).unwrap();
+        let mut names = Vec::new();
+        for i in 0..zip.len() {
+            names.push(zip.by_index(i).unwrap().name().replace('\\', "/"));
+        }
+        let pic = names
+            .iter()
+            .find(|n| {
+                let n = n.as_str();
+                n.starts_with("Pictures/") && (n.ends_with(".jpg") || n.ends_with(".jpeg"))
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("missing JPEG under Pictures/: {names:?}"));
+        {
+            let mut f = zip.by_name(&pic).unwrap();
+            let mut stored = Vec::new();
+            f.read_to_end(&mut stored).unwrap();
+            assert_eq!(stored.as_slice(), JPEG_1X1);
+        }
+
+        let back = roundtrip(&doc).unwrap();
+        let Block::Table(t) = &back.sections[0].body[0] else {
+            panic!("table {:?}", back.sections[0].body);
+        };
+        let Block::Paragraph(cell) = &t.rows[0].cells[0].blocks[0] else {
+            panic!("cell para {:?}", t.rows[0].cells[0].blocks);
+        };
+        let Some(img) = cell.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing cell jpeg run: {:?}", cell.runs);
+        };
+        assert_eq!(img.bytes.as_slice(), JPEG_1X1);
+        assert_eq!(img.mime, "image/jpeg");
+        assert_eq!(img.alt_text.as_deref(), Some("cell jpeg"));
+        assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    fn rewrite_content_xml(odt: &[u8], rewrite: impl FnOnce(&str) -> String) -> Vec<u8> {
+        let mut zip = ZipArchive::new(Cursor::new(odt.to_vec())).unwrap();
+        let mut files = Vec::new();
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i).unwrap();
+            let name = file.name().to_string();
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf).unwrap();
+            files.push((name, buf));
+        }
+        drop(zip);
+        let content_i = files
+            .iter()
+            .position(|(name, _)| name.replace('\\', "/") == "content.xml")
+            .expect("content.xml");
+        let xml = String::from_utf8(files[content_i].1.clone()).unwrap();
+        files[content_i].1 = rewrite(&xml).into_bytes();
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut cursor);
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            for (name, buf) in &files {
+                zip.start_file(name, stored).unwrap();
+                zip.write_all(buf).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    fn first_image(doc: &Document) -> &ImageData {
+        for block in &doc.sections[0].body {
+            let runs = match block {
+                Block::Paragraph(p) => &p.runs,
+                Block::Table(t) => {
+                    let Block::Paragraph(p) = &t.rows[0].cells[0].blocks[0] else {
+                        panic!("cell para");
+                    };
+                    &p.runs
+                }
+                _ => continue,
+            };
+            if let Some(img) = runs.iter().find_map(|r| match &r.content {
+                RunContent::Inline(InlineObject::Image(img)) => Some(img),
+                _ => None,
+            }) {
+                return img;
+            }
+        }
+        panic!("missing image in {:?}", doc.sections[0].body);
+    }
+
+    #[test]
+    fn reads_alt_from_svg_desc_when_title_absent() {
+        let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut table = Table::from_cells(vec![vec!["plain".into()]]);
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.to_vec(),
+                mime: "image/png".into(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH,
+                alt_text: Some("cell mark".into()),
+                wrap: WrapMode::Inline,
+            })),
+        }];
+        table.rows[0].cells[0].blocks = vec![Block::Paragraph(p)];
+        section.body.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let patched = rewrite_content_xml(&write(&doc).unwrap(), |xml| {
+            assert!(xml.contains("<svg:title>cell mark</svg:title>"), "{xml}");
+            assert!(xml.contains("<svg:desc>cell mark</svg:desc>"), "{xml}");
+            xml.replace("<svg:title>cell mark</svg:title>", "")
+                .replace("<svg:desc>cell mark</svg:desc>", "<svg:desc>from desc</svg:desc>")
+        });
+        let back = read(&patched).unwrap();
+        let img = first_image(&back);
+        assert_eq!(img.bytes.as_slice(), png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.alt_text.as_deref(), Some("from desc"));
+    }
+
+    #[test]
+    fn prefers_svg_title_over_svg_desc() {
+        let png: &[u8] = include_bytes!("../../../docs/assets/mark.png");
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.to_vec(),
+                mime: "image/png".into(),
+                width: HU_PER_INCH,
+                height: HU_PER_INCH,
+                alt_text: Some("from title".into()),
+                wrap: WrapMode::Inline,
+            })),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+
+        let patched = rewrite_content_xml(&write(&doc).unwrap(), |xml| {
+            xml.replace(
+                "<svg:desc>from title</svg:desc>",
+                "<svg:desc>from desc</svg:desc>",
+            )
+        });
+        let back = read(&patched).unwrap();
+        let img = first_image(&back);
+        assert_eq!(img.alt_text.as_deref(), Some("from title"));
+        assert_eq!(img.bytes.as_slice(), png);
     }
 }

@@ -21,7 +21,9 @@ Documents with `i % 3 == 0` also carry a table so the table path takes the same 
 Global interchange (DOCX, Markdown, ODT) runs first; Hangul codecs follow on the same IR.
 
 Hops prove **plain text** presence. Lists, links, strike, quotes, code, thematic
-breaks, tasks, highlight, super/sub, table headers, and images (Markdown / HTML /
-PDF/A / DOCX / ODT) are codec-level round-trips (see [What ships](capabilities.md)),
-not this hop count. Hangul Quote / CodeBlock / HorizontalLine / Task hop as para styles.
-Hangul images, highlight, first-class lists, and table headers do not.
+breaks, tasks, highlight, super/sub, table headers, and PNG / JPEG images
+(Markdown / HTML / PDF/A / DOCX / ODT) are codec-level round-trips (see
+[What ships](capabilities.md)), not this hop count. HTML `read` recovers
+`<img src="data:…">`; that is not a hop count and not an HTML5 engine.
+Hangul Quote / CodeBlock / HorizontalLine / Task hop as para styles; highlight hops as CHAR_SHAPE shade.
+Hangul images, first-class lists, and table headers do not.

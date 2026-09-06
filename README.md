@@ -13,7 +13,7 @@
 
 <p align="center"><b>Deterministic convert. Three-hash capsule. GPU-free.</b><br>
 Same fonts → same PDF/A bytes. One integer engine. Agents call <code>Command::Convert</code>, not a GUI.<br>
-DOCX · ODT · Markdown · HTML · PDF/A — images included. Hangul HWP / HWPX / HML / HWP 3 are codecs on the same IR.</p>
+DOCX · ODT · Markdown · HTML · PDF/A — PNG + JPEG. Hangul HWP / HWPX / HML / HWP 3 are codecs on the same IR.</p>
 
 <p align="center">
   <a href="#install--run">Install</a> ·
@@ -26,14 +26,18 @@ DOCX · ODT · Markdown · HTML · PDF/A — images included. Hangul HWP / HWPX 
 ---
 
 <p align="center">
-  <img src="docs/assets/pipeline.svg" alt="Input formats → one integer engine → PDF/A HTML DOCX + capsule hashes" width="100%">
+  <img src="docs/assets/pipeline.svg" alt="Input formats → one integer engine → PDF/A HTML DOCX with PNG and JPEG → capsule hashes" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/ships.svg" alt="Shipped IR marks: lists, links, strike, quotes, code, thematic, tasks, highlight, super/sub, underline, PNG/JPEG images, table headers. Hangul CHAR_SHAPE, hyperlinks, Quote, CodeBlock, HorizontalLine, Task, highlight shade. Dashes on Hangul: images, lists, table headers. HTML reads img data-URI. No OCR or OmniDocBench." width="100%">
 </p>
 
 <p align="center">
   <img src="docs/assets/output-trio.png" alt="Real convert of examples/letter.md: PDF/A page, semantic HTML, capsule SHA-256 ×3" width="100%">
 </p>
-<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. Not mockups.<br>
-Images on MD / HTML / PDF/A / DOCX / ODT. Hangul Quote / CodeBlock / HorizontalLine / Task. Not Hangul images, highlight, or lists.</sub></p>
+<p align="center"><sub>Actual engine output of <code>examples/letter.md</code> — PDF/A, HTML, capsule. Not mockups. This fixture has no image.<br>
+PNG + JPEG on MD / HTML / PDF/A / DOCX / ODT. HTML <code>read</code> of <code>&lt;img data:…&gt;</code> (not HTML5). Hangul Quote / CodeBlock / HorizontalLine / Task / highlight. Not Hangul images or lists.</sub></p>
 
 ## Why this exists
 
@@ -47,7 +51,7 @@ Pandoc, python-docx, WeasyPrint, ONLYOFFICE, and LibreOffice turn documents into
 | Proof it ran the same file | capsule: input / plan / output SHA-256 |
 | Same fonts → same PDF twice | integer layout at 1/7200 inch |
 | Word, LibreOffice, Markdown, print | DOCX · ODT · MD · HTML · PDF/A |
-| Images on those five codecs | `![alt]`, `<img>`, PDF/A XObject, `a:blip`, `draw:image` |
+| Images on those five codecs | PNG + JPEG: `![alt]`, `<img data:…>`, PDF/A XObject, `a:blip`, `draw:image` |
 | Korean public files without a second product | HWP · HWPX · HML · HWP 3 on the same IR |
 | No GPU bill, no VLM drift | CPU, deterministic |
 
@@ -75,17 +79,14 @@ No OmniDocBench numbers live on this page.
 | [LibreOffice](https://github.com/LibreOffice/core) 4.3k | Headless office convert | | | | | **yes** | |
 
 **North star:** drop `examples/letter.md` (or DOCX/ODT) and get PDF/A + HTML + Markdown + DOCX + ODT whose bytes match the next run, with three hashes in the capsule.
-Images: **yes** on Markdown / HTML / PDF/A / DOCX / ODT, **—** on Hangul.
+Images: **yes** PNG + JPEG on Markdown / HTML / PDF/A / DOCX / ODT, **—** on Hangul. `letter.md` itself still has no image.
+HTML: `read` recovers `<img src="data:…">` (Pandoc-class import). Not a full HTML5 engine.
 Hangul Quote / CodeBlock / HorizontalLine / Task: **yes** on HWP 5 + HWPX + HML + HWP 3.
 Hangul LineSeg vs rhwp is a regional CI track, not this page.
 
 ## What ships
 
-<p align="center">
-  <img src="docs/assets/ships.svg" alt="Shipped IR marks: lists, links, strike, quotes, code, thematic, tasks, highlight, super/sub, underline, images, table headers. Hangul CHAR_SHAPE, hyperlinks, Quote, CodeBlock, HorizontalLine, Task. Dashes on Hangul: images, highlight, lists, table headers. No OCR or OmniDocBench." width="100%">
-</p>
-
-Honest codec coverage of the letter fixture — not a wishlist. Full table: [`docs/src/capabilities.md`](docs/src/capabilities.md).
+Honest codec coverage — not a wishlist. Full table: [`docs/src/capabilities.md`](docs/src/capabilities.md).
 
 | Mark | Markdown | HTML | PDF/A | DOCX | ODT | Hangul |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -96,13 +97,15 @@ Honest codec coverage of the letter fixture — not a wishlist. Full table: [`do
 | Code | `` `span` `` / fence | `<code>` / `<pre>` | fills | Code / CodeBlock | Tcode / CodeBlock | **yes** · CodeBlock style |
 | Thematic break | `---` | `<hr/>` | rule fill | HorizontalLine | HorizontalLine | **yes** · HorizontalLine |
 | Tasks | `- [x]` | checkbox | task box | `[x]` | `[x]` | **yes** · Task style |
-| Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | — |
+| Highlight | `==mark==` | `<mark>` | fill | `w:highlight` | Tmark | **yes** · CHAR_SHAPE shade |
 | Super / sub | `^ ^` / `~ ~` | `<sup>` / `<sub>` | baseline | `w:vertAlign` | Tsuper / Tsub | CHAR_SHAPE |
 | Underline | `__text__` | `<u>` | fill | `w:u` | Tunder | CHAR_SHAPE |
-| Images | `![alt](…)` | `<img>` | PDF/A XObject | `a:blip` | `draw:image` | — |
+| Images (PNG, JPEG) | `![alt](…)` | `<img data:…>` | PDF/A XObject | `a:blip` | `draw:image` | — |
 | Table header | GFM `\| --- \|` | `<th>` | header fill | `w:tblHeader` | `THcell` | — |
 
-Hangul CHAR_SHAPE maps bold / italic / underline / super / sub on HWP 5, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 attr bits (HWP 3 has no strike bit). Hyperlinks: HWP 5 `%hlk`, HWPX `hp:fieldBegin type="HYPERLINK"`, HML `FIELDBEGIN Type="Hyperlink"`, HWP 3 control-10 + additional-info TagID 3. Para styles `Quote`, `CodeBlock`, `HorizontalLine`, and `Task` (`[x]` / `[ ]`) round-trip on all four Hangul codecs. Images, highlight, first-class lists, and table headers do not.
+Hangul CHAR_SHAPE maps bold / italic / underline / super / sub on HWP 5, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 attr bits (HWP 3 has no strike bit). Highlight is CHAR_SHAPE shade (HWP 5 shade RGB, HWPX `hh:shade`, HML `SHADECOLOR`, HWP 3 shade ratio). Hyperlinks: HWP 5 `%hlk`, HWPX `hp:fieldBegin type="HYPERLINK"`, HML `FIELDBEGIN Type="Hyperlink"`, HWP 3 control-10 + additional-info TagID 3. Para styles `Quote`, `CodeBlock`, `HorizontalLine`, and `Task` (`[x]` / `[ ]`) round-trip on all four Hangul codecs. Images, first-class lists, and table headers do not.
+
+HTML `read` recovers `<img src="data:image/png|jpeg;base64,…">` into the same IR (Pandoc-class import). Write emits that data-URI form. `http(s):` `src` is skipped. This is not a full HTML5 engine: no CSS layout, no JavaScript, no remote fetch. `examples/letter.md` has no image, so the convert shots below do not show one.
 
 No spreadsheet. No slides. No cursor. No undo stack. Flow documents only.
 
@@ -157,12 +160,12 @@ Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/lette
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. List markers, task boxes, links, strike, quote bars, code fills, highlight, rules, and header cells are painted fills. Superscripts/subscripts shift the baseline. Bold is a second fill; italic is a 0.20 shear. Images, when present, are PDF/A XObjects (not in this letter fixture). GPU-free. Same fonts → same bytes.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. List markers, task boxes, links, strike, quote bars, code fills, highlight, rules, and header cells are painted fills. Superscripts/subscripts shift the baseline. Bold is a second fill; italic is a 0.20 shear. PNG and JPEG, when present, are PDF/A XObjects — this letter fixture has none. GPU-free. Same fonts → same bytes.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
 </p>
-<p align="center"><sub>HTML from the same IR: headings, quotes, tables, nested lists, tasks, bold, italic, strike, code, fence, rule, highlight, underline, super/sub, and links. Image <code>&lt;img&gt;</code> ships on this codec; the letter fixture has none.</sub></p>
+<p align="center"><sub>HTML from the same IR: headings, quotes, tables, nested lists, tasks, bold, italic, strike, code, fence, rule, highlight, underline, super/sub, and links. Write emits <code>&lt;img src="data:…"&gt;</code>; <code>read</code> recovers it. The letter fixture has no image. Not HTML5.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-capsule.png" alt="Capsule JSON with input, plan, and output SHA-256 hashes" width="100%">
@@ -183,11 +186,11 @@ Files from [`examples/letter.md`](examples/letter.md): [PDF/A](docs/assets/lette
 | --- | --- |
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
-| **PDF/A** | Archival print from the integer plan. Two runs, same fonts, same bytes. |
-| **DOCX / ODT** | Word and LibreOffice files. Headings, lists, links, strike, quotes, code, tasks, highlight, underline, super/sub, table headers, images (`a:blip` / `draw:image`). |
-| **Markdown / HTML** | Agent-native text and semantic HTML an agent can read back (`![alt](…)`, `<img>`). |
+| **PDF/A** | Archival print from the integer plan. PNG and JPEG are XObjects. Two runs, same fonts, same bytes. |
+| **DOCX / ODT** | Word and LibreOffice files. Headings, lists, links, strike, quotes, code, tasks, highlight, underline, super/sub, table headers, PNG + JPEG (`a:blip` / `draw:image`). |
+| **Markdown / HTML** | Agent-native text and semantic HTML. Markdown `![alt](src "title")`. HTML write emits `<img src="data:…">`; `read` recovers those data-URIs. Not HTML5. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |
-| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. CHAR_SHAPE, hyperlinks, Quote / CodeBlock / Task styles, and HorizontalLine thematic breaks. Still **—**: images, highlight, first-class lists, table headers. |
+| **Hangul** | HWP 5 / HWPX / HWP 3 / HML as codecs, not as the product name. CHAR_SHAPE (including shade highlight), hyperlinks, Quote / CodeBlock / Task styles, and HorizontalLine thematic breaks. Still **—**: images, first-class lists, table headers. |
 
 ## Command / Query / Event
 
@@ -202,7 +205,7 @@ the same `Engine`. See [`AGENTS.md`](AGENTS.md) and [`docs/src/intro.md`](docs/s
 
 ```mermaid
 flowchart LR
-  A[DOCX / ODT / MD / HWP] --> B[docagent-model IR]
+  A[DOCX / ODT / MD / HTML / HWP] --> B[docagent-model IR]
   B --> C[docagent-layout<br/>i32 @ 1/7200 in]
   C --> D[PDF/A]
   C --> E[HTML]
@@ -212,7 +215,7 @@ flowchart LR
 
 ## Crate graph
 
-Codecs (`docx`, `odt`, `md`, `hwp5`, `hwpx`, `hwp3`, `hml`) do not import each other
+Codecs (`docx`, `odt`, `md`, `html`, `hwp5`, `hwpx`, `hwp3`, `hml`) do not import each other
 and do not import layout. Layout, paint, raster, and PDF do not know the source format.
 
 ```

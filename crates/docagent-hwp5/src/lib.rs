@@ -10,7 +10,7 @@ use std::io::{Cursor, Read, Write};
 
 use cfb::CompoundFile;
 use docagent_model::{
-    Alignment, Block, BreakKind, CharStyle, Diagnostic, Document, InlineObject, LayoutHint,
+    Alignment, Block, BreakKind, CharStyle, Color, Diagnostic, Document, InlineObject, LayoutHint,
     NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section, SplitPolicy, Table,
     TableBorders, TableCell, TableRow, Underline,
 };
@@ -429,7 +429,8 @@ impl StyleCatalog {
     }
 }
 
-/// 한글 5.0 r1.3 표 37: faces/ratio/spacing/rel/offset then i32 height, u32 attr.
+/// 한글 5.0 r1.3 표 37: faces/ratio/spacing/rel/offset then i32 height, u32 attr,
+/// then shadow xy, text/underline COLORREF, shade COLORREF at 60.
 fn char_shape_style(p: &[u8]) -> CharStyle {
     let mut style = CharStyle::default();
     const OFF: usize = 7 * 2 + 7 * 4;
@@ -446,6 +447,10 @@ fn char_shape_style(p: &[u8]) -> CharStyle {
         style.superscript = attr & (1 << 15) != 0;
         style.subscript = attr & (1 << 16) != 0;
         style.strike = (attr >> 18) & 0x07 != 0;
+    }
+    if p.len() >= 64 {
+        let shade = u32::from_le_bytes(p[60..64].try_into().unwrap());
+        style.highlight = highlight_from_colorref(shade);
     }
     style
 }
@@ -477,7 +482,29 @@ fn encode_char_shape(style: &CharStyle) -> Vec<u8> {
         attr |= 1 << 18;
     }
     p[46..50].copy_from_slice(&attr.to_le_bytes());
+    let shade = match style.highlight {
+        Some(c) => colorref(c),
+        None => 0xFFFF_FFFF,
+    };
+    p[60..64].copy_from_slice(&shade.to_le_bytes());
     p
+}
+
+fn colorref(c: Color) -> u32 {
+    u32::from(c.r) | (u32::from(c.g) << 8) | (u32::from(c.b) << 16)
+}
+
+fn highlight_from_colorref(v: u32) -> Option<Color> {
+    if v == 0xFFFF_FFFF {
+        return None;
+    }
+    let r = (v & 0xFF) as u8;
+    let g = ((v >> 8) & 0xFF) as u8;
+    let b = ((v >> 16) & 0xFF) as u8;
+    if (r == 0 && g == 0 && b == 0) || (r == 255 && g == 255 && b == 255) {
+        return None;
+    }
+    Some(Color::rgb(r, g, b))
 }
 
 fn collect_char_styles(doc: &Document) -> Vec<CharStyle> {
@@ -1640,6 +1667,35 @@ mod tests {
         let back = char_shape_style(&encode_char_shape(&sub));
         assert!(back.subscript);
         assert!(!back.superscript);
+        let mark = CharStyle {
+            highlight: Some(Color::MARK),
+            ..CharStyle::default()
+        };
+        let p = encode_char_shape(&mark);
+        let shade = u32::from_le_bytes(p[60..64].try_into().unwrap());
+        assert_ne!(shade, 0);
+        assert_ne!(shade, 0x00FF_FFFF);
+        let back = char_shape_style(&p);
+        assert_eq!(back.highlight, Some(Color::MARK));
+        assert!(!back.bold);
+    }
+
+    #[test]
+    fn roundtrip_keeps_highlight() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("hashes");
+        p.runs[0].style.highlight = Some(Color::MARK);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.highlight.is_some()
+                && matches!(&r.content, RunContent::Text(t) if t == "hashes")
+        }));
     }
 
     #[test]

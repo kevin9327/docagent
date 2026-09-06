@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use docagent_model::{
-    Alignment, Block, BreakKind, CharStyle, Document, InlineObject, NumberFormat, NumberingRef,
-    Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, Underline,
+    Alignment, Block, BreakKind, CharStyle, Color, Document, InlineObject, NumberFormat,
+    NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, Underline,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -118,9 +118,11 @@ fn charshape_head(styles: &[CharStyle]) -> String {
     );
     for (i, st) in styles.iter().enumerate() {
         s.push_str(&format!(
-            r#"<CHARSHAPE Id="{i}" Height="{}">"#,
-            st.size.max(1)
+            r#"<CHARSHAPE Id="{i}" Height="{}"{}"#,
+            st.size.max(1),
+            shade_color_attr(st.highlight)
         ));
+        s.push('>');
         if st.bold {
             s.push_str("<BOLD/>");
         }
@@ -149,6 +151,29 @@ fn charshape_head(styles: &[CharStyle]) -> String {
         r#"<STYLELIST Count="5"><STYLE Id="0" Name="Normal" EngName="Normal" Type="Para" ParaShape="0"/><STYLE Id="1" Name="Quote" EngName="Quote" Type="Para" ParaShape="1"/><STYLE Id="2" Name="CodeBlock" EngName="CodeBlock" Type="Para" ParaShape="2"/><STYLE Id="3" Name="HorizontalLine" EngName="HorizontalLine" Type="Para" ParaShape="3"/><STYLE Id="4" Name="Task" EngName="Task" Type="Para" ParaShape="4"/></STYLELIST></MAPPINGTABLE></HEAD>"#,
     );
     s
+}
+
+fn shade_color_attr(highlight: Option<Color>) -> String {
+    match highlight {
+        Some(c) => {
+            let shade = u32::from(c.r) | (u32::from(c.g) << 8) | (u32::from(c.b) << 16);
+            format!(r#" ShadeColor="{shade}""#)
+        }
+        None => String::new(),
+    }
+}
+
+fn highlight_from_colorref(v: u32) -> Option<Color> {
+    if v == 0xFFFF_FFFF {
+        return None;
+    }
+    let r = (v & 0xFF) as u8;
+    let g = ((v >> 8) & 0xFF) as u8;
+    let b = ((v >> 16) & 0xFF) as u8;
+    if (r == 0 && g == 0 && b == 0) || (r == 255 && g == 255 && b == 255) {
+        return None;
+    }
+    Some(Color::rgb(r, g, b))
 }
 
 fn para_style_id(p: &Paragraph) -> u32 {
@@ -335,6 +360,12 @@ fn parse_hml(xml: &str) -> Result<Document, Error> {
                         char_style = CharStyle::default();
                         if let Some(h) = attr_i32(&e, "Height").filter(|h| *h > 0) {
                             char_style.size = h;
+                        }
+                        if let Some(v) = attr_u32(&e, "ShadeColor")
+                            .or_else(|| attr_u32(&e, "SHADECOLOR"))
+                            .or_else(|| attr_u32(&e, "shadeColor"))
+                        {
+                            char_style.highlight = highlight_from_colorref(v);
                         }
                     }
                     "STYLE" => {
@@ -636,6 +667,26 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.strike
                 && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("guess"))
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_highlight() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("hashes");
+        p.runs[0].style.highlight = Some(Color::MARK);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = String::from_utf8(write(&doc).unwrap()).unwrap();
+        assert!(xml.contains("ShadeColor="), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.highlight.is_some()
+                && matches!(&r.content, RunContent::Text(t) if t == "hashes")
         }));
     }
 

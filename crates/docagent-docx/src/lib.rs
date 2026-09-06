@@ -569,12 +569,16 @@ fn drawing_run_xml(img: &ImageData, rid: u32) -> String {
         .filter(|s| !s.is_empty())
         .map(|s| format!(r#" descr="{}""#, xml_escape(s)))
         .unwrap_or_default();
-    let wrap_body = format!(
-        r#"<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{rid}" name="{name}"{descr}/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="image{rid}"{descr}/><pic:cNvPicPr><a:picLocks noChangeAspect="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>"#
+    // OOXML: wrap type sits between effectExtent and docPr (python-docx / ONLYOFFICE).
+    let extent = format!(
+        r#"<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>"#
+    );
+    let graphic = format!(
+        r#"<wp:docPr id="{rid}" name="{name}"{descr}/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="image{rid}"{descr}/><pic:cNvPicPr><a:picLocks noChangeAspect="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId{rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>"#
     );
     let framed = match img.wrap {
         WrapMode::Inline => format!(
-            r#"<wp:inline distT="0" distB="0" distL="0" distR="0">{wrap_body}</wp:inline>"#
+            r#"<wp:inline distT="0" distB="0" distL="0" distR="0">{extent}{graphic}</wp:inline>"#
         ),
         wrap => {
             let behind = if wrap == WrapMode::Behind { "1" } else { "0" };
@@ -587,7 +591,7 @@ fn drawing_run_xml(img: &ImageData, rid: u32) -> String {
                 WrapMode::Inline => unreachable!(),
             };
             format!(
-                r#"<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0" behindDoc="{behind}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>{wrap_body}{wrap_el}</wp:anchor>"#
+                r#"<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0" behindDoc="{behind}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>{extent}{wrap_el}{graphic}</wp:anchor>"#
             )
         }
     };
@@ -1580,8 +1584,7 @@ mod tests {
     use zip::{CompressionMethod, ZipWriter};
 
     fn mark_png() -> Vec<u8> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/assets/mark.png");
-        std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        include_bytes!("../../../docs/assets/mark.png").to_vec()
     }
 
     /// Valid 1×1 grayscale JPEG (SOI … EOI). Not `mark.png`.
@@ -2333,6 +2336,99 @@ mod tests {
         assert_eq!(img.height, 3600);
         assert_eq!(img.alt_text.as_deref(), Some("JPEG mark"));
         assert_eq!(img.wrap, WrapMode::Inline);
+    }
+
+    #[test]
+    fn roundtrip_keeps_square_wrap() {
+        let png = mark_png();
+        assert!(
+            png.starts_with(&[0x89, b'P', b'N', b'G']),
+            "fixture must be PNG"
+        );
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run {
+            style: CharStyle::default(),
+            content: RunContent::Inline(InlineObject::Image(ImageData {
+                bytes: png.clone(),
+                mime: "image/png".into(),
+                width: 7200,
+                height: 3600,
+                alt_text: Some("square wrap".into()),
+                wrap: WrapMode::Square,
+            })),
+        }];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+
+        let xml = document_xml(&doc);
+        assert!(xml.contains("<wp:wrapSquare"), "{xml}");
+        assert!(xml.contains("<wp:anchor"), "{xml}");
+        assert!(!xml.contains("<wp:inline"), "{xml}");
+        assert!(xml.contains(r#"behindDoc="0""#), "{xml}");
+        assert!(xml.contains("<a:blip r:embed="), "{xml}");
+        assert!(xml.contains(r#"cx="914400""#), "{xml}");
+        assert!(xml.contains(r#"cy="457200""#), "{xml}");
+        assert!(xml.contains(r#"descr="square wrap""#), "{xml}");
+
+        let bytes = write(&doc).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let mut media = Vec::new();
+        zip.by_name("word/media/image1.png")
+            .unwrap()
+            .read_to_end(&mut media)
+            .unwrap();
+        assert_eq!(media, png);
+
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph {:?}", back.sections[0].body);
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image run: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 7200);
+        assert_eq!(img.height, 3600);
+        assert_eq!(img.alt_text.as_deref(), Some("square wrap"));
+        assert_eq!(img.wrap, WrapMode::Square);
+    }
+
+    #[test]
+    fn reads_python_docx_style_wrap_square() {
+        let png = mark_png();
+        let types = br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let rels = br#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let document_xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Picture 1" descr="square wrap"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="image1.png" descr="square wrap"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId4"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let pkg = pack_docx(&[
+            ("[Content_Types].xml", types.as_slice()),
+            ("_rels/.rels", MINIMAL_RELS),
+            ("word/_rels/document.xml.rels", rels.as_slice()),
+            ("word/document.xml", document_xml.as_slice()),
+            ("word/media/image1.png", png.as_slice()),
+        ]);
+        assert!(sniff(&pkg));
+        let back = read(&pkg).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        let Some(img) = p.runs.iter().find_map(|r| match &r.content {
+            RunContent::Inline(InlineObject::Image(img)) => Some(img),
+            _ => None,
+        }) else {
+            panic!("missing image: {:?}", p.runs);
+        };
+        assert_eq!(img.bytes, png);
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.width, 7200);
+        assert_eq!(img.height, 3600);
+        assert_eq!(img.alt_text.as_deref(), Some("square wrap"));
+        assert_eq!(img.wrap, WrapMode::Square);
     }
 
     #[test]

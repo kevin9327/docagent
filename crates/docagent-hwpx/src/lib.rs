@@ -10,8 +10,9 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
 use docagent_model::{
-    Alignment, Block, BreakKind, CharStyle, Document, InlineObject, LayoutHint, NumberFormat,
-    NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow, Underline,
+    Alignment, Block, BreakKind, CharStyle, Color, Document, InlineObject, LayoutHint,
+    NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section, Table, TableCell, TableRow,
+    Underline,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -147,9 +148,11 @@ fn header_xml(styles: &[CharStyle]) -> String {
     );
     for (i, st) in styles.iter().enumerate() {
         s.push_str(&format!(
-            r#"<hh:charPr id="{i}" height="{}">"#,
-            st.size.max(1)
+            r#"<hh:charPr id="{i}" height="{}"{}"#,
+            st.size.max(1),
+            shade_color_attr(st.highlight)
         ));
+        s.push('>');
         if st.bold {
             s.push_str("<hh:bold/>");
         }
@@ -168,6 +171,12 @@ fn header_xml(styles: &[CharStyle]) -> String {
         if st.subscript {
             s.push_str("<hh:subscript/>");
         }
+        if let Some(c) = st.highlight {
+            s.push_str(&format!(
+                r##"<hh:shade color="#{:02X}{:02X}{:02X}"/>"##,
+                c.r, c.g, c.b
+            ));
+        }
         s.push_str("</hh:charPr>");
     }
     s.push_str("</hh:charProperties>");
@@ -178,6 +187,32 @@ fn header_xml(styles: &[CharStyle]) -> String {
         r#"<hh:styles itemCnt="5"><hh:style id="0" type="PARA" name="Normal" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="1" type="PARA" name="Quote" engName="Quote" paraPrIDRef="1" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="2" type="PARA" name="CodeBlock" engName="CodeBlock" paraPrIDRef="2" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="3" type="PARA" name="HorizontalLine" engName="HorizontalLine" paraPrIDRef="3" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/><hh:style id="4" type="PARA" name="Task" engName="Task" paraPrIDRef="4" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles></hh:head>"#,
     );
     s
+}
+
+fn shade_color_attr(highlight: Option<Color>) -> String {
+    match highlight {
+        Some(c) => format!(r##" shadeColor="#{:02X}{:02X}{:02X}""##, c.r, c.g, c.b),
+        None => String::new(),
+    }
+}
+
+fn parse_hex_color(s: &str) -> Option<Color> {
+    let s = s.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    if hex.len() != 6 {
+        return None;
+    }
+    let n = u32::from_str_radix(hex, 16).ok()?;
+    let r = ((n >> 16) & 0xFF) as u8;
+    let g = ((n >> 8) & 0xFF) as u8;
+    let b = (n & 0xFF) as u8;
+    if (r == 0 && g == 0 && b == 0) || (r == 255 && g == 255 && b == 255) {
+        return None;
+    }
+    Some(Color::rgb(r, g, b))
 }
 
 fn collect_char_styles(doc: &Document) -> Vec<CharStyle> {
@@ -446,6 +481,10 @@ fn parse_header_chars(xml: &str) -> HashMap<u32, CharStyle> {
                         if let Some(h) = attr_i32(&e, "height").filter(|h| *h > 0) {
                             cur.size = h;
                         }
+                        if let Some(c) = attr_string(&e, "shadeColor").and_then(|s| parse_hex_color(&s))
+                        {
+                            cur.highlight = Some(c);
+                        }
                     }
                     "bold" if in_char_pr => cur.bold = true,
                     "italic" if in_char_pr => cur.italic = true,
@@ -463,6 +502,11 @@ fn parse_header_chars(xml: &str) -> HashMap<u32, CharStyle> {
                     }
                     "supscript" if in_char_pr => cur.superscript = true,
                     "subscript" if in_char_pr => cur.subscript = true,
+                    "shade" if in_char_pr => {
+                        if let Some(c) = attr_string(&e, "color").and_then(|s| parse_hex_color(&s)) {
+                            cur.highlight = Some(c);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -854,6 +898,27 @@ mod tests {
         }));
         assert!(p.runs.iter().any(|r| {
             r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("guess"))
+        }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_highlight() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("hashes");
+        p.runs[0].style.highlight = Some(Color::MARK);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let xml = header_xml(&collect_char_styles(&doc));
+        assert!(xml.contains(r##"shadeColor="#FDE68A""##), "{xml}");
+        assert!(xml.contains(r##"<hh:shade color="#FDE68A"/>"##), "{xml}");
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.highlight.is_some()
+                && matches!(&r.content, RunContent::Text(t) if t == "hashes")
         }));
     }
 

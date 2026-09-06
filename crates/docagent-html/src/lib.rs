@@ -1640,6 +1640,17 @@ mod tests {
         panic!("no image");
     }
 
+    fn first_para(doc: &Document) -> &Paragraph {
+        for section in &doc.sections {
+            for block in &section.body {
+                if let Block::Paragraph(p) = block {
+                    return p;
+                }
+            }
+        }
+        panic!("no paragraph");
+    }
+
     #[test]
     fn images_emit_img() {
         let img = fixture_image("mark");
@@ -1746,6 +1757,89 @@ mod tests {
             })
         });
         assert!(!has_img);
+    }
+
+    #[test]
+    fn read_roundtrips_blockquote() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("Replay is evidence.");
+        p.quote = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(
+            html.contains("<blockquote>Replay is evidence.</blockquote>"),
+            "{html}"
+        );
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.quote);
+        assert!(!p.code_block);
+        assert_eq!(p.plain_text(), "Replay is evidence.");
+    }
+
+    #[test]
+    fn read_roundtrips_pre() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("docagent prove examples/letter.md");
+        p.code_block = true;
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(
+            html.contains("<pre><code>docagent prove examples/letter.md</code></pre>"),
+            "{html}"
+        );
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.code_block);
+        assert!(!p.quote);
+        assert_eq!(p.plain_text(), "docagent prove examples/letter.md");
+    }
+
+    #[test]
+    fn read_roundtrips_hyperlink() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(
+            html.contains(r#"<a href="https://github.com/kevin9327/docagent">DocAgent</a>"#),
+            "{html}"
+        );
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
+    }
+
+    #[test]
+    fn read_roundtrips_mark() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("hashes");
+        p.runs[0].style.highlight = Some(docagent_model::Color::MARK);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let html = to_html(&doc);
+        assert!(html.contains("<mark>hashes</mark>"), "{html}");
+        let back = read(html.as_bytes()).expect("html");
+        let p = first_para(&back);
+        assert!(p.runs.iter().any(|r| {
+            r.style.highlight == Some(docagent_model::Color::MARK)
+                && matches!(&r.content, RunContent::Text(t) if t == "hashes")
+        }));
     }
 
     #[test]

@@ -1054,4 +1054,48 @@ mod tests {
             blank_pdf.len()
         );
     }
+
+    fn doc_with_float_mark() -> Document {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        section.body.push(Block::Float(docagent_model::Float::Image(
+            docagent_model::ImageData {
+                bytes: MARK_PNG.to_vec(),
+                mime: "image/png".into(),
+                width: 1600,
+                height: 1600,
+                alt_text: Some("mark".into()),
+                wrap: docagent_model::WrapMode::Square,
+            },
+        )));
+        doc.sections.push(section);
+        doc
+    }
+
+    #[test]
+    fn float_image_embeds_in_pdfa() {
+        let list = paint(&layout_document(
+            &doc_with_float_mark(),
+            &FontSet::bundled(),
+        ));
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::Image { w, h, bytes, mime, .. }
+                        if *w == 1600 && *h == 1600 && bytes.as_slice() == MARK_PNG && mime == "image/png"
+                )
+            }),
+            "paint must forward float PNG bytes"
+        );
+        let pdf = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(claims_pdfa(&pdf), "pdfa identifier missing");
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(
+            s.contains("/Image"),
+            "PDF image XObject missing: {}",
+            s.chars().take(400).collect::<String>()
+        );
+    }
 }

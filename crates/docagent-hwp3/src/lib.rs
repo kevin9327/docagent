@@ -11,8 +11,9 @@
 use std::io::{Cursor, Read};
 
 use docagent_model::{
-    A4_HEIGHT_HU, A4_WIDTH_HU, Block, BreakKind, CharStyle, Diagnostic, Document, InlineObject,
-    LayoutHint, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section, Underline,
+    A4_HEIGHT_HU, A4_WIDTH_HU, Block, BreakKind, CharStyle, Color, Diagnostic, Document,
+    InlineObject, LayoutHint, NumberFormat, NumberingRef, Paragraph, Run, RunContent, Section,
+    Underline,
 };
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
@@ -421,6 +422,10 @@ fn char_shape_from_bytes(p: &[u8]) -> CharStyle {
         if size > 0 {
             style.size = i32::from(size).saturating_mul(4).max(1);
         }
+    }
+    if p.len() > 25 && p[25] > 0 {
+        // Offset 23 palette + 25 shade ratio (0–100). No RGB; map any shade to MARK.
+        style.highlight = Some(Color::MARK);
     }
     if p.len() > 26 {
         let attr = p[26];
@@ -867,12 +872,21 @@ fn write_paragraph(out: &mut Vec<u8>, para: &Paragraph, urls: &mut Vec<String>, 
     out.push(0);
     out.extend_from_slice(&0u32.to_le_bytes());
     out.push(style_index);
-    out.extend_from_slice(&[0u8; CHAR_SHAPE_LEN]);
+    out.extend_from_slice(&encode_hwp3_char_shape(para));
     let mut line = [0u8; LINE_INFO_LEN];
     line[4..6].copy_from_slice(&275u16.to_le_bytes());
     line[10..12].copy_from_slice(&1000u16.to_le_bytes());
     out.extend_from_slice(&line);
     out.extend_from_slice(&payload);
+}
+
+fn encode_hwp3_char_shape(para: &Paragraph) -> [u8; CHAR_SHAPE_LEN] {
+    let mut buf = [0u8; CHAR_SHAPE_LEN];
+    if para.runs.iter().any(|r| r.style.highlight.is_some()) {
+        buf[23] = 6; // yellow palette
+        buf[25] = 100; // 100% shade
+    }
+    buf
 }
 
 fn write_hypertext_object(out: &mut Vec<u8>, display: &str) {
@@ -1357,5 +1371,34 @@ mod tests {
             Some((Some(NumberFormat::Task), None))
         );
         assert_eq!(p.plain_text(), "Hope");
+    }
+
+    #[test]
+    fn roundtrip_keeps_highlight() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("hashes");
+        p.runs[0].style.highlight = Some(Color::MARK);
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).expect("roundtrip");
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.highlight.is_some()
+                && matches!(&r.content, RunContent::Text(t) if t == "hashes")
+        }));
+    }
+
+    #[test]
+    fn char_shape_shade_ratio_maps_highlight() {
+        let mut p = [0u8; CHAR_SHAPE_LEN];
+        p[25] = 40;
+        p[23] = 6;
+        let st = char_shape_from_bytes(&p);
+        assert_eq!(st.highlight, Some(Color::MARK));
+        let blank = char_shape_from_bytes(&[0u8; CHAR_SHAPE_LEN]);
+        assert!(blank.highlight.is_none());
     }
 }

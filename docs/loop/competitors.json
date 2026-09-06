@@ -5,7 +5,7 @@
   "not_claimed": ["OCR", "VLM", "OmniDocBench"],
   "docagent_ships": {
     "runtime": ["Command/Query/Event", "capsule SHA-256 ×3", "byte-identical rerun", "integer layout 1/7200 in", "GPU-free"],
-    "flow_marks": ["lists", "links", "strike", "quotes", "code spans", "fenced code", "thematic breaks", "tasks", "highlight", "underline", "superscript", "subscript", "table headers", "images"],
+    "flow_marks": ["lists", "links", "strike", "quotes", "code spans", "fenced code", "thematic breaks", "tasks", "highlight", "underline", "superscript", "subscript", "table headers", "images (PNG, JPEG)"],
     "hangul": [
       "CHAR_SHAPE bold/italic/underline/super/sub on HWP5, HWPX hh:charPr, HML CHARSHAPE, HWP3 attr bits",
       "strike on HWP5/HWPX/HML (HWP3 has no strike bit)",
@@ -13,9 +13,15 @@
       "Quote style on HWP5+HWPX+HML+HWP3",
       "CodeBlock style on HWP5+HWPX+HML+HWP3",
       "HorizontalLine thematic breaks on HWP5+HWPX+HML+HWP3",
-      "Task style + [x]/[ ] marker on HWP5+HWPX+HML+HWP3"
+      "Task style + [x]/[ ] marker on HWP5+HWPX+HML+HWP3",
+      "CHAR_SHAPE shade highlight on HWP5+HWPX+HML+HWP3"
     ],
-    "hangul_not_yet": ["images", "highlight", "first-class lists", "table headers"]
+    "hangul_not_yet": ["images", "first-class lists", "table headers"],
+    "images": [
+      "PNG and JPEG on Markdown, HTML, PDF/A, DOCX, ODT",
+      "HTML read of <img src=\"data:…\"> (Pandoc-class import, not HTML5, no http src)",
+      "examples/letter.md fixture has no image — convert shots must not pretend otherwise"
+    ]
   },
   "repos": [
     {"rank": 1, "full_name": "opendatalab/MinerU", "stars": 79265, "job": "PDF/Office → LLM markdown via VLM+OCR"},
