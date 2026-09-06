@@ -246,6 +246,44 @@ mod tests {
     }
 
     #[test]
+    fn heading_rule_paints_non_grid_fill() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h1 = Paragraph::from_text("Northwind Freight");
+        h1.outline_level = Some(1);
+        h1.runs[0].style.size = 1800;
+        h1.runs[0].style.bold = true;
+        section.body.push(Block::Paragraph(h1));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let list = paint(&tree);
+        assert!(
+            list.ops.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::FillRect { color, h, w, .. }
+                        if *color == [19, 78, 74, 255] && *h == 200 && *w > 1000
+                )
+            }),
+            "heading rule must paint a non-table fill"
+        );
+        let with_rule = to_pdfa(&list, &FontSet::bundled()).expect("pdf");
+        let mut plain = Document::new();
+        let mut section = Section::default();
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("Northwind Freight")));
+        plain.sections.push(section);
+        let plain_pdf = to_pdfa(
+            &paint(&layout_document(&plain, &FontSet::bundled())),
+            &FontSet::bundled(),
+        )
+        .expect("pdf");
+        assert_ne!(with_rule, plain_pdf, "heading rule must change PDF bytes");
+        assert!(claims_pdfa(&with_rule));
+    }
+
+    #[test]
     fn synthetic_bold_changes_pdf_bytes() {
         fn pdf_for(bold: bool) -> Vec<u8> {
             let mut doc = Document::new();

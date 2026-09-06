@@ -91,7 +91,7 @@ Not a slogan. Two `Command::Convert` calls on [`examples/letter.md`](examples/le
 | --- | --- |
 | input | `5f33b7f2389a3c4a4f53b638808a8e958305cc8f8a77b976d03f3d41f3d4a85f` |
 | plan | `928b47459b089d2dc7e60d6f764b798aaaa955a92ba6977ea6c157e7d88eea63` |
-| output | `b83ef5d60c7c860a840c7ca1334516dfad44362e6811a5605f7a5586a78fb975` |
+| output | `0fc6d675b4c5a6c773d3da390d7c7e206d0369e232db662fa293c3c415908ccf` |
 
 These are the hashes in [`letter-capsule.json`](docs/assets/letter-capsule.json). MinerU and Docling do not ship this. We do not ship OmniDocBench numbers.
 
@@ -102,7 +102,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 <p align="center">
   <img src="docs/assets/output-pdf.png" alt="PDF/A page produced by DocAgent from examples/letter.md" width="100%">
 </p>
-<p align="center"><sub>PDF/A from the integer layout engine. Table grid is painted. Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
+<p align="center"><sub>PDF/A from the integer layout engine. Heading rules are painted fills, not table grids. Bold is a second fill; italic is a 0.20 shear on the Regular face (GPU-free, <em>byte-for-byte</em>). Same fonts → same bytes on the next run.</sub></p>
 
 <p align="center">
   <img src="docs/assets/output-html.png" alt="Semantic HTML produced by DocAgent from the same letter" width="100%">
@@ -128,7 +128,7 @@ These three pictures are the convert of [`examples/letter.md`](examples/letter.m
 | --- | --- |
 | **IR** | Format-blind document model. Layout never sees “docx” or “hwp”. |
 | **Layout** | One engine. Coordinates are `i32` at 1/7200 inch. `f32` is forbidden. |
-| **PDF/A** | Archival print. Two runs, same fonts, same bytes. |
+| **PDF/A** | Archival print. Heading rules and table fills are `FillRect`s. Two runs, same fonts, same bytes. |
 | **DOCX / ODT** | Headings as `w:pStyle Heading1/2` + `text:h`. Runs keep `w:b`/`w:i` in body and table cells. |
 | **HTML** | Semantic HTML an agent can read back. |
 | **Capsule** | Three SHA-256 hashes on every Command so a retry is evidence, not hope. |

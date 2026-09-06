@@ -27,7 +27,7 @@ pub struct PageFrag {
     pub height: Hu,
     pub lines: Vec<LineFrag>,
     pub rects: Vec<RectFrag>,
-    /// Table grid strokes. Not counted by `table_row_heights`.
+    /// Table grid strokes and heading rules. Not counted by `table_row_heights`.
     pub strokes: Vec<RectFrag>,
 }
 
@@ -90,8 +90,16 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
 
     for item in prepared {
         match item {
-            Prepared::Lines { lines, space_before, space_after } => {
+            Prepared::Lines {
+                lines,
+                space_before,
+                space_after,
+                rule,
+            } => {
                 y += space_before;
+                let mut text_left: Option<Hu> = None;
+                let mut text_right = origin_x;
+                let mut block_bottom = y;
                 for line in lines {
                     if y + line.height > origin_y + content_h && !current.lines.is_empty() {
                         pages.push(std::mem::replace(
@@ -103,8 +111,29 @@ fn layout_section(section: &Section, fonts: &FontSet) -> Vec<PageFrag> {
                     let mut placed = line;
                     placed.x = origin_x.saturating_add(placed.x);
                     placed.y = y;
+                    if placed.width > 0 {
+                        text_left = Some(text_left.map_or(placed.x, |l| l.min(placed.x)));
+                        text_right = text_right.max(placed.x.saturating_add(placed.width));
+                    }
                     y += placed.height;
+                    if placed.height > 0 {
+                        block_bottom = y;
+                    }
                     current.lines.push(placed);
+                }
+                if let (Some(rule), Some(left)) = (rule, text_left) {
+                    let (rx, rw) = if rule.span_content {
+                        (origin_x, content_w)
+                    } else {
+                        (left, (text_right - left).max(1))
+                    };
+                    current.strokes.push(RectFrag {
+                        x: rx,
+                        y: block_bottom.saturating_add(80),
+                        width: rw,
+                        height: rule.thickness,
+                        fill: rule.color,
+                    });
                 }
                 y += space_after;
             }
@@ -206,6 +235,7 @@ enum Prepared {
         lines: Vec<LineFrag>,
         space_before: Hu,
         space_after: Hu,
+        rule: Option<HeadingRule>,
     },
     Table {
         rows: Vec<Vec<PreparedCell>>,
@@ -213,6 +243,28 @@ enum Prepared {
         stroke_w: Hu,
         stroke: [u8; 4],
     },
+}
+
+struct HeadingRule {
+    thickness: Hu,
+    color: [u8; 4],
+    span_content: bool,
+}
+
+fn heading_rule(level: Option<u8>) -> Option<HeadingRule> {
+    match level {
+        Some(1) => Some(HeadingRule {
+            thickness: 200,
+            color: [19, 78, 74, 255],
+            span_content: true,
+        }),
+        Some(n) if n >= 2 => Some(HeadingRule {
+            thickness: 100,
+            color: [13, 148, 136, 255],
+            span_content: false,
+        }),
+        _ => None,
+    }
 }
 
 struct PreparedCell {
@@ -227,12 +279,14 @@ fn prepare_block(block: &Block, fonts: &FontSet, width: Hu) -> Prepared {
             lines: layout_paragraph(p, fonts, width),
             space_before: p.space_before.max(0),
             space_after: p.space_after.max(0),
+            rule: heading_rule(p.outline_level),
         },
         Block::Table(t) => prepare_table(t, fonts, width),
         Block::Float(_) | Block::Break(_) => Prepared::Lines {
             lines: Vec::new(),
             space_before: 0,
             space_after: 0,
+            rule: None,
         },
     }
 }
@@ -642,6 +696,43 @@ mod tests {
         assert_eq!(page.rects.len(), 4, "one fill per cell");
         assert!(page.strokes.len() >= 16, "four edges per cell");
         assert_eq!(table_row_heights(&tree).len(), 4);
+    }
+
+    #[test]
+    fn headings_emit_rule_fills() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut h1 = Paragraph::from_text("Northwind Freight");
+        h1.outline_level = Some(1);
+        h1.runs[0].style.size = 1800;
+        h1.runs[0].style.bold = true;
+        section.body.push(Block::Paragraph(h1));
+        let mut h2 = Paragraph::from_text("Delivery confirmation");
+        h2.outline_level = Some(2);
+        h2.runs[0].style.size = 1400;
+        h2.runs[0].style.bold = true;
+        section.body.push(Block::Paragraph(h2));
+        section
+            .body
+            .push(Block::Paragraph(Paragraph::from_text("Body copy")));
+        doc.sections.push(section);
+        let tree = layout_document(&doc, &FontSet::bundled());
+        let page = &tree.pages[0];
+        assert!(
+            page.rects.is_empty(),
+            "heading rules must not count as table cell fills"
+        );
+        assert!(
+            page.strokes.iter().any(|s| s.fill == [19, 78, 74, 255] && s.height == 200 && s.width > 1000),
+            "h1 rule missing: {:?}",
+            page.strokes
+        );
+        assert!(
+            page.strokes.iter().any(|s| s.fill == [13, 148, 136, 255] && s.height == 100 && s.width > 0),
+            "h2 rule missing: {:?}",
+            page.strokes
+        );
+        assert_eq!(table_row_heights(&tree).len(), 0);
     }
 
     #[test]
