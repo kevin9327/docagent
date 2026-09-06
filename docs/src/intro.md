@@ -13,7 +13,7 @@ Formats, in the order agents usually meet them:
 | OpenDocument | ODT | Default interchange with LibreOffice (`text:h` 18pt/14pt, Quote, `Tcode`, `Tmark`, `Tunder`, `Tsuper`, `Tsub`, `THcell`, `Tlink`, `CodeBlock`, `HorizontalLine`) |
 | Web / notes | Markdown, HTML | Agent-native text (`> quote`, `` `code` ``, ` ```fence``` `, `==mark==`, `__underline__`, `^super^`, `~sub~`, `- [x]`, `---`) and semantic HTML (`<blockquote>`, `<pre>`, `<mark>`, `<u>`, `<sup>`, `<sub>`, checkbox, `<hr/>`) |
 | Print | PDF/A | Archival, byte-identical on two runs |
-| Regional | HWP 5, HWPX, HWP 3, HML | East-Asian office formats, same IR. HWP 5 `CHAR_SHAPE`, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 char-shape attr bits map onto `CharStyle` marks. |
+| Regional | HWP 5, HWPX, HWP 3, HML | East-Asian office formats, same IR. HWP 5 `CHAR_SHAPE`, HWPX `hh:charPr`, HML `CHARSHAPE`, and HWP 3 char-shape attr bits map onto `CharStyle` marks. HWPX hyperlinks are `hp:fieldBegin type="HYPERLINK"`. |
 
 One integer IR (lengths in 1/7200 inch). One layout engine. Command / Query / Event
 is the only API. CLI `docagent`, daemon `docagentd`, MCP, and WIT are thin adapters.

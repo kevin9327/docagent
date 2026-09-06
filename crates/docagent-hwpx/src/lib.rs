@@ -244,18 +244,24 @@ fn para_xml(id: usize, p: &Paragraph, styles: &[CharStyle]) -> String {
     if p.runs.is_empty() {
         s.push_str(r#"<hp:run charPrIDRef="0"><hp:t></hp:t></hp:run>"#);
     } else {
-        for run in &p.runs {
-            let text = match &run.content {
-                RunContent::Text(t) => xml_escape(t),
-                RunContent::Inline(InlineObject::Hyperlink { display, .. }) => {
-                    xml_escape(display)
-                }
-                RunContent::Inline(_) => continue,
-            };
+        for (i, run) in p.runs.iter().enumerate() {
             let sid = style_id(styles, &run.style);
-            s.push_str(&format!(
-                r#"<hp:run charPrIDRef="{sid}"><hp:t>{text}</hp:t></hp:run>"#
-            ));
+            match &run.content {
+                RunContent::Inline(InlineObject::Hyperlink { target, display }) => {
+                    s.push_str(&format!(
+                        r#"<hp:run charPrIDRef="{sid}"><hp:fieldBegin id="{i}" type="HYPERLINK"><hp:parameters><hp:stringParam name="Command">{}</hp:stringParam></hp:parameters></hp:fieldBegin></hp:run><hp:run charPrIDRef="{sid}"><hp:t>{}</hp:t></hp:run><hp:run charPrIDRef="{sid}"><hp:fieldEnd/></hp:run>"#,
+                        xml_escape(target),
+                        xml_escape(display)
+                    ));
+                }
+                RunContent::Text(t) => {
+                    s.push_str(&format!(
+                        r#"<hp:run charPrIDRef="{sid}"><hp:t>{}</hp:t></hp:run>"#,
+                        xml_escape(t)
+                    ));
+                }
+                RunContent::Inline(_) => {}
+            }
         }
     }
     for h in &p.layout_hints {
@@ -387,6 +393,10 @@ fn parse_section_xml(xml: &str, chars: &HashMap<u32, CharStyle>) -> Result<Secti
     let mut row_height: Option<i32> = None;
     let mut hints = Vec::new();
     let mut in_lineseg = false;
+    let mut pending_href: Option<String> = None;
+    let mut in_string_param = false;
+    let mut string_param_name = String::new();
+    let mut param_text = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -420,8 +430,25 @@ fn parse_section_xml(xml: &str, chars: &HashMap<u32, CharStyle>) -> Result<Secti
                     }
                     "supscript" if in_run => run_style.superscript = true,
                     "subscript" if in_run => run_style.subscript = true,
+                    "fieldBegin" => {
+                        let ty = attr_string(&e, "type").unwrap_or_default();
+                        if ty.eq_ignore_ascii_case("HYPERLINK") {
+                            pending_href = Some(String::new());
+                        }
+                    }
+                    "stringParam" => {
+                        in_string_param = true;
+                        string_param_name = attr_string(&e, "name").unwrap_or_default();
+                        param_text.clear();
+                    }
+                    "fieldEnd" => pending_href = None,
                     "tbl" => {
-                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            &run_style,
+                            pending_href.as_deref(),
+                        );
                         flush_para(&mut body, &mut para_runs, &mut hints);
                         in_table = true;
                     }
@@ -477,13 +504,33 @@ fn parse_section_xml(xml: &str, chars: &HashMap<u32, CharStyle>) -> Result<Secti
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 match name.as_str() {
                     "t" => in_t = false,
+                    "stringParam" => {
+                        if in_string_param
+                            && string_param_name.eq_ignore_ascii_case("Command")
+                            && pending_href.is_some()
+                        {
+                            pending_href = Some(std::mem::take(&mut param_text));
+                        }
+                        in_string_param = false;
+                    }
                     "run" if !in_table => {
-                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            &run_style,
+                            pending_href.as_deref(),
+                        );
                         in_run = false;
                     }
                     "p" if !in_table => {
-                        flush_run(&mut para_runs, &mut run_text, &run_style);
+                        flush_run(
+                            &mut para_runs,
+                            &mut run_text,
+                            &run_style,
+                            pending_href.as_deref(),
+                        );
                         flush_para(&mut body, &mut para_runs, &mut hints);
+                        pending_href = None;
                     }
                     "tc" if in_table => {
                         cur_row.push(TableCell {
@@ -522,6 +569,8 @@ fn parse_section_xml(xml: &str, chars: &HashMap<u32, CharStyle>) -> Result<Secti
                 let decoded = t.unescape().map_err(|e| Error::Xml(e.to_string()))?;
                 if in_table {
                     cell_text_buf.push_str(&decoded);
+                } else if in_string_param {
+                    param_text.push_str(&decoded);
                 } else if in_t && !in_lineseg {
                     run_text.push_str(&decoded);
                 }
@@ -532,18 +581,31 @@ fn parse_section_xml(xml: &str, chars: &HashMap<u32, CharStyle>) -> Result<Secti
         }
         buf.clear();
     }
-    flush_run(&mut para_runs, &mut run_text, &run_style);
+    flush_run(
+        &mut para_runs,
+        &mut run_text,
+        &run_style,
+        pending_href.as_deref(),
+    );
     flush_para(&mut body, &mut para_runs, &mut hints);
     section.body = body;
     Ok(section)
 }
 
-fn flush_run(runs: &mut Vec<Run>, text: &mut String, style: &CharStyle) {
+fn flush_run(runs: &mut Vec<Run>, text: &mut String, style: &CharStyle, href: Option<&str>) {
     if text.is_empty() {
         return;
     }
-    let mut run = Run::text(std::mem::take(text));
+    let display = std::mem::take(text);
+    let mut run = if let Some(url) = href.filter(|u| !u.is_empty()) {
+        Run::hyperlink(display, url)
+    } else {
+        Run::text(display)
+    };
     run.style = style.clone();
+    if href.filter(|u| !u.is_empty()).is_some() {
+        run.style.underline = Underline::Single;
+    }
     runs.push(run);
 }
 
@@ -629,6 +691,32 @@ mod tests {
         assert!(p.runs.iter().any(|r| {
             r.style.strike && matches!(&r.content, RunContent::Text(t) if t.contains("guess"))
         }));
+    }
+
+    #[test]
+    fn roundtrip_keeps_hyperlink() {
+        let mut doc = Document::new();
+        let mut section = Section::default();
+        let mut p = Paragraph::from_text("");
+        p.runs = vec![Run::hyperlink(
+            "DocAgent",
+            "https://github.com/kevin9327/docagent",
+        )];
+        let xml = para_xml(0, &p, &[CharStyle::default()]);
+        assert!(xml.contains(r#"type="HYPERLINK""#), "{xml}");
+        assert!(xml.contains("stringParam"), "{xml}");
+        assert!(xml.contains("https://github.com/kevin9327/docagent"), "{xml}");
+        section.body.push(Block::Paragraph(p));
+        doc.sections.push(section);
+        let back = roundtrip(&doc).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| matches!(
+            &r.content,
+            RunContent::Inline(InlineObject::Hyperlink { target, display })
+                if target == "https://github.com/kevin9327/docagent" && display == "DocAgent"
+        )));
     }
 
     #[test]
