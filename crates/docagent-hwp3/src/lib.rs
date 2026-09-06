@@ -8,7 +8,10 @@
 
 use std::io::{Cursor, Read};
 
-use docagent_model::{Block, Diagnostic, Document, LayoutHint, Paragraph, Section, A4_HEIGHT_HU, A4_WIDTH_HU};
+use docagent_model::{
+    Block, CharStyle, Diagnostic, Document, LayoutHint, Paragraph, Run, Section, Underline,
+    A4_HEIGHT_HU, A4_WIDTH_HU,
+};
 use flate2::read::{DeflateDecoder, ZlibDecoder};
 use thiserror::Error;
 
@@ -193,9 +196,11 @@ fn read_paragraphs(cur: &mut Cursor<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -
         if read_u8(cur).is_err() {
             break;
         }
-        if skip_bytes(cur, CHAR_SHAPE_LEN).is_err() {
+        let mut default_buf = [0u8; CHAR_SHAPE_LEN];
+        if cur.read_exact(&mut default_buf).is_err() {
             break;
         }
+        let default_style = char_shape_from_bytes(&default_buf);
         if follow == 0 && skip_bytes(cur, PARA_SHAPE_LEN).is_err() {
             diagnostics.push(Diagnostic::parse_loss("HWP3 paragraph shape truncated"));
             break;
@@ -207,20 +212,29 @@ fn read_paragraphs(cur: &mut Cursor<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -
                 Err(_) => break,
             }
         }
+        let mut per_char = Vec::new();
         if include_char_shape != 0 {
             for _ in 0..char_count {
                 let flag = match read_u8(cur) {
                     Ok(v) => v,
                     Err(_) => break,
                 };
-                if flag != 1 && skip_bytes(cur, CHAR_SHAPE_LEN).is_err() {
-                    break;
+                if flag == 1 {
+                    per_char.push(default_style.clone());
+                } else {
+                    let mut buf = [0u8; CHAR_SHAPE_LEN];
+                    if cur.read_exact(&mut buf).is_err() {
+                        break;
+                    }
+                    per_char.push(char_shape_from_bytes(&buf));
                 }
             }
         }
-        let (text, nested) = read_para_chars(cur, char_count, diagnostics);
+        let (text, nested, char_styles) =
+            read_para_chars(cur, char_count, diagnostics, &default_style, &per_char);
         if !text.trim().is_empty() {
-            let mut para = Paragraph::from_text(text);
+            let mut para = Paragraph::from_text("");
+            para.runs = coalesce_styled_runs(&text, &char_styles);
             para.layout_hints = hints;
             out.push(Block::Paragraph(para));
         } else if !hints.is_empty() {
@@ -237,15 +251,19 @@ fn read_para_chars(
     cur: &mut Cursor<&[u8]>,
     char_count: u16,
     diagnostics: &mut Vec<Diagnostic>,
-) -> (String, Vec<Block>) {
+    default_style: &CharStyle,
+    per_char: &[CharStyle],
+) -> (String, Vec<Block>, Vec<CharStyle>) {
     let mut text = String::new();
     let mut nested = Vec::new();
+    let mut styles = Vec::new();
     let mut i = 0u32;
     while i < u32::from(char_count) {
         let ch = match read_u16(cur) {
             Ok(v) => v,
             Err(_) => break,
         };
+        let idx = i as usize;
         i += 1;
         if ch == 13 {
             continue;
@@ -262,9 +280,63 @@ fn read_para_chars(
         }
         if let Some(c) = decode_hchar(ch) {
             text.push(c);
+            styles.push(
+                per_char
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_else(|| default_style.clone()),
+            );
         }
     }
-    (text, nested)
+    (text, nested, styles)
+}
+
+/// HWP 3.0 char shape is 31 bytes. Size is pt×25; HWPUNIT is pt×100.
+fn char_shape_from_bytes(p: &[u8]) -> CharStyle {
+    let mut style = CharStyle::default();
+    if p.len() >= 2 {
+        let size = u16::from_le_bytes(p[0..2].try_into().unwrap());
+        if size > 0 {
+            style.size = i32::from(size).saturating_mul(4).max(1);
+        }
+    }
+    if p.len() > 26 {
+        let attr = p[26];
+        style.italic = attr & 0x01 != 0;
+        style.bold = attr & 0x02 != 0;
+        if attr & 0x04 != 0 {
+            style.underline = Underline::Single;
+        }
+        style.superscript = attr & 0x20 != 0;
+        style.subscript = attr & 0x40 != 0;
+    }
+    style
+}
+
+fn coalesce_styled_runs(text: &str, styles: &[CharStyle]) -> Vec<Run> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let mut runs = Vec::new();
+    let mut buf = String::new();
+    let mut cur = styles.first().cloned().unwrap_or_default();
+    for (i, ch) in chars.iter().enumerate() {
+        let st = styles.get(i).cloned().unwrap_or_else(|| cur.clone());
+        if st != cur && !buf.is_empty() {
+            let mut run = Run::text(std::mem::take(&mut buf));
+            run.style = cur;
+            runs.push(run);
+        }
+        cur = st;
+        buf.push(*ch);
+    }
+    if !buf.is_empty() {
+        let mut run = Run::text(buf);
+        run.style = cur;
+        runs.push(run);
+    }
+    runs
 }
 
 /// Consume bytes that follow a control hchar. Returns extra hchars already
@@ -538,6 +610,16 @@ fn skip_bytes(cur: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
 mod tests {
     use super::*;
 
+    fn write_classic_styled(text: &str, attr: u8, size_pt25: u16) -> Vec<u8> {
+        let mut bytes = write_classic(text);
+        let start = 30 + DOC_INFO_LEN + SUMMARY_LEN + 7 * 2 + 2 + 12;
+        if start + CHAR_SHAPE_LEN <= bytes.len() {
+            bytes[start..start + 2].copy_from_slice(&size_pt25.to_le_bytes());
+            bytes[start + 26] = attr;
+        }
+        bytes
+    }
+
     #[test]
     fn johab_roundtrip_syllable() {
         let ga = encode_johab('가');
@@ -559,6 +641,34 @@ mod tests {
                 .iter()
                 .any(|d| d.code == docagent_model::DiagnosticCode::ParseLoss)
         );
+    }
+
+    #[test]
+    fn char_shape_attr_maps_marks() {
+        let mut p = [0u8; CHAR_SHAPE_LEN];
+        p[0..2].copy_from_slice(&250u16.to_le_bytes());
+        p[26] = 0x02 | 0x01 | 0x04 | 0x20;
+        let st = char_shape_from_bytes(&p);
+        assert!(st.bold && st.italic && st.superscript);
+        assert_eq!(st.underline, Underline::Single);
+        assert_eq!(st.size, 1000);
+        p[26] = 0x40;
+        let st = char_shape_from_bytes(&p);
+        assert!(st.subscript);
+        assert!(!st.bold);
+    }
+
+    #[test]
+    fn classic_hwp3_keeps_char_shape_marks() {
+        let bytes = write_classic_styled("GPU-free", 0x02, 250);
+        let back = read(&bytes).unwrap();
+        let Block::Paragraph(p) = &back.sections[0].body[0] else {
+            panic!("paragraph");
+        };
+        assert!(p.runs.iter().any(|r| {
+            r.style.bold && matches!(&r.content, docagent_model::RunContent::Text(t) if t.contains("GPU-free"))
+        }));
+        assert_eq!(p.runs[0].style.size, 1000);
     }
 
     #[test]
